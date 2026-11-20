@@ -1,17 +1,17 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { ContentDetailView } from '@/components/comms/content-detail';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Content item' };
 
-/** Communications content item. */
+/** Communications content item: text, workflow and revision history. API §26. */
 export default async function ContentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Content item"
-      screen="Communications content item"
-      description={`Content ${id}: text, audience category, author, editor, approver, publication time and the revision and correction history.`}
-      breadcrumbs={[{ label: 'Campaign' }, { label: 'Communications', href: '/comms' }, { label: 'Content item' }]}
-      anyOf={['comms.content.view']}
-    />
+    <RequirePagePermission anyOf={['comms.content.view']}>
+      <ReauthProvider>
+        <ContentDetailView id={id} />
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }

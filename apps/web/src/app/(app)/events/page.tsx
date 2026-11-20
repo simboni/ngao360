@@ -1,16 +1,13 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { EventsList } from '@/components/events/events-list';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Events' };
 
-/** S09 Events. */
+/** S09 Events schedule. API §25. */
 export default function EventsPage() {
   return (
-    <ModulePlaceholder
-      title="Events"
-      screen="S09 Events"
-      description="Event schedule with type, status, venue area, organiser, attendance totals and after-action status. API §25."
-      breadcrumbs={[{ label: 'Campaign' }, { label: 'Events' }]}
-      anyOf={['events.view']}
-    />
+    <RequirePagePermission anyOf={['events.view']}>
+      <EventsList />
+    </RequirePagePermission>
   );
 }

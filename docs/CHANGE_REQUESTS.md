@@ -618,3 +618,31 @@ Found and fixed during integration (not requested):
 
 - **Agents could report outside their deployment.** Report and incident intake checked only the grant scope, so an agent with a ward grant could report for any station in the ward. A caller linked to an agent record now reports only at stations where they hold an ASSIGNED / CONFIRMED / CHECKED_IN / CHECKED_OUT deployment in the cycle (403 `OUT_OF_SCOPE`, also through sync). Callers without an agent record keep scope-only rules.
 - **False offline conflicts in the seeded demo.** The seed wrote AGT / FRP / INC references without moving `reference_sequences`, so the first API-created incident hit a unique violation on the reference, which the services reported as `IDEMPOTENCY_KEY_REUSED` ("already sent with different content"); the phone then asked the agent to decide on a conflict that did not exist. The seed now moves the counters past seeded references (on every run), and only a violation of the client idempotency key index maps to `IDEMPOTENCY_KEY_REUSED`; other violations are server errors (sync: REJECTED `INTERNAL`, retried with the same key).
+
+## Campaign: organisation, tasks, events and communications UI (from the campaign web agent)
+
+Screens: `/org` (S05), `/tasks` and `/tasks/[id]` (S08), `/events` and `/events/[id]` (S09), `/comms` and `/comms/[id]`.
+Components live in `apps/web/src/components/{org,tasks,events,comms}` (this run's file assignment). `docs/ARCHITECTURE.md`
+§Campaign lists `components/campaign/{org,tasks,events}` and gives comms web to agent B, so the table needs updating.
+
+1. **Campaign geography lookup.** No campaign endpoint lists geographic units, and campaign roles do not hold
+   `reference.view` (whose `GET /reference/geographic-units` also needs an election cycle). So the task, team and event
+   forms cannot set `geographicUnitId`, and the "Area" filter on the task board only offers areas already seen on loaded
+   tasks. Proposed: `GET /org/geography` (any `org.*.view`, `tasks.view`, `events.view` or `comms.content.view`) that
+   returns the units inside the caller's grant (county → constituency → ward, `GeoRef[]` with `parentId`). The web
+   will then add a cascading picker.
+2. **Attendance list shape.** §25 says `GET /events/:id/attendance` answers "`Paginated<EventAttendance>` +
+   `AttendanceSummary`", but there is no shared schema for the combination. The web reads
+   `Paginated<EventAttendance> & { summary?: AttendanceSummary }`. Proposed: export
+   `EventAttendancePageSchema = PaginatedSchema(EventAttendanceSchema).extend({ summary: AttendanceSummarySchema })`
+   from `packages/shared/src/campaign/events.ts` and name it in the contract.
+3. **Attendance consent notice version.** The check-in form sends `consentNoticeVersion: 'event-attendance-v1'` (a
+   web constant). Proposed: a versioned attendance notice text the tenant manages (as with the Office privacy notices),
+   or `CampaignModuleConfig.events.attendanceNoticeVersion` plus notice text, returned with the event detail so the
+   form can show the text being read to the person.
+4. **Task list sort keys.** `TaskQuery.sort` is a free string and §24 names no sort keys, so the list view sorts each
+   page in the browser. Proposed: document accepted keys for `GET /tasks` (`dueAt`, `priority`, `updatedAt`,
+   `reference`), answering 400 for others.
+5. **People picker for viewers.** `GET /org/assignable-users` needs a create / assign / manage permission, so a viewer
+   with only `tasks.view` sees just themselves in the task board "Assignee" filter. Proposed: also allow `tasks.view` and
+   `events.view` (display names only, as today).

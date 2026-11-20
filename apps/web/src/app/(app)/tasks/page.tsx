@@ -1,16 +1,13 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { TaskBoardScreen } from '@/components/tasks/task-board';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Tasks' };
 
-/** S08 Task board. */
+/** S08 Task board (board, list, calendar and workload views). API §24. */
 export default function TasksPage() {
   return (
-    <ModulePlaceholder
-      title="Tasks"
-      screen="S08 Task board"
-      description="Board, list, calendar and workload views of tasks in your departments and area: owner, reviewer, priority, due date, dependencies, checklist progress and source record. API §24."
-      breadcrumbs={[{ label: 'Campaign' }, { label: 'Tasks' }]}
-      anyOf={['tasks.view']}
-    />
+    <RequirePagePermission anyOf={['tasks.view']}>
+      <TaskBoardScreen />
+    </RequirePagePermission>
   );
 }

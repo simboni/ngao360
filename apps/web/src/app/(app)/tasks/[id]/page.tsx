@@ -1,17 +1,14 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { TaskDetailPage } from '@/components/tasks/task-detail';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Task' };
 
-/** S08 Task detail. */
-export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
+/** S08 Task detail. API §24. */
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Task"
-      screen="S08 Task detail"
-      description={`Task ${id}: description and acceptance criteria, owner, collaborators and reviewer, dependencies, checklist, comments, attachments, completion evidence and the activity timeline.`}
-      breadcrumbs={[{ label: 'Campaign' }, { label: 'Tasks', href: '/tasks' }, { label: 'Task' }]}
-      anyOf={['tasks.view']}
-    />
+    <RequirePagePermission anyOf={['tasks.view']}>
+      <TaskDetailPage id={id} />
+    </RequirePagePermission>
   );
 }
