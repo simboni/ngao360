@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { sha256Hex, type TenantTx } from '@ngao360/db';
-import { canonicalPayload, type ClientSubmissionKind, type ClientSubmissionOutcome } from '@ngao360/shared';
+import { canonicalPayload, type ClientSubmissionKind, type ClientSubmissionOutcome, ERROR_CODES } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
+import { AppException } from '../../../common/http/app-exception';
 
 /** A ledger row as the sync service needs it. */
 export interface LedgerRecord {
@@ -118,5 +119,43 @@ export class ClientSubmissionLedger {
       },
       update: data,
     });
+  }
+
+  /**
+   * Accepted-path wrapper used by direct endpoints and the sync service:
+   * NEW/RETRY → `apply()` then record ACCEPTED (same transaction);
+   * REPLAY → `load(resultId)` and `replayed: true` (nothing applied);
+   * KEY_REUSED → 409 IDEMPOTENCY_KEY_REUSED (nothing applied).
+   * When `apply()` throws, the transaction rolls back and no ledger row is
+   * written; the sync service records REJECTED/CONFLICT in its own transaction.
+   */
+  async run<T>(
+    tx: TenantTx,
+    auth: AuthContext,
+    item: LedgerItem,
+    result: { type: string; id: (r: T) => string; reference: (r: T) => string | null },
+    apply: () => Promise<T>,
+    load: (resultId: string) => Promise<T>,
+  ): Promise<{ replayed: boolean; result: T }> {
+    const check = await this.check(tx, auth, item);
+    if (check.state === 'KEY_REUSED') {
+      throw new AppException(
+        ERROR_CODES.IDEMPOTENCY_KEY_REUSED,
+        HttpStatus.CONFLICT,
+        'This item was already sent with different content. Save it again as a new item.',
+        { idempotencyKey: item.idempotencyKey, kind: check.record.kind },
+      );
+    }
+    if (check.state === 'REPLAY' && check.record.resultId) {
+      return { replayed: true, result: await load(check.record.resultId) };
+    }
+    const applied = await apply();
+    await this.record(tx, auth, item, check.payloadHash, {
+      outcome: 'ACCEPTED',
+      resultType: result.type,
+      resultId: result.id(applied),
+      resultReference: result.reference(applied),
+    });
+    return { replayed: false, result: applied };
   }
 }

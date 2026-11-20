@@ -83,7 +83,9 @@ export type SyncResponse = z.infer<typeof SyncResponseSchema>;
 /** Sync-specific error codes (in addition to ERROR_CODES). */
 export const SYNC_ERROR_CODES = {
   IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
+  /** The item was saved on the device longer ago than FieldModuleConfig.offlineMaxAgeHours. */
   STALE: 'STALE',
+  /** The server record changed since the device read it (stale version, replaced or cancelled deployment, retired template). */
   SERVER_CHANGED: 'SERVER_CHANGED',
 } as const;
 

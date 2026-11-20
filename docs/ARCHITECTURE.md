@@ -1,7 +1,7 @@
 # NGAO360 architecture
 
-This document covers the platform foundation and the NGAO TALLY MVP, which are stages 1 and 4 of the
-blueprint roadmap. It explains what exists, where it lives and the rules that module work must
+This document covers the platform foundation and the NGAO TALLY MVP (roadmap stages 1 and 4), NGAO360
+Office (stage 5) and the prepared field and election operations module (stage 3, §14). It explains what exists, where it lives and the rules that module work must
 follow. For endpoints, see [API_CONTRACT.md](./API_CONTRACT.md). For local setup, see
 [DEVELOPMENT.md](./DEVELOPMENT.md).
 
@@ -27,6 +27,9 @@ apps/
         admin/        ← admin module agent
         office/       ← NGAO360 Office (blueprint 9): correspondence/, appointments/, cases/, projects/,
                         public/ (unauthenticated portal area), common/ (location, scope, references)
+        field/        ← field and election operations (blueprint 6, 7, 13.4): agents/, deployment/,
+                        readiness/, reports/, incidents/, warroom/, sync/, common/ (station-code
+                        location and scope, election cycle, idempotency ledger), field.dto.ts
   web/                Next.js App Router (TypeScript), Tailwind, PWA shell
     src/
       app/            routes; (app)/ = authenticated shell; tally/ layout adds the parallel-tally banner
@@ -53,6 +56,9 @@ docs/                 BLUEPRINT, DECISIONS, RESEARCH, this file, API_CONTRACT, D
 | Admin UI | `apps/web/src/app/(app)/admin/**`, `apps/web/src/app/(app)/dashboard/**`, `apps/web/src/components/admin/**` | |
 | Office: correspondence + appointments/meetings | API `modules/office/correspondence/**`, `modules/office/appointments/**`; web `app/(app)/office/correspondence/**`, `app/(app)/office/appointments/**`, `components/office/correspondence/**`, `components/office/appointments/**` | `office.module.ts`, `office/common/**`, `office/layout.tsx` |
 | Office: citizen cases + public requests | API `modules/office/cases/**`, `modules/office/public/public-cases.controller.ts`; web `app/(app)/office/cases/**`, `app/p/[tenantSlug]/page.tsx`, `request/**`, `track/**`, `components/office/cases/**`, `components/office/public/cases-*` | `public/public-portal.service.ts`, `public-rate-limit.ts`, `public-abuse.service.ts`, `public-shell.tsx` |
+| Field A: agents, deployment, readiness (S13–S15) and the mobile home API | API `modules/field/agents/**` (incl. `field-me.controller.ts`: `GET /field/me`, `POST /field/evidence`), `modules/field/deployment/**`, `modules/field/readiness/**`; web `app/(app)/field/agents/**`, `app/(app)/field/deployment/**`, `app/(app)/field/readiness/**`, `components/field/agents/**`, `components/field/deployment/**`, `components/field/readiness/**` | `field.module.ts`, `field.dto.ts`, `field.constants.ts`, `field/common/**`, `app/(app)/field/layout.tsx` |
+| Field B: field reports, incidents, offline sync and the mobile PWA (S11, S17) | API `modules/field/reports/**`, `modules/field/incidents/**`, `modules/field/sync/**`; web `app/m/**`, `app/(app)/field/incidents/**`, `components/field/mobile/**`, `components/field/reports/**`, `components/field/incidents/**`, `lib/offline/**`, `public/sw.js` | same, plus `lib/nav.ts` (items already present) |
+| Field C: War Room (S16) | API `modules/field/warroom/**`; web `app/(app)/warroom/**`, `components/field/warroom/**` | same; `components/field/war-room-banner.tsx` must stay in the War Room layout |
 | Office: projects + institutions + public projects | API `modules/office/projects/**`, `modules/office/public/public-projects.controller.ts`; web `app/(app)/office/projects/**`, `app/p/[tenantSlug]/projects/**`, `components/office/projects/**`, `components/office/public/projects-*` | same as above |
 
 Shared contracts in `packages/shared` and `packages/db/prisma/schema.prisma` already cover the full data
@@ -117,7 +123,7 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
   - An optional election cycle.
   - `valid_from` and `expires_at`.
   - A soft revoke.
-- Effective grants are permission × scope. `RbacGuard` passes a request if any held grant is ORGANISATION-wide, contains the target's unit (geographic units have a materialised `path` of ancestor ids), or names the target station.
+- Effective grants are permission × scope. `RbacGuard` passes a request if any held grant is ORGANISATION-wide, contains the target's unit (geographic units have a materialised `path` of ancestor ids), or names the target station. A station grant names the station by code within its election cycle (`stationLineageKey`), so it keeps working across registry versions.
 - List endpoints must filter using `PermissionService.scopeFor()` and `stationScopeWhere()`.
 - Separation of duties (blueprint 3.2) is enforced per record in services. A user may never be both submitter and verifier, or verifier and approver, of the same record; the error code is `SEPARATION_OF_DUTIES`. No system role holds both `tally.submit` and `tally.verify`, or both `tally.verify` and `tally.approve` (checked by unit test).
 
@@ -214,4 +220,76 @@ tenancy, identity, RBAC, audit and storage. Contract: [API_CONTRACT.md](./API_CO
 - **Historical data.** Import 2022 data into a separate cycle with `dataProvenance = HISTORICAL`. Simulated governor forms belong in a `SYNTHETIC` cycle. Every screen and export must show the provenance label.
 - **Personal data in scans.** Scanned forms show presiding officers' and agents' names and signatures. Image viewers for demos should support blurring or redaction overlays. Never alter the stored original.
 - **OCR.** There is no OCR engine yet. The worker is a stub that sets `NOT_CONFIGURED`. RESEARCH.md recommends PaddleOCR or docTR with field-box crops plus a digit classifier.
-- **Offline capture.** The PWA has a shell only. The encrypted IndexedDB draft queue with idempotency keys is not built yet (blueprint 13.4).
+- **Offline capture.** The PWA has the `/m` shell and route stubs; the encrypted IndexedDB queue is designed in §14.1 and built by the field module work (server side: the idempotency ledger exists).
+
+## 14. Field and election operations
+
+Blueprint 6 (field, registry, agents), 7 (War Room), 11.3 (mobile PWA), 13.4 (offline). Contract:
+[API_CONTRACT.md](./API_CONTRACT.md) §15–22. Module key `field` (default off); the War Room needs
+`field` **and** `tally` (`@RequireModule('field', 'tally')`, `PERMISSION_MODULE_TENANT_MODULES`).
+
+- **Station lineage.** A registry amendment (new APPROVED version) creates new polling-station rows
+  with the same codes. Everything that names a station keys on (election cycle, station code):
+  POLLING_STATION grants (`role_assignments.polling_station_code`, filled by a trigger; matched with
+  `stationLineageKey` in `scopeAllows`, `stationScopeWhere`, `submissionScopeWhere`), tally duplicate
+  detection and canonical groups, dashboard station counts and every field table
+  (`polling_station_code` + `election_cycle_id`, never a registry row id). New field records resolve
+  the code in the approved registry (`resolveStationByCode`); responses mark codes dropped by a later
+  amendment with `station.inApprovedRegistry=false`.
+- **Data model** (migration `20261122000100_field_election_ops`): `agents` (masked phone/ID only) and
+  `agent_sensitive` (ID number, phone, M-Pesa, next of kin; read only by the audited reveal),
+  `agent_accreditations` (per cycle; recorded, never granted), `agent_trainings`,
+  `agent_status_events`; `deployments` (agent × station code × cycle × role × shift; replacement
+  links; partial unique indexes against double booking and a second chief agent) and
+  `deployment_events`; `readiness_checklists` / `readiness_items`; versioned
+  `field_report_templates` (maker-checker activation, frozen once active, one ACTIVE per key),
+  `field_reports` (submitted content immutable) and `field_report_evidence`; `incidents` (original
+  report immutable; initial vs triaged category and severity), `incident_events`,
+  `incident_evidence`, `incident_subjects` (restricted); `station_statuses` (manual override and last
+  derived status) and `station_status_events`; `client_submissions` (idempotency ledger). RLS on
+  every table; nothing is deleted; histories are append-only (triggers, also for the owner role).
+- **Access.** `field.*` and `warroom.*` permissions; roles Field coordinator, Deployment planner,
+  Incident desk officer, War Room commander, War Room observer and the station-scoped Polling agent
+  (mobile). Separation of duties: report reviewer ≠ author, template activator ≠ creator, incident
+  closer ≠ reporter and ≠ resolver (DB checks), triager ≠ reporter, an agent acts only on their own
+  deployments; role-level rules `incident-resolve-vs-close` and `field-agent-vs-agent-admin`.
+- **Helpers for module agents** (`modules/field/common`): `resolveFieldCycle`, `resolveStationByCode`,
+  `resolveFieldLocation`, `fieldGeoLocation`, `fieldScopeWhere`, `agentScopeWhere`,
+  `loadFieldLocations`, `ClientSubmissionLedger` (`check`, `record`, `run`). Geo kinds in
+  `FIELD_GEO_KIND` are registered by `FieldModule`. DTO classes for every endpoint are in
+  `field.dto.ts`.
+- **Service seams for sync.** The sync service (Field B) applies items through the owning services.
+  Each owner exposes a transaction-level method that performs exactly the direct endpoint's checks
+  and writes, without the ledger (the caller wraps it with `ClientSubmissionLedger.run`):
+  `ReportsService.submitInTx(tx, auth, dto: CreateFieldReport, ctx)`,
+  `IncidentsService.reportInTx(tx, auth, dto: CreateIncident, ctx)`,
+  `IncidentsService.addEventInTx(tx, auth, incidentId, dto: AddIncidentEvent, ctx)`,
+  `DeploymentService.confirmInTx(tx, auth, deploymentId, dto: ConfirmDeployment, ctx)` and
+  `DeploymentService.checkInInTx(tx, auth, deploymentId, dto: CheckIn, ctx)`, with
+  `ctx = { via: 'api' | 'sync'; deviceId: string }`; they return the detail DTO and throw
+  `AppException`. `SyncModule` already imports `ReportsModule`, `IncidentsModule` and
+  `DeploymentModule`.
+- **War Room status** is derived at read time (`deriveStationStatus`) from deployments, field
+  reports, open HIGH/CRITICAL incidents and tally intake matched by station code, plus the manual
+  override; no other module has to call the War Room. Every response carries `WAR_ROOM_LABEL` and
+  completeness; missing stations are never zero.
+
+### 14.1 Mobile PWA and the offline queue (Field B)
+
+- Route group `/m` (outside the desktop shell): `MobileShell` (header with connection state, bottom
+  navigation from `MOBILE_NAV`, gated by permission and module). Agents without `dashboard.view` are
+  sent from `/dashboard` to `/m`. `/m/forms` links into the existing tally upload when the user holds
+  `tally.submit` and the tally module is on.
+- The service worker keeps caching the shell and static assets only: never API responses, form
+  images or queued records (blueprint 13.4).
+- **Queue design** (to build in `apps/web/src/lib/offline/`): one IndexedDB database per signed-in
+  user and tenant; each record keeps the `LocalQueueEntry` metadata (`packages/shared/src/field/sync.ts`)
+  in clear and the payload (and any photo bytes) encrypted with AES-GCM (WebCrypto, random 96-bit IV
+  per record). The key is a **non-extractable** `CryptoKey` generated on the device and stored in
+  IndexedDB, so the payload cannot be read by copying the browser's files or by script that cannot
+  call WebCrypto on that origin. **Known gap:** a non-extractable key protects the data at rest
+  against file copying, not against someone using the unlocked browser profile on the same device;
+  wrapping the key with a PIN-derived key (PBKDF2) is the planned step (blueprint 11.3 "device PIN").
+  On sign-out the database and key are deleted; confirmed items are deleted after `ACCEPTED`.
+- Idempotency keys are generated when a record is first saved, before any upload, and reused on
+  every retry; conflicts are shown to the person (never resolved by overwriting server data).

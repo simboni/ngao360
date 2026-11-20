@@ -7,6 +7,9 @@ import {
   IdParamSchema,
   AddIncidentEventSchema,
   AgentQuerySchema,
+  AttachEvidenceSchema,
+  RosterExportSchema,
+  StationStatusParamQuerySchema,
   AgentStatusChangeSchema,
   AssignIncidentSchema,
   CancelDeploymentSchema,
@@ -55,6 +58,7 @@ import { createZodDto } from '../../common/zod/zod-dto';
 export class FieldIdParamDto extends createZodDto(IdParamSchema) {}
 export class TrainingParamDto extends createZodDto(z.object({ id: z.string().uuid(), trainingId: z.string().uuid() })) {}
 export class ReadinessItemParamDto extends createZodDto(z.object({ id: z.string().uuid(), itemId: z.string().uuid() })) {}
+export class AttachEvidenceDto extends createZodDto(AttachEvidenceSchema) {}
 export class StationCodeParamDto extends createZodDto(z.object({ code: z.string().trim().min(1).max(32) })) {}
 
 // Agents (§16)
@@ -78,6 +82,7 @@ export class CancelDeploymentDto extends createZodDto(CancelDeploymentSchema) {}
 export class ConfirmDeploymentDto extends createZodDto(ConfirmDeploymentSchema) {}
 export class CheckInDto extends createZodDto(CheckInSchema) {}
 export class CheckOutDto extends createZodDto(CheckOutSchema) {}
+export class RosterExportDto extends createZodDto(RosterExportSchema) {}
 export class DeploymentCoverageQueryDto extends createZodDto(DeploymentCoverageQuerySchema) {}
 
 // Readiness (§18)
@@ -108,6 +113,7 @@ export class RecordIncidentSubjectDto extends createZodDto(RecordIncidentSubject
 // War Room (§21)
 export class WarRoomQueryDto extends createZodDto(WarRoomQuerySchema) {}
 export class StationStatusQueryDto extends createZodDto(StationStatusQuerySchema) {}
+export class StationStatusParamQueryDto extends createZodDto(StationStatusParamQuerySchema) {}
 export class SetStationStatusDto extends createZodDto(SetStationStatusSchema) {}
 
 // Sync (§22)

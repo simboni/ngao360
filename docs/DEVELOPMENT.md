@@ -53,7 +53,7 @@ Open http://localhost:3000. The web app proxies `/api/*` to `API_INTERNAL_URL`.
 
 ### Demo accounts (synthetic)
 
-Organisation code `demo`. The password for every account is `SEED_DEMO_PASSWORD`, which defaults to `Demo-Password-2027` and must be set when `NODE_ENV=production`. The full list of accounts is in the [README](../README.md#demo-accounts-synthetic). There are 15 demo users, one for each tenant role, plus `platform` (platform operator) and `other` (used to test cross-tenant isolation).
+Organisation code `demo`. The password for every account is `SEED_DEMO_PASSWORD`, which defaults to `Demo-Password-2027` and must be set when `NODE_ENV=production`. The full list of accounts is in the [README](../README.md#demo-accounts-synthetic). There are 15 demo users for the foundation and tally roles and 6 for the field roles (21 in `demo`), plus `platform` (platform operator) and `other` (used to test cross-tenant isolation).
 
 MFA for privileged demo users (owner, director, verifiers, supervisor, legal, finance) is controlled by `SEED_DEMO_MFA`:
 
@@ -71,6 +71,7 @@ The seed is idempotent and contains:
 - all 47 counties (real public codes) and a synthetic Bungoma registry: 9 constituencies, 45 wards, 90 centres and 153 stations in an APPROVED registry version (`SYNTHETIC-2027-R1`), loaded through the same validation as a CSV import;
 - 10 tally centres (one for each constituency, plus the county centre) and a Governor contest with four fictional candidates;
 - form templates for all 22 forms of the 34–39 series. The Governor series (37A/B/C, plus 37D as a reference-only certificate) is approved by the legal officer, not by its creator; the others are awaiting approval.
+- field and election operations in `demo` (module `field` on, pinned to the 2027 synthetic cycle): one user per field role (`field@`, `field.north@`, `planner@`, `incidents@`, `commander@`, `observer@`; see the README), `agent1@`/`agent2@` linked to agent records on their station-scoped grants, 120 synthetic agents (masked phone and ID; values in `agent_sensitive`, invented `+254 700 0xx xxx` numbers and `99…` ID numbers), about 100 deployments with deliberate gaps, replacements and cancellations, readiness checklists in mixed states, the opening-of-polls and closing-and-counting templates, 30 field reports, 25 incidents across severities and statuses, and derived War Room station statuses. Times are relative to the seed run (a rehearsal day). Operational field data is created once (re-runs keep it);
 - the NGAO360 Office tenant `bungoma-governor` (synthetic County Governor's office): `office` module and public portal on, `tally` off; Bungoma county with the synthetic constituencies and wards; 18 synthetic institutions; one user per office role (see the README); 25 citizen cases across every stage, 15 correspondence items, 10 appointments, 2 meetings and 12 projects with milestones and evidence. Evidence files are small synthetic PNGs and PDFs written under `apps/api/storage` (override with `SEED_STORAGE_ROOT`) with the same content-addressed keys the API uses. The seed prints one synthetic public reference and tracking code for `/p/bungoma-governor/track`.
 
 ### NGAO360 Office
@@ -84,6 +85,14 @@ The Office module (`apps/api/src/modules/office`, web `/office/*` and `/p/[tenan
 - **Images.** The API uses `sharp` (prebuilt libvips from the npm registry) to re-encode portal photos and public project photos without metadata. HEIC cannot be decoded on the server and is refused at the portal.
 - **Public documents.** Project PDFs reach the public only once their `malwareScanStatus` is `CLEAN`. There is no scanner yet: a scanner (or, in rehearsals, the owner database client) must record `CLEAN`.
 - **Not built yet.** Notifications for portal acknowledgements are queued (`office.case.acknowledgement` on `NOTIFICATION_QUEUE`) but no processor sends them.
+
+### Field and election operations
+
+The field module (`apps/api/src/modules/field`, web `/field/*`, `/warroom`, mobile `/m`) is switched on per organisation in `tenant_modules` (`moduleKey = 'field'`, default off). Its `config` is `FieldModuleConfigSchema` (`packages/shared/src/field/common.ts`): the election cycle field operations work on, whether check-ins may carry a location (and the notice shown first), initial incident severity per category, the agent privacy-notice version and the offline age limit (72 h). The War Room needs both `field` and `tally`. The endpoints are contracted in `docs/API_CONTRACT.md` §15–22 and are built by the field module agents (ownership in `docs/ARCHITECTURE.md` §1); the schema, permissions, roles, DTOs, helpers and seed exist.
+
+- **Station codes, not row ids.** Field records, station-scoped grants, tally duplicate detection and dashboard station counts key on (election cycle, station code), so approving an amended registry keeps them attached.
+- **Agent personal data** sits in `agent_sensitive`; lists show masked values. Reveal and change need `field.agents.reveal_sensitive` (MFA), a reason and re-authentication, and are audited by field name.
+- **Offline.** The server keeps an idempotency ledger (`client_submissions`); see `docs/ARCHITECTURE.md` §14.1 for the client queue design and its encryption gap.
 
 ### OCR
 
@@ -120,6 +129,8 @@ The test layers:
 | API integration (jest + supertest) | `apps/api/src/modules/*/__tests__`, `apps/api/test` | full HTTP stack against `ngao360_test`, with the runtime role under RLS |
 | RLS and guards | `apps/api/test/rls.integration.spec.ts` | cross-tenant reads by id return nothing; append-only and immutability triggers |
 | Governor rehearsal | `apps/api/test/governor-rehearsal.e2e.spec.ts` | the demo seed in a fresh synthetic tenant, with real sign-in and TOTP, and the 37A/37B flow from start to finish |
+| Station lineage | `apps/api/test/registry-lineage.integration.spec.ts` | a station-scoped grant survives a newly approved registry version, duplicates are found across versions, dashboard station counts stay correct |
+| Field foundation | `apps/api/test/field-foundation.integration.spec.ts`, `apps/api/src/modules/field/__tests__`, `packages/shared/src/field/field.test.ts`, `apps/web/src/components/field/__tests__` | RLS on every field table, no deletes, append-only histories, immutable incident reports and field reports, deployment slot rules, closure separation, idempotency ledger, scope by station code, War Room module gating, roles and SoD, contracts and navigation |
 | Office integration | `apps/api/test/office-*.integration.spec.ts` | case stage machine and second-person closure, public tracking leakage, rate limits, cross-tenant isolation of every Office table, `MODULE_DISABLED`, project verification rules, correspondence and appointments |
 | Office rehearsal | `apps/api/test/office-governor-rehearsal.e2e.spec.ts` | system roles with real sign-in, TOTP and re-auth: portal request → triage → assign → referral → resolution → citizen tracking (public events only) → closure by a second person; project → evidence verified by another user → verified completion → publication showing only approved fields |
 | Browser smoke (Playwright) | `scripts/smoke/web-smoke.cjs` | clerk inbox and capture image, supervisor results banner; writes `docs/screenshots/` |

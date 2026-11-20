@@ -61,6 +61,8 @@ export const DeploymentDetailSchema = DeploymentSummarySchema.extend({
   createdAt: IsoDateTimeSchema,
   events: z.array(DeploymentEventSchema),
   allowedActions: z.array(DeploymentAllowedActionSchema),
+  /** Non-blocking planner conflicts for this slot (e.g. agent not yet accredited). */
+  warnings: z.array(z.lazy(() => DeploymentConflictSchema)),
 });
 export type DeploymentDetail = z.infer<typeof DeploymentDetailSchema>;
 
@@ -106,6 +108,20 @@ export const ReplaceDeploymentSchema = z.object({
   reason: ReasonSchema,
 });
 export type ReplaceDeployment = z.infer<typeof ReplaceDeploymentSchema>;
+
+export const ReplaceDeploymentResultSchema = z.object({
+  replaced: z.lazy(() => DeploymentDetailSchema),
+  successor: z.lazy(() => DeploymentDetailSchema),
+});
+export type ReplaceDeploymentResult = z.infer<typeof ReplaceDeploymentResultSchema>;
+
+/** POST /field/deployments/roster-export (CSV; masked contact only). */
+export const RosterExportSchema = z.object({
+  electionCycleId: UuidSchema,
+  geographicUnitId: UuidSchema.nullable().default(null),
+  reason: ReasonSchema,
+});
+export type RosterExport = z.infer<typeof RosterExportSchema>;
 
 export const CancelDeploymentSchema = z.object({ expectedVersion: z.number().int().min(1), reason: ReasonSchema });
 export type CancelDeployment = z.infer<typeof CancelDeploymentSchema>;

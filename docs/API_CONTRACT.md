@@ -5,10 +5,10 @@ Every request and response type named here is exported from `@ngao360/shared`
 (`packages/shared/src`). If you need a field that is not here, add it to the shared schema
 first, then update this file. Do not invent ad-hoc shapes.
 
-Status: §2–8 are **implemented**. §9–13 (NGAO360 Office and its public portal) are **to be
-implemented** by the office module agents; §13.1 (portal info) and the shared Office
-infrastructure (module activation, geo resolvers, public rate limiter, abuse check, tenant
-resolution) are already implemented.
+Status: §2–13 are **implemented** (NGAO360 Office included). §15–22 (field and election
+operations, the War Room and offline sync) are **to be implemented** by the field module agents;
+their data model, shared DTOs, module activation, geo resolvers, station-code location and scope
+helpers and the idempotency ledger already exist.
 
 ---
 
@@ -266,7 +266,7 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/admin/role-assignments` | `roles.view` | `PaginationQuery & { userId?, roleId?, includeRevoked? }` | `Paginated<RoleAssignment>` | |
-| POST | `/admin/role-assignments` | `roles.assign` **(reauth)** | `CreateRoleAssignment` | `RoleAssignment` (201) | Checks the scope target exists, and `expiresAt > validFrom`. A user cannot grant a role to themself. Grantor scope: an organisation-wide assignment needs an organisation-wide `roles.assign`; a geographic one must lie inside the grantor's `roles.assign` geography (and election cycle); a grantor whose `roles.assign` is not organisation-wide can only hand out permissions they hold over the same target (403 `OUT_OF_SCOPE`). Audit: `ROLE_ASSIGNED`. |
+| POST | `/admin/role-assignments` | `roles.assign` **(reauth)** | `CreateRoleAssignment` | `RoleAssignment` (201) | Checks the scope target exists, and `expiresAt > validFrom`. A POLLING_STATION grant stores the station's code (`pollingStationCode`, set by a DB trigger) and matches that code in every registry version of the station's election cycle (station lineage). A user cannot grant a role to themself. Grantor scope: an organisation-wide assignment needs an organisation-wide `roles.assign`; a geographic one must lie inside the grantor's `roles.assign` geography (and election cycle); a grantor whose `roles.assign` is not organisation-wide can only hand out permissions they hold over the same target (403 `OUT_OF_SCOPE`). Audit: `ROLE_ASSIGNED`. |
 | POST | `/admin/role-assignments/:id/revoke` | `roles.assign` **(reauth)** | `RevokeRoleAssignment` | `RoleAssignment` | The assignment must lie inside the grantor's `roles.assign` scope. Soft revoke (`revokedAt`, `revokedById`, reason). Audit: `ROLE_REVOKED`. |
 
 ### 6.4 Audit log
@@ -281,15 +281,15 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 
 | Method | Path | Permission | Request | Response | Notes |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/dashboard/summary` | `dashboard.view` | `{ electionCycleId? }` | `DashboardSummary` | KPIs: expected stations, forms received, verified, awaiting review, open discrepancies. Tally KPIs only appear for callers with `tally.view`. |
+| GET | `/dashboard/summary` | `dashboard.view` | `{ electionCycleId? }` | `DashboardSummary` | KPIs: expected stations, forms received, verified, awaiting review, open discrepancies. Tally KPIs only appear for callers with `tally.view`. "Stations with forms" match filed forms to the approved registry by station code within the cycle (station lineage), so a registry amendment never turns a received station into a missing one. |
 | GET | `/notifications` | Authenticated | `PaginationQuery & { unreadOnly? }` | `Paginated<Notification>` | Hides notifications whose `module` the user can no longer access. |
 | POST | `/notifications/:id/read` | Authenticated | `IdParam` | `OkResponse` | Only the caller's own notifications. |
 | POST | `/notifications/read-all` | Authenticated | none | `OkResponse` | |
 
 ## 8. Tenant module activation (implemented: `apps/api/src/tenant-modules`)
 
-Modules (`TENANT_MODULES` in `@ngao360/shared`): `tally` (default **on**) and `office` (default
-**off**). State lives in `tenant_modules` (RLS); a missing row means the default. `GET /auth/me`
+Modules (`TENANT_MODULES` in `@ngao360/shared`): `tally` (default **on**), `office` (default
+**off**) and `field` (default **off**; the War Room also needs `tally`). State lives in `tenant_modules` (RLS); a missing row means the default. `GET /auth/me`
 returns `modules: TenantModuleKey[]` and the web navigation hides switched-off modules.
 Controllers tagged `@RequireModule('office')` answer **403 `MODULE_DISABLED`** when the tenant has
 the module off (`ModuleGuard`, which runs after `RbacGuard`). Switching a module off never deletes
@@ -582,3 +582,206 @@ await api.post('/tally/submissions', form);
 
 Handle `ApiRequestError.code`. `REAUTH_REQUIRED` opens the password prompt (`POST /auth/reauth`) and then retries.
 `SEPARATION_OF_DUTIES` shows a plain-language explanation. `OUT_OF_SCOPE` and `FORBIDDEN` show a no-access state.
+
+---
+
+## Field and election operations conventions (§15–22)
+
+Status: **to be implemented** by the field module agents. The data model (migrations
+`20261122000000_station_code_lineage`, `20261122000100_field_election_ops`), shared DTOs
+(`packages/shared/src/field/`), DTO classes (`apps/api/src/modules/field/field.dto.ts`), geo
+resolvers, location and scope helpers and the idempotency ledger
+(`apps/api/src/modules/field/common/`) already exist. Blueprint: 6.1–6.3, 7, 10.3, 11.3, 13.4, 15.
+
+### 15. Rules for every field, War Room and sync endpoint
+
+| Topic | Rule |
+| --- | --- |
+| Module | Field controllers are tagged `@RequireModule('field')`; the War Room is `@RequireModule('field', 'tally')`. A switched-off module answers **403 `MODULE_DISABLED`**. `field` defaults **off**; `FieldModuleConfig` (`packages/shared/src/field/common.ts`) is read with `TenantModulesService.fieldConfig(tx)`. `PUT /workspace/modules/field` validates it (400 `VALIDATION_FAILED`). |
+| Election cycle | Every field record belongs to one election cycle. Requests take an optional `electionCycleId`; otherwise `resolveFieldCycle()` uses `FieldModuleConfig.electionCycleId`, then the ACTIVE cycle with the latest election date (404 when none). Responses carry the cycle; screens show `DATA_PROVENANCE_LABELS` for SYNTHETIC / HISTORICAL cycles. |
+| Station lineage | Stations are named by **`pollingStationCode`** within the cycle, never by registry row id. New records resolve the code against the cycle's **APPROVED** registry version with `resolveStationByCode()` (400 `VALIDATION_FAILED`, path `pollingStationCode`, when the code is not in it). Responses return `FieldLocation` (`loadFieldLocations()`); `station.inApprovedRegistry=false` flags a code dropped by a later amendment (the record stays). Area-level records (field reports, incidents) may instead give a ward, constituency or county `geographicUnitId` (`resolveFieldLocation()`). |
+| Geography and scope | Record routes use the geo kinds in `FIELD_GEO_KIND` (`fieldAgent`, `fieldDeployment`, `fieldReadinessChecklist`, `fieldReport`, `fieldIncident`), e.g. `@RequirePermission('field.incidents.triage', { geo: { kind: 'fieldIncident', from: 'params', key: 'id' } })`. Lists filter with `fieldScopeWhere(permissions.scopeFor(auth, perm))` (agents: `agentScopeWhere`). Cycle-limited grants reach only records of that cycle. Station-scoped grants (`POLLING_STATION`) match by station code in the granted station's cycle, so they survive registry amendments. Writes that name a station or area in the body check it with `scopeAllows(scope, fieldGeoLocation(cols))` → 403 `OUT_OF_SCOPE`. |
+| Tenancy | `prisma.tenantTx()` only. Load every id from a request (agent, user, file, unit, template, incident) inside the transaction; RLS hides other tenants' rows, so a missing row is 404 / 400. |
+| Concurrency | Mutable records carry `version`. Mutations take `expectedVersion` and write `where: { id, version: expectedVersion }` with `version: { increment: 1 }`; a stale value answers **409 `CONFLICT`** with `details: { currentVersion, serverState }` (the current DTO), so the person can review it. Never overwrite silently. |
+| Idempotency | Device-originated writes (`POST /field/reports`, `POST /field/incidents`, `POST /field/deployments/:id/confirm`, `POST /field/deployments/:id/check-in`, every sync item) carry `clientIdempotencyKey` (UUID chosen by the device when the record is first saved locally) and `deviceId`. They go through `ClientSubmissionLedger` (`client_submissions`, unique per tenant + user + key, advisory-locked): **first time** → apply, record `ACCEPTED`, 201; **same key, same payload** (SHA-256 of `canonicalPayload`) → **200** with the original result and header `Idempotent-Replay: true`, nothing applied again; **same key, different payload or kind** → **409 `IDEMPOTENCY_KEY_REUSED`**, nothing applied; a key last answered REJECTED/CONFLICT is re-evaluated on retry. Field reports and incidents also have a unique (tenant, author, key) index as a backstop. |
+| Offline age | Items saved on the device more than `FieldModuleConfig.offlineMaxAgeHours` (72) ago, or more than 5 minutes in the future, are refused: 400 `VALIDATION_FAILED` (direct) / `REJECTED` + `STALE` (sync). |
+| Transitions | Use the shared helpers (`canTransitionAgent`, `canTransitionDeployment`, `canTransitionFieldReport`, `canTransitionIncident`); an illegal move answers **409 `INVALID_TRANSITION`**. Every transition writes its audit action with before/after status and reason, plus the append-only history row named below. |
+| History | Never deleted (DB triggers, even for the owner role): every field table. Append-only (no UPDATE): `agent_status_events`, `deployment_events`, `field_report_evidence`, `incident_events`, `incident_evidence`, `incident_subjects`, `station_status_events`. Immutable content: the original incident report (category as reported, initial severity, time, location, description, reporter, offline metadata), submitted field-report content, an ACTIVE or RETIRED report template, a deployment's agent / station / cycle / role, an ACCEPTED ledger result. A DB error `IMMUTABLE_RECORD` maps to 409. |
+| Separation of duties | Report reviewer ≠ author (DB check). Template activator ≠ creator (DB check). Incident closer ≠ reporter and ≠ resolver (DB check); incident triager ≠ reporter. An agent confirms and checks in only their own deployments (`agents.user_id = caller`, else 403 `FORBIDDEN`). Nobody reveals or edits their own agent record's sensitive data. Role-level rules: `incident-resolve-vs-close`, `field-agent-vs-agent-admin` (`ROLE_SOD_RULES`). Violations answer 403 `SEPARATION_OF_DUTIES`. |
+| Agent personal data | National ID number, phone, M-Pesa number and next of kin live only in `agent_sensitive`. Lists and details return `phoneMasked` / `nationalIdMasked` and `has*` flags only. Full values only from `POST /field/agents/:id/reveal` (`field.agents.reveal_sensitive`, **reauth**, reason, the fields asked for, `Cache-Control: no-store`); every reveal and change is audited with field **names**, never values. No export, notification, log line or audit snapshot carries the values. Never store copies of ID documents (blueprint 6.3). |
+| Incident wording | Descriptions are neutral factual accounts. Categories describe what was observed (`INCIDENT_CATEGORY_LABELS`). A named person or body may be recorded only in the restricted subject record (`field.incidents.view_subject`), never in descriptions, lists, notifications or exports; nothing is labelled fraudulent or criminal (blueprint 15.3). |
+| Location privacy | Check-in coordinates are accepted only when `checkInLocationEnabled` (400 otherwise) and only from the agent's own check-in; they are returned only in `DeploymentDetail.checkInLocation` to holders of `field.deployment.view` over the station, never in lists, events or audit snapshots (`hasLocation` only). No continuous tracking. |
+| War Room wording | Every War Room response carries `label: WAR_ROOM_LABEL` ("Unofficial, internal operational figures. Not an official result or IEBC record.") and `completeness` (`expected`, `reported`, `missing`, `ratio`). A station without an update is counted as **missing**, never as zero. Tally figures link to the internal parallel tally (`PARALLEL_TALLY_DISCLAIMER` applies); no winner / elected / declared wording (`findForbiddenTallyLanguage`). |
+| Files | Evidence is stored with `StorageService.storeImmutable(purpose: 'FIELD_EVIDENCE')` (accreditation documents: `'AGENT_DOCUMENT'`): sniffed images and PDFs only, ≤ 25 MB, content-addressed, immutable. Records attach files by id; a caller may attach only files they uploaded (`stored_files.uploaded_by_id`), else 400. Signed URLs are audited with `FILE_SOURCE_ACCESSED` (`entityType` = the field record). |
+| Notifications | In-app only for now (blueprint 10.3), `module: 'field'` (or `'warroom'`), hidden while the module is off: `deployment.assigned` (agent's user, link `/m`), `field_report.returned` (author, link `/m`), `incident.reported` for HIGH/CRITICAL initial severity (incident desk in scope), `incident.assigned` (assignee), `incident.escalated` (holders of `warroom.command` in scope). Bodies carry the reference and category label only. |
+| Errors | `VALIDATION_FAILED` details use `{ path, message }`; answer issues use `path: ['answers', questionKey]`. Conflicts use 409 with `details.serverState` where a current record exists. |
+
+### 16. Agents (`apps/api/src/modules/field/agents`) — S13
+
+Web: `/field/agents`, `/field/agents/[id]`. Geo kind `fieldAgent` = home county/constituency/ward plus
+the stations of the agent's active deployments.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/agents` | `field.agents.view` | `AgentQuery` | `Paginated<AgentSummary>` | `agentScopeWhere`. `accreditationStatus`, `trainingCompleted/Total` and `activeDeployments` are for `electionCycleId` (default field cycle). `undeployedOnly` = no ASSIGNED/CONFIRMED/CHECKED_IN deployment. `q` matches reference and names, never phone or ID. |
+| GET | `/field/agents/:id` | `field.agents.view` **(geo)** | `FieldIdParam` | `AgentDetail` | Masked values only. `allowedActions` from permissions and state. |
+| POST | `/field/agents` | `field.agents.create` | `CreateAgent` | `AgentDetail` (201) | `homeWardId` must be a WARD inside the caller's `field.agents.create` scope (403 `OUT_OF_SCOPE`). Reference `nextReference(tx, tenantId, 'AGT', cycleYear)`. Status `RECRUITED`; appends `agent_status_events` (null → RECRUITED). `privacyNoticeVersion` = config `agentPrivacyNoticeVersion`, acknowledged now. Writes `agent_sensitive` and the masked columns (`maskPhone`, `maskNationalId`, `hasMpesaNumber`, `hasNextOfKin`). Audit: `AGENT_CREATED` (no sensitive values, only `has*` flags). |
+| PATCH | `/field/agents/:id` | `field.agents.edit` **(geo)** | `UpdateAgent` | `AgentDetail` | `expectedVersion`. A new `homeWardId` must also be in scope. Not allowed when WITHDRAWN (409 `IMMUTABLE_RECORD`). Audit: `AGENT_UPDATED` (changed fields). |
+| POST | `/field/agents/:id/status` | `field.agents.edit` **(geo)** | `AgentStatusChange` | `AgentDetail` | `AGENT_STATUS_TRANSITIONS`. Moving to INACTIVE or WITHDRAWN while the agent has active deployments answers 409 `CONFLICT` with `details.deploymentIds` (replace them first). Appends `agent_status_events`. Audit: `AGENT_STATUS_CHANGED`. |
+| POST | `/field/agents/:id/reveal` | `field.agents.reveal_sensitive` **(geo, reauth)** | `RevealAgentSensitive` | `AgentSensitiveReveal` | Only the requested fields. Refused for the caller's own agent record (403 `SEPARATION_OF_DUTIES`). `Cache-Control: no-store`. Audit: `AGENT_SENSITIVE_REVEALED` with `after: { fields }` and the reason. |
+| PUT | `/field/agents/:id/sensitive` | `field.agents.reveal_sensitive` **(geo, reauth)** | `UpdateAgentSensitive` | `AgentDetail` | Given fields replace stored ones (`null` clears). Refreshes the masked columns and flags; bumps `version`. Audit: `AGENT_SENSITIVE_UPDATED` with changed field names only. |
+| POST | `/field/agents/:id/trainings` | `field.agents.training` **(geo)** | `RecordTraining` | `AgentTraining` (201) | Audit: `AGENT_TRAINING_RECORDED`. |
+| PATCH | `/field/agents/:id/trainings/:trainingId` | `field.agents.training` **(geo)** | `TrainingParam` + `UpdateTraining` | `AgentTraining` | The training must belong to the agent (404). Audit: `AGENT_TRAINING_RECORDED` (before/after). |
+| PUT | `/field/agents/:id/accreditation` | `field.agents.accreditation` **(geo)** | `SetAccreditation` | `AgentAccreditation` | Upsert per (agent, cycle). Records the status; NGAO360 never grants accreditation. Audit: `AGENT_ACCREDITATION_RECORDED`. |
+| POST | `/field/agents/:id/accreditation/evidence` | `field.agents.accreditation` **(geo)** | multipart `file` + `metadata` `{ electionCycleId }` | `AgentAccreditation` | `storeImmutable(purpose: 'AGENT_DOCUMENT')` → `evidenceFileId`. Accreditation letters only, never ID copies (UI warning). Audit: `FILE_STORED`, `AGENT_ACCREDITATION_RECORDED`. |
+| POST | `/field/agents/:id/user` | `field.agents.edit` **(geo)** | `LinkAgentUser` | `AgentDetail` | Links (or with `null` unlinks) an ACTIVE user of the tenant who is not linked to another agent (409). Grants no role: the station-scoped Polling agent role is assigned in `/admin/role-assignments`. Audit: `AGENT_USER_LINKED`. |
+| GET | `/field/agents/:id/history` | `field.agents.view` **(geo)** | `FieldIdParam` | `AuditEvent[]` | Agent, training, accreditation and reveal events, oldest first (reveals show who, when, which fields, why). |
+
+#### 16.4 Mobile home and evidence (`field-me.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/me` | any of `field.reports.submit`, `field.incidents.report`, `field.deployment.checkin` | — | `FieldMe` | The caller's agent record (non-sensitive), deployments of that agent in the field cycle (ASSIGNED, CONFIRMED, CHECKED_IN, plus CHECKED_OUT today) as `MyAssignment` (with `checkInLocationEnabled` and notice), ACTIVE templates usable in the caller's scope, unread field notices. `can.uploadResultForm` = `tally.submit` and the tally module on. No other agent's data. |
+| POST | `/field/evidence` | any of `field.reports.submit`, `field.incidents.report`, `field.incidents.triage` | multipart `file` | `FieldEvidenceUpload` (201; 200 when `duplicate`) | `storeImmutable(purpose: 'FIELD_EVIDENCE')`. The file is attached later by id (reports, incidents, sync items). Photos are not re-encoded yet (gap: EXIF location stays in the stored original; only signed, audited access). Audit: `FILE_STORED`. |
+
+### 17. Deployment (`apps/api/src/modules/field/deployment`) — S14
+
+Web: `/field/deployment`; mobile `/m`, `/m/checkin`. Geo kind `fieldDeployment`. Status
+`DEPLOYMENT_STATUS_TRANSITIONS`; active = ASSIGNED, CONFIRMED, CHECKED_IN. DB backstops: one active
+deployment per agent and shift (`deployments_agent_active_shift_key`), one active chief agent per
+station and shift (`deployments_station_chief_active_key`), slot identity immutable.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/deployments` | `field.deployment.view` | `DeploymentQuery` | `Paginated<DeploymentSummary>` | `fieldScopeWhere`. REPLACED/CANCELLED only with `includeInactive`. No coordinates. |
+| GET | `/field/deployments/coverage` | `field.deployment.view` | `DeploymentCoverageQuery` | `DeploymentCoverage` | Planner grid: every station of the approved registry in scope (`expectedStations`, the denominator), its active slots, `covered` = an active CHIEF_AGENT or STATION_AGENT. Uncovered stations are listed as "Not assigned", never dropped. `conflicts` lists double bookings, inactive or unaccredited agents and codes missing from the approved registry. |
+| GET | `/field/deployments/:id` | `field.deployment.view` **(geo)** | `FieldIdParam` | `DeploymentDetail` | Events oldest first; `checkInLocation` only here; `warnings` = non-blocking conflicts. |
+| POST | `/field/deployments` | `field.deployment.plan` | `CreateDeployment` | `DeploymentDetail` (201) | Station code resolved in the approved registry and inside the caller's plan scope (403 `OUT_OF_SCOPE`). Agent must exist, be ACTIVE or STANDBY (409 `CONFLICT`, kind `AGENT_NOT_ACTIVE`) and be visible to the caller. Blocking conflicts (`AGENT_DOUBLE_BOOKED` on an overlapping shift, `SLOT_ALREADY_FILLED` for a second chief agent) answer 409 `CONFLICT` with `details.conflicts: DeploymentConflict[]`; `AGENT_NOT_ACCREDITED` is a warning. Status ASSIGNED; event CREATED. Notification `deployment.assigned` to the agent's user. Audit: `DEPLOYMENT_CREATED`. |
+| PATCH | `/field/deployments/:id` | `field.deployment.plan` **(geo)** | `UpdateDeployment` | `DeploymentDetail` | ASSIGNED or CONFIRMED only (409 `IMMUTABLE_RECORD`). A shift change re-checks double booking. Event UPDATED. Audit: `DEPLOYMENT_UPDATED`. |
+| POST | `/field/deployments/:id/replace` | `field.deployment.plan` **(geo)** | `ReplaceDeployment` | `ReplaceDeploymentResult` (200) | One transaction: original → REPLACED (event REPLACED, reason), successor row with the same station, role and shift, `replacesDeploymentId` = original, status ASSIGNED. Successor checks as in create. From ASSIGNED, CONFIRMED or CHECKED_IN. Audit: `DEPLOYMENT_REPLACED` (both ids). |
+| POST | `/field/deployments/:id/cancel` | `field.deployment.plan` **(geo)** | `CancelDeployment` | `DeploymentDetail` | ASSIGNED or CONFIRMED → CANCELLED with reason. The station shows as not assigned again. Audit: `DEPLOYMENT_STATUS_CHANGED`. |
+| POST | `/field/deployments/:id/confirm` | `field.deployment.checkin` **(geo)** | `ConfirmDeployment` | `DeploymentDetail` (200; replay 200) | Own deployment only (403). ASSIGNED → CONFIRMED. Ledger kind `ASSIGNMENT_CONFIRMATION`. Already CONFIRMED or later with the same key → replay; deployment REPLACED or CANCELLED, or stale `expectedVersion` → 409 `CONFLICT` with `details: { reason: 'SERVER_CHANGED', serverState: DeploymentSummary }`. Event CONFIRMED. Audit: `DEPLOYMENT_STATUS_CHANGED`. |
+| POST | `/field/deployments/:id/check-in` | `field.deployment.checkin` **(geo)** | `CheckIn` | `DeploymentDetail` (200; replay 200) | Own deployment only. CONFIRMED → CHECKED_IN; from ASSIGNED the server records CONFIRMED then CHECKED_IN (two events). `checkedInAt` is device time (offline age rules); the server keeps its own receipt time on the event. `location` only when enabled (400 otherwise). Ledger kind `CHECK_IN`; conflicts as for confirm. Audit: `DEPLOYMENT_CHECKED_IN` (`hasLocation`, never coordinates). |
+| POST | `/field/deployments/:id/check-out` | `field.deployment.checkin` **(geo)** | `CheckOut` | `DeploymentDetail` | Own deployment only. CHECKED_IN → CHECKED_OUT. Audit: `DEPLOYMENT_STATUS_CHANGED`. |
+| POST | `/field/deployments/roster-export` | `field.deployment.plan` **(reauth)** | `RosterExport` | `SignedUrlResponse` | CSV (station code and name, role, shift, status, agent reference and name, masked phone) in the caller's scope, `purpose: 'EXPORT'`, with the provenance label. Never unmasked values. Audit: `DEPLOYMENT_ROSTER_EXPORTED`. |
+
+### 18. Readiness (`apps/api/src/modules/field/readiness`) — S15
+
+Web: `/field/readiness`. Geo kind `fieldReadinessChecklist`. One checklist per (cycle, station code),
+one item per `ReadinessCategory`; checklist `status` = `deriveReadinessStatus(items)`, rewritten on
+every item change.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/readiness/summary` | `field.readiness.view` | `ReadinessQuery` | `ReadinessSummary` | Denominator = stations of the approved registry in scope. Stations without a checklist count as not started, never ready. Agent figures (deployed, accredited, trained) for the same scope and cycle. |
+| GET | `/field/readiness` | `field.readiness.view` | `ReadinessQuery` | `Paginated<ReadinessChecklist>` | `fieldScopeWhere`; filters by status, category and item status. |
+| GET | `/field/readiness/:id` | `field.readiness.view` **(geo)** | `FieldIdParam` | `ReadinessChecklist` | |
+| POST | `/field/readiness/generate` | `field.readiness.update` | `GenerateReadiness` | `GenerateReadinessResult` | Creates missing checklists (all categories NOT_STARTED) for approved-registry stations inside the caller's update scope (and `geographicUnitId`). Existing checklists are untouched. Audit: `READINESS_GENERATED` (counts). |
+| PATCH | `/field/readiness/:id/items/:itemId` | `field.readiness.update` **(geo)** | `ReadinessItemParam` + `UpdateReadinessItem` | `ReadinessChecklist` | `expectedVersion` on the item. `reason` required for BLOCKED, NOT_APPLICABLE and leaving DONE (400). Audit: `READINESS_ITEM_UPDATED` (before/after item status and derived checklist status). |
+
+### 19. Field reports (`apps/api/src/modules/field/reports`) — S11
+
+Web: mobile `/m/report`; desktop review lists are built from these endpoints. Geo kind `fieldReport`.
+
+#### 19.1 Templates (`report-templates.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/report-templates` | any of `field.reports.view`, `field.reports.submit`, `field.reports.templates` | `FieldReportTemplateQuery` | `Paginated<FieldReportTemplateDto>` | Callers with only `field.reports.submit` see ACTIVE templates only. |
+| GET | `/field/report-templates/:id` | same | `FieldIdParam` | `FieldReportTemplateDto` | Any version (reports are read against the version they answered). |
+| POST | `/field/report-templates` | `field.reports.templates` | `CreateFieldReportTemplate` | `FieldReportTemplateDto` (201) | DRAFT, `version` = max + 1 for the key. `findNonFactualQuestions()` must be empty (400 `VALIDATION_FAILED`, `path: ['schema', questionKey]`). Drafts are not edited; create a new version. Audit: `FIELD_REPORT_TEMPLATE_CREATED`. |
+| POST | `/field/report-templates/:id/transition` | `field.reports.templates` (**reauth** for ACTIVE) | `FieldReportTemplateTransition` | `FieldReportTemplateDto` | DRAFT → ACTIVE by someone other than the creator (403 `SEPARATION_OF_DUTIES`; DB check). Activating retires the key's previous ACTIVE version in the same transaction (one ACTIVE per key, partial unique index). ACTIVE → RETIRED. Audit: `FIELD_REPORT_TEMPLATE_STATE_CHANGED`. |
+
+#### 19.2 Reports
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/reports` | `field.reports.view`, or `field.reports.submit` (own reports only) | `FieldReportQuery` | `Paginated<FieldReportSummary>` | `fieldScopeWhere` on `field.reports.view`. `view=mine` = authored by the caller; `view=awaiting_review` = SUBMITTED or RETURNED-and-answered reports the caller did not author. |
+| GET | `/field/reports/:id` | `field.reports.view` **(geo)**, or the author | `FieldIdParam` | `FieldReportDetail` | Answers are read against `templateVersion`. Coordinates only to `field.reports.view` holders. |
+| POST | `/field/reports` | `field.reports.submit` | `CreateFieldReport` | `FieldReportDetail` (201; replay 200) | Template must be ACTIVE, or have been ACTIVE at `clientCreatedAt` for an offline item (else 409 `CONFLICT`, `reason: 'SERVER_CHANGED'`, `serverState` = current template). Location (station code or area) inside the caller's `field.reports.submit` scope, so a station-scoped agent reports on their own station(s) only (403 `OUT_OF_SCOPE`). `validateFieldAnswers()` must return nothing (400, `path: ['answers', key]`). `eventAt` within the offline age window. `supersedesReportId` must be the caller's own RETURNED report. Reference `FRP-YYYY-NNNNNN`. Ledger kind `FIELD_REPORT`. Audit: `FIELD_REPORT_SUBMITTED` (reference, template key/version, station code, offline flag, answered question keys; no free text). |
+| POST | `/field/reports/:id/evidence` | `field.reports.submit` (author) or `field.reports.review` **(geo)** | `AttachEvidence` | `FieldReportDetail` | Files uploaded by the caller; not when CLOSED. Append-only links. Audit: `FIELD_REPORT_EVIDENCE_ADDED`. |
+| GET | `/field/reports/:id/evidence/:fileId/url` | `field.reports.view` **(geo)** or the author | params, `DownloadQuery` | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+| POST | `/field/reports/:id/review` | `field.reports.review` **(geo)** | `ReviewFieldReport` | `FieldReportDetail` | `FIELD_REPORT_REVIEW_TRANSITIONS`; reviewer ≠ author (403 `SEPARATION_OF_DUTIES`; DB check). RETURNED notifies the author (`field_report.returned`); ESCALATED notifies `warroom.command` holders in scope. The author answers a return with a new report (`supersedesReportId`), never an edit. Audit: `FIELD_REPORT_REVIEWED`. |
+
+### 20. Incidents (`apps/api/src/modules/field/incidents`) — S17 and the incident desk
+
+Web: mobile `/m/incident`; desktop `/field/incidents`, `/field/incidents/[id]`; War Room queue.
+Geo kind `fieldIncident`. Workflow (blueprint 7.3) `INCIDENT_STATUS_TRANSITIONS`:
+REPORTED → TRIAGED → ASSIGNED → ESCALATED → RESOLVED → CLOSED (CLOSED → TRIAGED on reopen).
+Every step appends an `incident_events` row in the same transaction as the status change.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/field/incidents` | `field.incidents.view`, or `field.incidents.report` (own incidents only) | `IncidentQuery` | `Paginated<IncidentSummary>` | `fieldScopeWhere`. `view=open` (not CLOSED), `assigned_to_me`, `unassigned`, `mine` (reported by caller). Default order: severity rank desc, then `reportedAt` asc. Never includes subject records. |
+| GET | `/field/incidents/:id` | `field.incidents.view` **(geo)**, or the reporter | `FieldIdParam` | `IncidentDetail` | Reporter-only callers get the report, status, outcome and their own events (other people's notes hidden). `hasSubject` only; the record itself is §20 subject. |
+| POST | `/field/incidents` | `field.incidents.report` | `CreateIncident` | `IncidentDetail` (201; replay 200) | Location inside the caller's report scope (403 `OUT_OF_SCOPE`); station-scoped agents report on their own station(s). `initialSeverity` = `severity` = `config.incidentSeverityDefaults[category]`; `reportedCategory` = `category`. `evidenceFileIds` uploaded by the caller (`original=true` links). Status REPORTED; reference `INC-YYYY-NNNNNN`; events REPORTED (+ EVIDENCE_ADDED). Ledger kind `INCIDENT`. HIGH/CRITICAL notify the incident desk in scope. Audit: `INCIDENT_REPORTED` (reference, category, severity, station code, offline flag, description length; not the text). |
+| POST | `/field/incidents/:id/triage` | `field.incidents.triage` **(geo)** | `TriageIncident` | `IncidentDetail` | REPORTED → TRIAGED, or re-triage (severity, category, sensitivity) in TRIAGED / ASSIGNED / ESCALATED without a status change. Triager ≠ reporter (403 `SEPARATION_OF_DUTIES`). Event TRIAGED `{ severity, previousSeverity, category?, previousCategory? }`. Audit: `INCIDENT_TRIAGED`. |
+| POST | `/field/incidents/:id/assign` | `field.incidents.assign` **(geo)** | `AssignIncident` | `IncidentDetail` | From TRIAGED, ESCALATED or RESOLVED (sending a resolution back) → ASSIGNED. Assignee ACTIVE and holding `field.incidents.triage` over the incident location (400). Event ASSIGNED; notification `incident.assigned`. Audit: `INCIDENT_ASSIGNED`. |
+| POST | `/field/incidents/:id/escalate` | `field.incidents.escalate` **(geo)** | `EscalateIncident` | `IncidentDetail` | From TRIAGED, ASSIGNED or RESOLVED → ESCALATED, `escalatedTo`; optional new assignee (same rule). Event ESCALATED; notification `incident.escalated`. Audit: `INCIDENT_ESCALATED`. |
+| POST | `/field/incidents/:id/events` | `field.incidents.triage` **(geo)**; `REFERRED` and evidence holds need `field.incidents.escalate`; the reporter may add `CORRECTION` to their own incident | `AddIncidentEvent` | `IncidentEvent` (201) | Append-only; not on CLOSED (409 `INVALID_TRANSITION`). A CORRECTION never changes the original report: the detail shows it beside the report. Evidence hold sets `evidenceHold` (release clears it). Audit: `INCIDENT_EVENT_ADDED`. |
+| POST | `/field/incidents/:id/evidence` | reporter (`field.incidents.report`), or `field.incidents.triage` **(geo)** | `AttachEvidence` | `IncidentDetail` | Files uploaded by the caller; appends `incident_evidence` and an EVIDENCE_ADDED event. Audit: `INCIDENT_EVIDENCE_ADDED`. |
+| GET | `/field/incidents/:id/evidence/:fileId/url` | `field.incidents.view` **(geo)** | params, `DownloadQuery` | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+| POST | `/field/incidents/:id/resolve` | `field.incidents.resolve` **(geo)** | `ResolveIncident` | `IncidentDetail` | From TRIAGED, ASSIGNED or ESCALATED → RESOLVED with `outcome` and note. `DUPLICATE` needs `duplicateOfId` (another visible incident). UNRESOLVED is the outcome for disputed matters; they never read as resolved. Event RESOLVED. Audit: `INCIDENT_RESOLVED`. |
+| POST | `/field/incidents/:id/close` | `field.incidents.close` **(geo)** | `CloseIncident` | `IncidentDetail` | RESOLVED → CLOSED with a closure note; closer ≠ reporter and ≠ resolver (403 `SEPARATION_OF_DUTIES`; DB check `incidents_closer_check`). Event CLOSED. Audit: `INCIDENT_CLOSED`. |
+| POST | `/field/incidents/:id/reopen` | `field.incidents.close` **(geo)** | `ReopenIncident` | `IncidentDetail` | CLOSED → TRIAGED with a reason; resolution and closure fields are cleared on the row (they remain in events and audit). Event REOPENED. Audit: `INCIDENT_REOPENED`. |
+| GET | `/field/incidents/:id/subject` | `field.incidents.view_subject` **(geo)** | `FieldIdParam` | `IncidentSubject[]` | Newest first. Every call is audited: `INCIDENT_SUBJECT_VIEWED`. |
+| POST | `/field/incidents/:id/subject` | `field.incidents.view_subject` **(geo, reauth)** | `RecordIncidentSubject` | `IncidentSubject` (201) | Append-only. Event SUBJECT_RECORDED with the note "Restricted subject record added" only. Audit: `INCIDENT_SUBJECT_RECORDED` (length, reason; not the text). |
+| GET | `/field/incidents/:id/history` | `field.incidents.view` **(geo)** | `FieldIdParam` | `AuditEvent[]` | Oldest first; subject views listed without content. |
+
+### 21. War Room (`apps/api/src/modules/field/warroom`) — S16
+
+Web: `/warroom` (layout renders `WarRoomBanner`). `@RequireModule('field', 'tally')`. Scope:
+`warroom.view` geography and cycle (station-scoped grants by code). Station status (blueprint 7.2)
+is derived **at read time** by `deriveStationStatus()` from deployments (best active status at the
+station), field reports (any report = update received), open HIGH/CRITICAL incidents and tally intake
+(station-form submissions matched by **station code**: none / received / verification pending /
+verified (canonical VERIFIED) / flagged (open holding case, DISPUTED, QUARANTINED)), combined with a
+manual override in `station_statuses`. When the derived status differs from the stored one, the read
+updates `station_statuses.derived_status` and appends a DERIVED `station_status_events` row in its
+own transaction (history of observed changes); manual changes append MANUAL rows.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/warroom/overview` | `warroom.view` | `WarRoomQuery` | `WarRoomOverview` | Six panels (blueprint 7.1), each with `label`, `asOf`, `completeness` (expected = approved-registry stations in scope) and `available`. Tally panels are counts only (drill-down needs tally permissions); `available=false` when the caller lacks `tally.view`, and the UI then shows "not available", not numbers. `systemHealth` uses the health checks and the sync ledger. |
+| GET | `/warroom/stations` | `warroom.view` | `StationStatusQuery` | `StationStatusList` | One row per approved-registry station in scope, including stations with no record (NOT_ASSIGNED, missing), never omitted or zero-filled. `attentionOnly` = FLAGGED, NOT_ASSIGNED, FORM_EXPECTED or an open HIGH/CRITICAL incident. |
+| GET | `/warroom/stations/:code` | `warroom.view` (scope by code) | `StationCodeParam` + `StationStatusParamQuery` | `StationStatusDetail` | Events newest first. 404 for codes outside the approved registry and scope. |
+| PUT | `/warroom/stations/:code/status` | `warroom.command` (scope by code) **(reauth)** | `StationCodeParam` + `SetStationStatus` | `StationStatusDetail` | `FLAGGED` or `CLOSED` with a reason; `null` returns to the derived status. Appends a MANUAL event. Audit: `STATION_STATUS_SET`. Never sent to IEBC or anyone outside the organisation. |
+
+### 22. Offline sync (`apps/api/src/modules/field/sync`) — blueprint 13.4
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/field/sync` | any of `field.reports.submit`, `field.incidents.report`, `field.deployment.checkin` | `SyncRequest` (≤ 50 items) | `SyncResponse` (200) | Items are applied in order, **each in its own tenant transaction** through the owning service with exactly the checks of the direct endpoint (kind → permission: FIELD_REPORT `field.reports.submit`, INCIDENT `field.incidents.report`, INCIDENT_NOTE CORRECTION by the reporter or `field.incidents.triage`, CHECK_IN and ASSIGNMENT_CONFIRMATION `field.deployment.checkin`; missing → REJECTED `FORBIDDEN`). Per item: `ACCEPTED` (new or `replayed: true`), `REJECTED` (`errorCode` = an `ERROR_CODES` value or `STALE`), `CONFLICT` (`IDEMPOTENCY_KEY_REUSED`, or `SERVER_CHANGED` with `serverState`). One failing item never rolls back another. The item's `idempotencyKey` must equal the payload's `clientIdempotencyKey` where the payload has one (else REJECTED `VALIDATION_FAILED`). Applied items write the direct endpoint's audit action with `metadata: { via: 'sync', deviceId }`; conflicts write `SYNC_CONFLICT_RECORDED` (kind, key, code; no payload). A malformed batch is 400 `VALIDATION_FAILED` as a whole. |
+| GET | `/field/sync/status` | same | `SyncStatusQuery` | `SyncStatus` | The caller's own ledger rows for the device: last receipt, accepted count, open conflicts. Never another user's. |
+
+Client obligations (blueprint 13.4, mobile safety in 11.3): generate the UUID key when the record is
+first saved locally; keep payloads in the encrypted local queue (docs/ARCHITECTURE.md §14); show
+local saves separately from server-confirmed uploads; retry with backoff using the same key; delete a
+local item only after `ACCEPTED` (or a REJECTED the person has seen); keep `CONFLICT` items until the
+person resolves them (resubmit as a new item with a new key, or discard); clear the queue on sign-out.
+
+### Field status, audit and error summary
+
+| Record | Transitions | History | Audit actions |
+| --- | --- | --- | --- |
+| Agent | `AGENT_STATUS_TRANSITIONS` | `agent_status_events` | `AGENT_CREATED`, `AGENT_UPDATED`, `AGENT_STATUS_CHANGED`, `AGENT_SENSITIVE_REVEALED`, `AGENT_SENSITIVE_UPDATED`, `AGENT_TRAINING_RECORDED`, `AGENT_ACCREDITATION_RECORDED`, `AGENT_USER_LINKED` |
+| Deployment | `DEPLOYMENT_STATUS_TRANSITIONS` | `deployment_events` | `DEPLOYMENT_CREATED`, `DEPLOYMENT_UPDATED`, `DEPLOYMENT_STATUS_CHANGED`, `DEPLOYMENT_REPLACED`, `DEPLOYMENT_CHECKED_IN`, `DEPLOYMENT_ROSTER_EXPORTED` |
+| Readiness | derived (`deriveReadinessStatus`) | audit | `READINESS_GENERATED`, `READINESS_ITEM_UPDATED` |
+| Report template | DRAFT → ACTIVE → RETIRED | audit | `FIELD_REPORT_TEMPLATE_CREATED`, `FIELD_REPORT_TEMPLATE_STATE_CHANGED` |
+| Field report | `FIELD_REPORT_REVIEW_TRANSITIONS` | `field_report_evidence`, audit | `FIELD_REPORT_SUBMITTED`, `FIELD_REPORT_REVIEWED`, `FIELD_REPORT_EVIDENCE_ADDED` |
+| Incident | `INCIDENT_STATUS_TRANSITIONS` | `incident_events`, `incident_evidence`, `incident_subjects` | `INCIDENT_REPORTED`, `INCIDENT_TRIAGED`, `INCIDENT_ASSIGNED`, `INCIDENT_ESCALATED`, `INCIDENT_EVENT_ADDED`, `INCIDENT_EVIDENCE_ADDED`, `INCIDENT_SUBJECT_RECORDED`, `INCIDENT_SUBJECT_VIEWED`, `INCIDENT_RESOLVED`, `INCIDENT_CLOSED`, `INCIDENT_REOPENED` |
+| Station status | derived + manual FLAGGED/CLOSED | `station_status_events` | `STATION_STATUS_SET` |
+| Sync | ledger outcomes | `client_submissions` | `SYNC_CONFLICT_RECORDED` |
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| Module off | 403 | `MODULE_DISABLED` |
+| Station code not in the approved registry | 400 | `VALIDATION_FAILED` (`path: ['pollingStationCode']`) |
+| Record or body location outside scope | 403 | `OUT_OF_SCOPE` |
+| Not your own deployment / file | 403 / 400 | `FORBIDDEN` / `VALIDATION_FAILED` |
+| Stale `expectedVersion`, replaced/cancelled deployment, retired template | 409 | `CONFLICT` (`details.reason`, `details.serverState`) |
+| Same key, different payload | 409 | `IDEMPOTENCY_KEY_REUSED` |
+| Double booking, second chief agent | 409 | `CONFLICT` (`details.conflicts`) |
+| Illegal transition | 409 | `INVALID_TRANSITION` |
+| Editing immutable content (DB trigger) | 409 | `IMMUTABLE_RECORD` |
+| Reviewer = author, closer = reporter/resolver, activator = creator, triager = reporter | 403 | `SEPARATION_OF_DUTIES` |

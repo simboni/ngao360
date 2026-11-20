@@ -168,6 +168,15 @@ export const StationStatusEventSchema = z.object({
 });
 export type StationStatusEvent = z.infer<typeof StationStatusEventSchema>;
 
+export const StationStatusDetailSchema = StationStatusRowSchema.extend({
+  label: z.literal(WAR_ROOM_LABEL),
+  events: z.array(StationStatusEventSchema),
+});
+export type StationStatusDetail = z.infer<typeof StationStatusDetailSchema>;
+
+export const StationStatusParamQuerySchema = z.object({ electionCycleId: UuidSchema.optional() });
+export type StationStatusParamQuery = z.infer<typeof StationStatusParamQuerySchema>;
+
 /**
  * Derive a station's blueprint 7.2 status from its components. Order of
  * precedence: manual CLOSED/FLAGGED, flagged form or open HIGH/CRITICAL

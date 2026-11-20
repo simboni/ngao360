@@ -212,3 +212,7 @@ export const FieldEvidenceUploadSchema = z.object({
   duplicate: z.boolean(),
 });
 export type FieldEvidenceUpload = z.infer<typeof FieldEvidenceUploadSchema>;
+
+/** Attach files already stored with POST /field/evidence (uploaded by the caller). */
+export const AttachEvidenceSchema = z.object({ fileIds: z.array(UuidSchema).min(1).max(10) });
+export type AttachEvidence = z.infer<typeof AttachEvidenceSchema>;

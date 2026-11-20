@@ -329,6 +329,7 @@ export const AUDIT_ACTIONS = {
   DEPLOYMENT_STATUS_CHANGED: 'field.deployment.status_changed',
   DEPLOYMENT_REPLACED: 'field.deployment.replaced',
   DEPLOYMENT_CHECKED_IN: 'field.deployment.checked_in',
+  DEPLOYMENT_ROSTER_EXPORTED: 'field.deployment.roster_exported',
   // Readiness
   READINESS_GENERATED: 'field.readiness.generated',
   READINESS_ITEM_UPDATED: 'field.readiness.item_updated',

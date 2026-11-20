@@ -1,6 +1,6 @@
 # NGAO360 build status
 
-Branch `feat/foundation-tally-mvp` (merged to `main`), then `feat/office-governor`. Scope: roadmap stage 1 (platform foundation), stage 4 (NGAO TALLY core), with the County Governor contest (Forms 37A/37B/37C) as the end-to-end rehearsal, and stage 5 (NGAO360 Office) for the pilot County Governor's office, with its own end-to-end rehearsal (see "NGAO360 Office" below). All demo and test data is synthetic. The parallel tally is an internal record and is never labelled official.
+Branch `feat/foundation-tally-mvp` (merged to `main`), then `feat/office-governor`, then `feat/field-election-ops` (field and election operations prepared for parallel module work, see "Field and election operations" below). Scope: roadmap stage 1 (platform foundation), stage 4 (NGAO TALLY core), with the County Governor contest (Forms 37A/37B/37C) as the end-to-end rehearsal, and stage 5 (NGAO360 Office) for the pilot County Governor's office, with its own end-to-end rehearsal (see "NGAO360 Office" below). All demo and test data is synthetic. The parallel tally is an internal record and is never labelled official.
 
 ## Pipeline (last run)
 
@@ -10,12 +10,12 @@ Branch `feat/foundation-tally-mvp` (merged to `main`), then `feat/office-governo
 | Typecheck | `pnpm typecheck` | 6/6 packages OK |
 | Lint | `pnpm lint` | 6/6 packages OK |
 | Build | `pnpm build` | shared, db, api, web OK (web includes `/accept-invitation`) |
-| Unit and integration tests | `set -a; . ./.env; set +a; pnpm test` | shared 142, web 116 (tally, public portal, office screens), api 309 tests (29 suites, with RLS and HTTP integration against `ngao360_test`) |
+| Unit and integration tests | `set -a; . ./.env; set +a; pnpm test` | shared 183, web 120 (tally, public portal, office screens, field navigation), api 334 tests (32 suites, with RLS and HTTP integration against `ngao360_test`, the station-lineage regressions and the field foundation) |
 | Governor rehearsal (e2e) | `pnpm test:rehearsal` | 11/11 |
 | Office governor rehearsal (e2e) | `pnpm test:rehearsal:office` | 12/12 (adds the data-protection redaction step) |
 | Browser smoke | `pnpm smoke:office` (Playwright, running stack) | passes, no browser errors; `docs/screenshots/office-*.png` |
 
-Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6379 (see `docs/DEVELOPMENT.md`). Migrations run up to `20261121000000_office_review_fixes` (case redaction function and guards, `completion_evidence_ids`, approval-authority check). The API now depends on `sharp` 0.34.5 (prebuilt libvips from the npm registry) for server-side image cleaning.
+Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6379 (see `docs/DEVELOPMENT.md`). Migrations run up to `20261122000100_field_election_ops` (after `20261121000000_office_review_fixes` and `20261122000000_station_code_lineage`). The API now depends on `sharp` 0.34.5 (prebuilt libvips from the npm registry) for server-side image cleaning.
 
 ## Screens (blueprint section 11)
 
@@ -31,13 +31,13 @@ Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6
 | S08 | Task board | Not started | Stage 2. |
 | S09 | Event detail | Not started | Stage 2. |
 | S10 | Finance ledger | Not started | |
-| S11 | Field report form | Not started | Stage 3. |
+| S11 | Field report form | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/m/report`; screen not built. |
 | S12 | Station registry | Partial | Versioned CSV import (queued for large files), validation report, diff against the approved version, maker-checker approval, list and filters. No map and no edit screen for a draft version. |
-| S13 | Agent profile | Not started | Stage 3. |
-| S14 | Deployment planner | Not started | Stage 3. |
-| S15 | Election readiness | Not started | Stage 3. |
-| S16 | War Room | Not started | Stage 3. |
-| S17 | Incident intake | Not started | Stage 3. |
+| S13 | Agent profile | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/field/agents`, `/field/agents/[id]`; screen not built. |
+| S14 | Deployment planner | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/field/deployment`; screen not built. |
+| S15 | Election readiness | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/field/readiness`; screen not built. |
+| S16 | War Room | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/warroom` (unofficial / internal banner in the layout); screen not built. |
+| S17 | Incident intake | Prepared | Stage 3. Schema, contract (API §15–22), DTOs, permissions, roles, seed and route stub `/m/incident`, desk at `/field/incidents[/id]`; screen not built. |
 | S18 | Form inbox | Done | Upload (image or PDF, SHA-256, immutable original), filters, duplicate flag, processing state, views for "my uploads", "awaiting my review" and "awaiting supervisor". |
 | S19 | Form capture | Done | Side-by-side image and field entry, OCR shown as a draft only, live validation with the exact rule and fields, change reasons, history. Arithmetic failures on printed figures go forward held by a case. |
 | S20 | Verification workspace | Done | Blind independent re-entry or confirm mode, checklist, field comments, pass, return or dispute, supervisor actions (approve, reject, third check). Tally supervisors are routed here. |
@@ -119,17 +119,34 @@ The 19 reviewer findings were checked against the code. All were confirmed; two 
 
 - **Invitation delivery:** there is no e-mail or SMS channel yet, so the inviting administrator sees the link once and relays it. An administrator could still redeem a link themselves. Before the pilot, send invitations straight to the invitee and stop showing the link to the administrator in production.
 - **Cross-stage comparison retry:** a failed comparison is logged but not retried. It needs a durable BullMQ job or a "re-run comparison" action.
-- **Registry versions:** the tally aggregate maps records by station code, but some code still uses station row ids: polling-station-scoped grants, the dashboard "stations with forms" counts and intake duplicate detection. All three should move to station code (or a lineage table) before a mid-election registry amendment.
 - **Accepted arithmetic:** an arithmetic case resolved as "figures as printed" allows a later pass. The acceptance is not tied to the exact figures, so a recapture after a return should reopen the check.
 - **Queue filters:** the `awaiting_me` and `awaiting_supervisor` filters use the current value rows. Separation of duties is enforced on every action from the full audit history, so these lists are only an approximation.
 - **Security review items still open:** passkeys, account recovery, rate limiting by account across instances (Redis store), a malware scan for uploads, real OCR, an S3 object lock for originals in production, a load test and a backup and restore drill (roadmap stage 6).
 - **Office gaps:** the public-portal limiter keeps counters in memory per API instance (move to Redis with the auth limiter); no captcha verifier or widget is bound (configuring a provider fails closed); portal acknowledgements are queued but no notification processor sends them; the retention job runs on an in-process timer (move it to a BullMQ repeatable job with a run record); there is no malware scanner, so project PDFs cannot be published until one records `CLEAN`; redaction unlinks a portal photo but does not delete its blob (immutable content-addressed storage, S3 object lock in production) and does not touch staff-written notes or public updates; HEIC photos are refused at the portal rather than converted; publication withdrawal on edit is all-or-nothing (no pending-change review or snapshot diff, and the reason shows only in history); the approval-authority DB check is `NOT VALID` for rows created before the migration; review-date SLAs are fixed in code; the privacy notice is English only; no real project map; correspondence, appointment and project pickers have no Office assignee endpoint (cases do); geographic units are tied to an election cycle, so an office-only tenant carries a reference-only cycle; there is no workspace settings screen for module activation yet (API only). Details in `docs/CHANGE_REQUESTS.md`.
-- **Not built yet:** S02, S03, S05, S08–S11, S13–S17 and S28. 2022 historical data import is designed (`docs/DATA_SOURCES_2022.md`) but not wired in.
+- **Field gaps (by design of this preparation step):** every field, War Room and sync endpoint in API §15–22 is contracted but not implemented (empty controllers); the mobile offline queue is designed (ARCHITECTURE §14.1) but not built, and its at-rest protection is a non-extractable WebCrypto key without a PIN wrap; field evidence photos are stored as uploaded (no EXIF stripping yet); agent personal data sits in a separate table behind the API's reveal permission but is not column-encrypted in the database; notifications are in-app only.
+- **Not built yet:** S02, S03, S05, S08–S10 and S28; S11 and S13–S17 are prepared (see below). 2022 historical data import is designed (`docs/DATA_SOURCES_2022.md`) but not wired in.
+
+## Registry lineage (closed in this branch)
+
+The STATUS gap "some code still uses station row ids" is closed (`20261122000000_station_code_lineage`, regression suite `apps/api/test/registry-lineage.integration.spec.ts`):
+
+- **Polling-station-scoped grants** store the station code (`role_assignments.polling_station_code`, backfilled and kept in step by a trigger) and match that code in every registry version of the granted station's cycle (`stationLineageKey` in `scopeAllows`, `stationScopeWhere`, the submission scope filter and the unit drill-down). A grant made on the first registry version still reaches the station after an amendment is approved, and still reaches nothing else.
+- **Dashboard "stations with forms"** counts filed forms against the approved registry by station code, so forms filed before an amendment still count for their station.
+- **Intake duplicate detection**, the related-records list and canonical designation match the same station code in the cycle, so a form filed against the new version is flagged as a duplicate of one filed against the old version.
+
+## Field and election operations (stage 3, prepared for parallel work)
+
+- **Contracts:** `packages/shared/src/field/` (enums, DTOs, transition helpers, `deriveReadinessStatus`, `deriveStationStatus`, `validateFieldAnswers`, `findNonFactualQuestions`, `canonicalPayload`, `WAR_ROOM_LABEL`, `completeness`); endpoints, permissions, audit actions, transitions, idempotency and conflict semantics in `docs/API_CONTRACT.md` §15–22.
+- **Access:** 25 `field.*` / `warroom.*` permissions (the placeholder `incidents.*` keys are replaced); roles Field coordinator, Deployment planner, Incident desk officer, War Room commander, War Room observer; the Polling agent role is the station-scoped mobile agent role. Role-level SoD rules `incident-resolve-vs-close` and `field-agent-vs-agent-admin`.
+- **Data model:** migration `20261122000100_field_election_ops` (ARCHITECTURE §14): agents with sensitive data split out, accreditation per cycle, training, deployments by station code with replacement history, readiness, versioned report templates, field reports, incidents with append-only events and a restricted subject record, War Room station status, the offline idempotency ledger. RLS everywhere, no deletes, append-only histories, immutable original reports.
+- **Skeleton:** `apps/api/src/modules/field/{agents,deployment,readiness,reports,incidents,warroom,sync}` registered in `AppModule`, geo resolvers, station-code location/scope helpers, `ClientSubmissionLedger`, `field.dto.ts`; web stubs `/field/agents[/id]`, `/field/deployment`, `/field/readiness`, `/field/incidents[/id]`, `/warroom`, mobile `/m`, `/m/report`, `/m/incident`, `/m/checkin`, `/m/forms`; nav gated by permission and module (War Room needs field and tally).
+- **Seed:** `demo` has the field module on with 120 synthetic agents, ~100 deployments with gaps, readiness in mixed states, 2 templates, 30 field reports, 25 incidents and derived station statuses, plus one demo user per field role (README).
+- **Parallel split:** Field A (agents, deployment, readiness), Field B (reports, incidents, sync, mobile PWA and offline queue), Field C (War Room); ownership and the service seams the sync service uses are in ARCHITECTURE §1 and §14.
 
 ## Recommended next workflow
 
 1. **Office hardening before the pilot (recommended next stage, 1–2 weeks, because the pilot customer is a Governor's office):** a malware-scanning worker for stored files (unblocks public documents), storage-level erasure of redacted portal photos, the retention job as a durable BullMQ repeatable job, a privacy review of the public pages and notice v2 with the office's data-protection contact, a Kiswahili notice reviewed by a fluent speaker, the Redis-backed public limiter, a captcha provider, the acknowledgement notification processor, a pending-change review screen for published projects and the S30 module/retention settings screen.
 2. **Stage 2, Command and organisation (3–4 weeks):** S05 organisation tree and teams, S08 task board, S09 events, an S04 dashboard with activity and geo panels, the notification centre (in-app now, then e-mail and SMS, which unblocks invitation delivery) and standard reports (section 10.1). Reuse the existing RBAC scopes, audit stream and module gating.
-3. **Stage 3, Field and election operations (3–4 weeks):** S13 agent profiles, S14 deployment planner, S15 readiness dashboard, S11 and S17 field and incident intake on the PWA with offline queueing (section 13.4), and S16 War Room fed by the tally state. Move station-scoped grants and dashboards to station code first, so registry amendments stay safe.
+3. **Stage 3, Field and election operations (3–4 weeks, now prepared):** three agents in parallel per ARCHITECTURE §1: Field A builds S13–S15 and `GET /field/me`; Field B builds S11, S17, the incident desk, `POST /field/sync` and the encrypted offline queue on `/m`; Field C builds S16 from the contract. Station-scoped grants and dashboards already key on station code.
 
 Before any pilot use: close the invitation-delivery gap, add the cross-stage retry job, and run a security review (stage 6 items above).

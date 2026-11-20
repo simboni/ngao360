@@ -226,6 +226,23 @@ d('field operations foundation (database)', () => {
     ).rejects.toThrow(/IMMUTABLE_RECORD/);
   });
 
+  it('ledger.run applies once, replays the result and refuses a reused key', async () => {
+    const ledger = new ClientSubmissionLedger();
+    const auth = { tenantId: tA, userId: ids.desk! } as AuthContext;
+    const item = { idempotencyKey: randomUUID(), deviceId: 'device-synthetic-2', kind: 'INCIDENT_NOTE' as const, clientCreatedAt: null, payload: { note: 'x' } };
+    let applied = 0;
+    const apply = async () => {
+      applied++;
+      return { id: ids.incident!, reference: 'INC-2027-000001' };
+    };
+    const shape = { type: 'Incident', id: (r: { id: string }) => r.id, reference: (r: { reference: string }) => r.reference };
+    const load = async (id: string) => ({ id, reference: 'INC-2027-000001' });
+    expect((await asA((tx) => ledger.run(tx, auth, item, shape, apply, load))).replayed).toBe(false);
+    expect((await asA((tx) => ledger.run(tx, auth, item, shape, apply, load))).replayed).toBe(true);
+    expect(applied).toBe(1);
+    await expect(asA((tx) => ledger.run(tx, auth, { ...item, payload: { note: 'y' } }, shape, apply, load))).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+  });
+
   it('scope filter: station-scoped grants match field records by station code within the cycle', async () => {
     const scope = scopeFromGrants(
       [{ permission: 'field.incidents.view', scopeType: 'POLLING_STATION', geographicUnitId: null, pollingStationId: randomUUID(), pollingStationCode: 'F1', pollingStationCycleId: ids.cycle!, electionCycleId: null, expiresAt: null }],

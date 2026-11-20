@@ -65,6 +65,8 @@ export const ERROR_CODES = {
   /** A public-portal anti-abuse check failed (honeypot, captcha). The message stays generic. */
   ABUSE_CHECK_FAILED: 'ABUSE_CHECK_FAILED',
   CSRF_HEADER_MISSING: 'CSRF_HEADER_MISSING',
+  /** An idempotency key was reused with a different payload (field offline sync). Nothing was applied. */
+  IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
