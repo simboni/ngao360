@@ -74,6 +74,15 @@ Organisation code **`demo`**. The password for every account is `SEED_DEMO_PASSW
 | `incidents@demo.example.org` | Incident desk officer | Organisation | none |
 | `commander@demo.example.org` | War Room commander | Organisation | TOTP |
 | `observer@demo.example.org` | War Room observer | Organisation | none |
+| `manager@demo.example.org` | Campaign manager | Organisation | TOTP |
+| `lead.comms@demo.example.org` | Department lead (Communications and Media) | Organisation (department scope: departments led) | none |
+| `teamcoord@demo.example.org` | Team coordinator (North teams) | Synthetic Constituency North | none |
+| `opsofficer@demo.example.org` | Operations officer (no finance) | Organisation | none |
+| `payments@demo.example.org` | Finance officer (pays entries others requested) | Organisation | TOTP |
+| `approver@demo.example.org` | Finance approver (approves ledger entries, limit settings) | Organisation | TOTP |
+| `editor@demo.example.org` | Communications editor (editorial review) | Organisation | none |
+| `comms.approver@demo.example.org` | Communications approver | Organisation | TOTP |
+| `dpo@demo.example.org` | Data protection officer (breach register) | Organisation | TOTP |
 
 The `demo` tenant also has the `field` module on with synthetic field data: 120 agents, about 100 deployments with deliberate gaps (uncovered stations), readiness checklists in mixed states, two active report templates, 30 field reports, 25 incidents across severities and statuses and War Room station statuses.
 
@@ -88,6 +97,10 @@ The `demo` tenant also has the `field` module on with synthetic field data: 120 
 | `/warroom` (S16) | `commander@` (TOTP), `observer@` | Six panels, each labelled unofficial / internal with completeness; missing stations shown as missing, never zero; tally figures "not available" without tally access. |
 | `/dashboard` | holders of field or War Room permissions | Field operations card (readiness, gaps, open incidents, War Room stations reporting) and the agent-coverage KPI. |
 | `/m` (S11, S17) | `agent1@`, `agent2@` | Mobile field app: my station, check-in, opening/closing report, incident report and an encrypted offline queue that uploads with idempotency keys and shows conflicts for a decision. |
+
+### Campaign and organisation (synthetic, tenant `demo`; screens being built)
+
+The `demo` tenant has the `campaign` module on with synthetic data: a department tree of 8 departments and 15 teams (members and one leaver kept as history), 60 tasks across every status with dependencies, checklists, comments and timelines, 10 events with agendas, logistics, attendance (a few with consent-based contact details stored separately) and after-action reports, 12 communications items across draft, editorial review, approval, publication, archive and withdrawal (one published item corrected), and a finance ledger: 3 accounts, 10 categories, 10 payees, 12 contributors (masked identifiers), 8 budget lines and 80 entries across draft, requested, approved, paid, rejected, cancelled and reversed (one reversing entry). Three demo limit settings (single-source cap 20 %, a spending limit and a reporting deadline) are marked **"Unverified – configure to the applicable law"**: they are demo values, not the law, and one large contribution exceeds the demo cap so it shows as a warning. Also 3 saved report templates, notification preferences and alerts (one critical alert awaiting acknowledgement for `dpo@`) and one breach register drill. The screens `/org`, `/tasks`, `/events`, `/comms`, `/finance`, `/reports`, `/notifications` and `/security/breaches` are placeholders until the campaign module agents build them (contract: docs/API_CONTRACT.md §23–30).
 
 Offline queue: items are sealed with AES-GCM under a non-extractable per-user key in IndexedDB; this protects only against other origins and casual inspection of the stored records, not against a copy of the browser profile (the key material is stored beside the ciphertext) or someone using the phone (a PIN-wrapped key is the priority next step). Uploads run while a tab is open. See docs/ARCHITECTURE.md §14 and docs/STATUS.md.
 

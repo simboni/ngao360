@@ -5,10 +5,11 @@ Every request and response type named here is exported from `@ngao360/shared`
 (`packages/shared/src`). If you need a field that is not here, add it to the shared schema
 first, then update this file. Do not invent ad-hoc shapes.
 
-Status: §2–13 are **implemented** (NGAO360 Office included). §15–22 (field and election
-operations, the War Room and offline sync) are **to be implemented** by the field module agents;
-their data model, shared DTOs, module activation, geo resolvers, station-code location and scope
-helpers and the idempotency ledger already exist.
+Status: §2–22 are **implemented** (NGAO360 Office and field and election operations included).
+§23–30 (campaign and organisation: organisation, tasks, events, communications, finance, reports,
+the notification centre and the breach register) are **to be implemented** by the campaign module
+agents; their data model, shared DTOs, permissions and roles, module activation, department-scope
+helpers, geo resolvers, notification provider interface and seed already exist.
 
 ---
 
@@ -285,6 +286,9 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | GET | `/notifications` | Authenticated | `PaginationQuery & { unreadOnly? }` | `Paginated<Notification>` | Hides notifications whose `module` the user can no longer access. |
 | POST | `/notifications/:id/read` | Authenticated | `IdParam` | `OkResponse` | Only the caller's own notifications. |
 | POST | `/notifications/read-all` | Authenticated | none | `OkResponse` | |
+
+The notification centre (§29) extends these endpoints: `GET /notifications` returns `NotificationCenterItem`
+(severity, acknowledgement and source record) and accepts `NotificationCenterQuery`.
 
 ## 8. Tenant module activation (implemented: `apps/api/src/tenant-modules`)
 
@@ -800,3 +804,295 @@ person resolves them (resubmit as a new item with a new key, or discard); clear 
 | Illegal transition | 409 | `INVALID_TRANSITION` |
 | Editing immutable content (DB trigger) | 409 | `IMMUTABLE_RECORD` |
 | Reviewer = author, closer = reporter/resolver, activator = creator, triager = reporter | 403 | `SEPARATION_OF_DUTIES` |
+
+## Campaign and organisation conventions (§23–30)
+
+Status: **contracted, not yet implemented** (prepared for parallel module work). Data model: migration
+`20261125000000_campaign_organisation`; shared DTOs in `packages/shared/src/campaign/` (`finance/`,
+`reports/` subfolders); DTO classes in `apps/api/src/modules/campaign/campaign.dto.ts`; empty controllers
+and services in `apps/api/src/modules/campaign/{org,tasks,events,comms,finance,reports,notifications,security}`.
+Blueprint: 2.2, 3, 4, 5.1–5.4, 10.1–10.3, 11 (S05, S08, S09, S10, S28), 14, 15.2–15.4.
+
+### 23–30.0 Rules for every campaign endpoint
+
+| Topic | Rule |
+| --- | --- |
+| Module | org/, tasks/, events/, comms/ and finance/ controllers are tagged `@RequireModule('campaign')` (403 **`MODULE_DISABLED`**; `campaign` defaults **off**). `CampaignModuleConfig` (`packages/shared/src/campaign/common.ts`) is read with `TenantModulesService.campaignConfig(tx)` and validated by `PUT /workspace/modules/campaign`. Reports (§28), the notification centre (§29) and the breach register (§30) are platform features without a module gate; each report dataset names its own module. Notifications of a switched-off module stay hidden (`PERMISSION_MODULE_TENANT_MODULES`: `org`, `tasks`, `events`, `comms`, `finance` → `campaign`). |
+| Permissions | `org.*`, `tasks.*`, `events.*`, `comms.content.*`, `finance.*` (own family; operations roles never hold it: unit-tested and role rule `operations-vs-finance`), `reports.*`, `notifications.preferences`, `security.breach.*`. High risk (MFA + re-auth where marked **reauth**): `events.attendance.contact`, `comms.content.approve`, `finance.approve`, `finance.pay`, `finance.reverse`, `finance.settings.manage`, `finance.export`, `reports.export_sensitive`, `security.breach.manage`, `security.breach.export`. |
+| Department scope | Campaign records (tasks, events, teams, content, budget lines by department) are visible to a caller holding the read permission when **involved** (owner, collaborator, reviewer, creator, organiser, author, editor, approver, coordinator, active member) **or** when the record's department is one of the caller's departments **and** its geography is inside the permission's geographic grant (`DEPARTMENT_SCOPE_RULE`). Caller departments = all with `org.departments.all`, else departments led + departments of teams coordinated or belonged to + all their sub-departments (`departments.path`). Records without a department need `org.departments.all`; records without geography pass the geographic test only for ORGANISATION-wide grants. Lists use `loadCampaignScope(tx, auth, perm)` + `taskScopeWhere` / `eventScopeWhere` / `teamScopeWhere` / `contentScopeWhere`; record routes use `campaignRecordInScope()` and answer **404** outside scope (existence not revealed). Write routes check the read scope first, then the write permission. Finance is organisation-level: `finance.*` grants are not narrowed by department or geography. |
+| Geography | Campaign records name one optional `geographicUnitId` (county, constituency, ward or centre); cycle-limited grants count geographically (campaign records are not cycle-bound). Geo kinds `campaignTeam`, `campaignTask`, `campaignEvent` are registered for routes where involvement does not apply (e.g. `@RequirePermission('org.teams.manage', { geo: { kind: 'campaignTeam', from: 'params', key: 'id' } })`). A body that names a unit outside the caller's grant answers 403 `OUT_OF_SCOPE`. |
+| Tenancy | `prisma.tenantTx()` only; every id from a request is loaded inside the transaction (RLS hides other tenants: 404 / 400). |
+| Concurrency | Mutable records carry `version`; mutations take `expectedVersion` (≥ 1), write `where: { id, version }` with `version: { increment: 1 }` and answer **409 `CONFLICT`** with `details: { currentVersion, serverState }` when stale. |
+| History | Never deleted (DB triggers, even for the owner role): every campaign table except the link rows `task_collaborators`, `task_dependencies`, `event_invited_teams` (insert / delete only; the change is on the parent's timeline). Append-only: `task_comments`, `task_attachments`, `task_events`, `event_documents`, `content_revisions`, `finance_transaction_documents`, `finance_transaction_events`, `report_exports`, `notification_deliveries`, `notification_acknowledgements`, `breach_events`. Immutable content: completed / cancelled tasks, approved after-action reports, published content text (only via a CORRECTED revision), archived / withdrawn content, approved budget lines, ledger entries from APPROVED on, limit-setting values, team-membership history, attendance contact values (erasure only), a breach record's reference / drill flag / detection time / reporter. DB `IMMUTABLE_RECORD` → 409. |
+| Separation of duties | Per record (403 **`SEPARATION_OF_DUTIES`**; DB checks map to the same code): task reviewer ≠ owner; after-action reviewer ≠ author; content approver ≠ author; budget-line approver ≠ creator; ledger approver ≠ requester, payer ≠ requester, rejecter ≠ requester; payer ≠ approver when `finance.approverCannotPay` (default true, service check); breach closer ≠ reporter. Role level (`ROLE_SOD_RULES`): `finance-request-vs-approve`, `finance-approve-vs-pay`, `comms-draft-vs-approve`, `operations-vs-finance`. |
+| Money | Integer minor units (`amountMinor`, KES cents) with `currency` (ISO 4217, default `KES`); never floats or decimal strings. DB `BIGINT`; JSON integers within the safe range (`minorToNumber`). Use `parseMajorToMinor` / `formatMoney` in the UI. |
+| Files | `StorageService.storeImmutable(purpose)`: `TASK_ATTACHMENT`, `EVENT_DOCUMENT`, `FINANCE_DOCUMENT`, `BREACH_EVIDENCE` (report exports: `EXPORT`). Upload per owning module, multipart `file` (images and PDFs, ≤ 25 MB) → `CampaignFile` (201; 200 when the bytes already exist): `POST /tasks/files` (`tasks.create`), `POST /events/files` (`events.manage` or `events.create`), `POST /finance/files` (`finance.request`), `POST /security/breaches/files` (`security.breach.record`). Audit: `FILE_STORED`. Records attach files by id; only files the caller uploaded with the matching purpose (`assertOwnFiles`, else 400). Signed URLs are audited (`FILE_SOURCE_ACCESSED`, `entityType` = the record). |
+| Audit | Every state change writes its `AUDIT_ACTIONS` entry in the same transaction with before / after snapshots (amounts, ids, statuses; never attendee contact values, identifiers or file contents) and the reason when given. |
+| Notifications | Created through `NotificationCenterService.notify(tx, …)` (§29) with `module` = the permission module (`tasks`, `events`, `comms`, `finance`, `notifications`), a `NOTIFICATION_TYPES` type, a deep link and `entityType` / `entityId`. Bodies carry references and labels only. |
+| Political boundary | No voter lists, no recipient lists, no per-person targeting, no bulk SMS / e-mail to the public, no persuasion automation (blueprint 5.4, 15.2). Content goes to broad audience categories; notifications go to signed-in users about their own work. A request body carrying recipient-list fields (`CONTENT_FORBIDDEN_FIELDS`) is refused with 400 `VALIDATION_FAILED`. |
+| Errors | `VALIDATION_FAILED` details `{ path, message }`. Ledger approval without prerequisites: 409 **`APPROVAL_INCOMPLETE`** with `details.blockers` (`financeApprovalBlockers`). A verified limit setting with `enforcement=BLOCK`: 409 **`LIMIT_EXCEEDED`** with `details.findings` (`ComplianceFinding[]`). |
+
+### 23. Organisation (`apps/api/src/modules/campaign/org`) — S05
+
+Web: `/org`. Departments form a tree with a materialised `path` ("/root/…/self/") and `depth`.
+
+#### 23.1 Departments (`departments.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/org/departments/tree` | `org.departments.view` | `DepartmentQuery` | `DepartmentTree` | Every department is visible as a card (name, code, lead, parent, dates); `visibility` RESTRICTED / DEPARTMENT hides `budgetCode` and team details from callers outside the department unless `org.departments.all`. `manageableIds` = departments the caller leads (and descendants) or all with `org.departments.manage` + `org.departments.all`. Inactive (outside active dates) only with `includeInactive`. |
+| GET | `/org/departments/:id` | `org.departments.view` | `CampaignIdParam` | `DepartmentDetail` | `path` (ancestors), teams (scope-filtered), `allowedActions`. |
+| POST | `/org/departments` | `org.departments.manage` | `CreateDepartment` | `DepartmentDetail` (201) | `code` unique (409). Parent must exist; a non-`org.departments.all` caller may only create under a department they lead. Lead must be an active user. Computes `path`, `depth`. Audit: `DEPARTMENT_CREATED`. |
+| PATCH | `/org/departments/:id` | `org.departments.manage` (or the department's lead for name, description, budget code, dates, visibility) | `UpdateDepartment` | `DepartmentDetail` | `expectedVersion`. Moving (`parentId`) refuses a cycle (409 `CONFLICT`, `details.reason: 'CYCLE'`) and rewrites `path` / `depth` of every descendant in the same transaction. Changing `leadUserId` needs `org.departments.manage`. Audit: `DEPARTMENT_UPDATED`; move also `DEPARTMENT_MOVED` (old and new parent). |
+
+#### 23.2 Teams (`teams.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/org/teams` | `org.teams.view` | `TeamQuery` | `Paginated<TeamSummary>` | `teamScopeWhere`. `mine` = coordinator or active member. |
+| GET | `/org/teams/:id` | `org.teams.view` | `CampaignIdParam` | `TeamDetail` | Department scope (404). Members incl. history (`leftAt`). |
+| POST | `/org/teams` | `org.teams.manage` | `CreateTeam` | `TeamDetail` (201) | Department must be one of the caller's (unless `org.departments.all`); `geographicUnitId` inside the caller's `org.teams.manage` grant (403 `OUT_OF_SCOPE`); name unique per department (409). Coordinator is added as an active COORDINATOR member. Audit: `TEAM_CREATED`. |
+| PATCH | `/org/teams/:id` | `org.teams.manage` **(geo `campaignTeam`)** | `UpdateTeam` | `TeamDetail` | `expectedVersion`; ARCHIVED is final for edits other than status back to ACTIVE with a reason. Audit: `TEAM_UPDATED`. |
+| POST | `/org/teams/:id/members` | `org.teams.manage` **(geo)**, or the team's coordinator | `AddTeamMembers` | `TeamDetail` | Active users only; an existing active member keeps its row (role updated only by remove + add). Audit: `TEAM_MEMBERS_ADDED` (user ids). |
+| POST | `/org/teams/:id/members/:memberId/remove` | `org.teams.manage` **(geo)**, or the team's coordinator | `TeamMemberParam` + `RemoveTeamMember` | `TeamDetail` | Sets `left_at`, `removed_by_id` (history kept; partial unique index allows re-adding). Audit: `TEAM_MEMBER_REMOVED`. |
+
+#### 23.3 Pickers (`org-users.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/org/assignable-users` | any of `org.departments.manage`, `org.teams.manage`, `tasks.create`, `tasks.assign`, `events.create`, `events.manage` | `AssignableUserQuery` | `AssignableUser[]` | Active users of the tenant, display name only (no e-mail or phone), with department / team ids. `permission` filters to holders of that permission (e.g. `tasks.review` for reviewer pickers). |
+
+### 24. Tasks (`apps/api/src/modules/campaign/tasks`) — S08
+
+Web: `/tasks` (board / list / calendar / workload), `/tasks/[id]`. Status `TASK_STATUS_TRANSITIONS`; open =
+`OPEN_TASK_STATUSES`. Every change appends `task_events` and writes its audit action.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/tasks` | `tasks.view` | `TaskQuery` | `Paginated<TaskSummary>` | `taskScopeWhere`. `view=mine` owner or collaborator; `review` reviewer and SUBMITTED_FOR_REVIEW; `overdue` due < now and open. |
+| GET | `/tasks/board` | `tasks.view` | `TaskQuery` | `TaskBoard` | One column per status with total and first 50 cards. |
+| GET | `/tasks/calendar` | `tasks.view` | `TaskCalendarQuery` | `TaskSummary[]` | Tasks with start or due in [from, to] (max 92 days, 400 otherwise). |
+| GET | `/tasks/workload` | `tasks.view` | `TaskQuery` | `TaskWorkload` | Counts per owner over tasks in scope only. |
+| GET | `/tasks/:id` | `tasks.view` | `CampaignIdParam` | `TaskDetail` | Department scope (404). Timeline oldest first. `allowedActions` from permissions, involvement and state. |
+| POST | `/tasks` | `tasks.create` | `CreateTask` | `TaskDetail` (201) | Reference `nextReference(tx, tenantId, 'TSK', campaignReferenceYear)`. Owner / reviewer / collaborators active users; reviewer ≠ owner (400 and DB check). Department must be one of the caller's (or `org.departments.all`); team must belong to the department; geography inside the `tasks.create` grant. Assigning an owner other than yourself needs `tasks.assign`. `source` resolves the record (event / project / incident / case) the caller can see and stores `sourceLabel` = its reference (400 when not visible; project and case need the Office module and permission). Dependencies: `wouldCreateDependencyCycle` (409). Events CREATED (+ ASSIGNED). Notification `task.assigned` to the owner (if not the caller). Audit: `TASK_CREATED`. |
+| PATCH | `/tasks/:id` | `tasks.create` and (owner or `tasks.manage_all`) | `UpdateTask` | `TaskDetail` | Not when COMPLETED / CANCELLED (409 `IMMUTABLE_RECORD`). Event UPDATED (changed field names). Audit: `TASK_UPDATED`. |
+| POST | `/tasks/:id/assign` | `tasks.assign` (own tasks) or `tasks.manage_all` | `AssignTask` | `TaskDetail` | Reviewer ≠ owner. Events ASSIGNED / REVIEWER_CHANGED / COLLABORATORS_CHANGED. Notifications `task.assigned`. Audit: `TASK_ASSIGNED` (before / after ids). |
+| POST | `/tasks/:id/status` | owner or collaborator with `tasks.create`; `tasks.manage_all` for others' tasks | `ChangeTaskStatus` | `TaskDetail` | `canTransitionTask` (409 `INVALID_TRANSITION`). → IN_PROGRESS or COMPLETED needs `dependenciesSatisfied` (409 `CONFLICT`, `details.openDependencies`). → COMPLETED directly only when there is no reviewer (`tasks.reviewRequiredWhenReviewerSet`) — otherwise SUBMITTED_FOR_REVIEW, which notifies the reviewer (`task.review_requested`). BLOCKED / CANCELLED need a reason. Event STATUS_CHANGED. Audit: `TASK_STATUS_CHANGED`. |
+| POST | `/tasks/:id/review` | `tasks.review` and caller = reviewer (or `tasks.manage_all` with reviewer ≠ caller ≠ owner) | `ReviewTask` | `TaskDetail` | Only SUBMITTED_FOR_REVIEW. Caller = owner → 403 `SEPARATION_OF_DUTIES`. APPROVE → COMPLETED (`completedAt`), event REVIEW_APPROVED; RETURN → IN_PROGRESS with note, event REVIEW_RETURNED, notification `task.returned`. Audit: `TASK_REVIEWED`. |
+| POST | `/tasks/:id/dependencies` | `tasks.create` and (owner or `tasks.manage_all`) | `AddTaskDependency` | `TaskDetail` | Both tasks visible; no cycle (409). Event DEPENDENCY_ADDED. Audit: `TASK_DEPENDENCY_CHANGED`. |
+| DELETE | `/tasks/:id/dependencies/:dependsOnTaskId` | same | `TaskDependencyParam` | `TaskDetail` | Removes the link row. Event DEPENDENCY_REMOVED. Audit: `TASK_DEPENDENCY_CHANGED`. |
+| PUT | `/tasks/:id/checklist` | owner / collaborator with `tasks.create`, or `tasks.manage_all` | `SaveTaskChecklist` | `TaskDetail` | Items not in the list are marked `removedAt` (kept). `doneBy` / `doneAt` set when ticked. Event CHECKLIST_UPDATED. Audit: `TASK_CHECKLIST_SAVED`. |
+| POST | `/tasks/:id/comments` | `tasks.view` and involved, or `tasks.create` in scope | `AddTaskComment` | `TaskComment` (201) | Append-only. Event COMMENTED. Audit: `TASK_COMMENTED` (no body). |
+| POST | `/tasks/:id/attachments` | `tasks.create` and involved (or `tasks.manage_all`) | `AddTaskAttachment` | `TaskAttachment` (201) | File purpose `TASK_ATTACHMENT`, uploaded by the caller. `COMPLETION_EVIDENCE` by owner / collaborator only. Event ATTACHMENT_ADDED / EVIDENCE_ADDED. Audit: `TASK_ATTACHMENT_ADDED`. |
+| GET | `/tasks/:id/attachments/:attachmentId/url` | `tasks.view` (task in scope) | — | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+
+### 25. Events and logistics (`apps/api/src/modules/campaign/events`) — S09
+
+Web: `/events`, `/events/[id]`. Status `CAMPAIGN_EVENT_STATUS_TRANSITIONS`; logistics `LOGISTICS_STATUS_TRANSITIONS`;
+after-action `AFTER_ACTION_STATUS_TRANSITIONS`.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/events` | `events.view` | `CampaignEventQuery` | `Paginated<CampaignEventSummary>` | `eventScopeWhere` (involvement includes members of invited teams). `budget` only for holders of `events.manage` on the event or `finance.view`, else null. |
+| GET | `/events/:id` | `events.view` | `CampaignIdParam` | `CampaignEventDetail` | Department scope (404). Tasks = tasks with `source = EVENT:id` visible to the caller. Attendance not included (see below). |
+| POST | `/events` | `events.create` | `CreateCampaignEvent` | `CampaignEventDetail` (201) | Reference `EVT`. Organiser active user; department / geography rules as for tasks; invited teams must be visible. `budgetMinor` integer minor units. Status DRAFT. Notification `event.invited` to coordinators of invited teams once PLANNED. Audit: `EVENT_CREATED`. |
+| PATCH | `/events/:id` | `events.manage` (or organiser with `events.create`) | `UpdateCampaignEvent` | `CampaignEventDetail` | Not when COMPLETED / CANCELLED. Time or venue change on PLANNED / CONFIRMED notifies invited coordinators (`event.changed`). Audit: `EVENT_UPDATED`. |
+| POST | `/events/:id/status` | `events.manage` (or organiser) | `ChangeCampaignEventStatus` | `CampaignEventDetail` | `canTransitionCampaignEvent`; CANCELLED / POSTPONED need a reason (stored in `cancellationReason`). Audit: `EVENT_STATUS_CHANGED`. |
+| PUT | `/events/:id/agenda` | `events.manage` (or organiser) | `SaveEventAgenda` | `CampaignEventDetail` | Replaces the agenda; removed items get `removedAt`. Audit: `EVENT_AGENDA_SAVED`. |
+| POST | `/events/:id/logistics` | `events.logistics` | `CreateLogisticsItem` | `EventLogisticsItem` (201) | Custodian active user. Supplier is text (finance payees stay in finance). Audit: `EVENT_LOGISTICS_SAVED`. |
+| PATCH | `/events/:id/logistics/:itemId` | `events.logistics` | `LogisticsParam` + `UpdateLogisticsItem` | `EventLogisticsItem` | Item must belong to the event (404). `canTransitionLogistics`; DAMAGED / LOST need `damageNotes` (DB check); RETURNED / DAMAGED set `returnedAt`. Audit: `EVENT_LOGISTICS_SAVED`. |
+| GET | `/events/:id/attendance` | `events.attendance` | `CampaignIdParam` + `PaginationQuery` | `Paginated<EventAttendance>` + `AttendanceSummary` | Names, role, method, time, `hasContact` only. |
+| POST | `/events/:id/attendance` | `events.attendance` | `RecordAttendance` | `EventAttendance` (201) | Event PLANNED / CONFIRMED / IN_PROGRESS / COMPLETED (same day). Contact only with `consent: true`, a notice version and a purpose; stored in `event_attendance_contacts`. Audit: `EVENT_ATTENDANCE_RECORDED` (`hasContact`, never values). |
+| POST | `/events/:id/attendance/:attendanceId/contact` | `events.attendance.contact` **(reauth)** | `AttendanceParam` + `RevealAttendanceContact` | `EventAttendanceContact` | `Cache-Control: no-store`. Audit: `EVENT_ATTENDANCE_CONTACT_VIEWED` (reason, field names). Never in lists, exports or notifications. |
+| POST | `/events/:id/attendance/:attendanceId/contact/erase` | `events.attendance.contact` | `AttendanceParam` + `{ reason }` | `OkResponse` | Nulls the values, sets `erasedAt` (DB trigger allows erasure only). Audit: `EVENT_ATTENDANCE_RECORDED` (erased). |
+| POST | `/events/:id/attendance/export` | `events.attendance` + `reports.export` **(reauth)** | `{ format: 'CSV' \| 'PDF', reason }` | `SignedUrlResponse` | Names, roles, methods and times only (no contact values); header with generation time and classification INTERNAL. Logged in `report_exports` (`datasetKey: 'campaign.event_attendance'`). Audit: `EVENT_ATTENDANCE_EXPORTED`. |
+| POST | `/events/:id/documents` | `events.manage` (or organiser) | `AddEventDocument` | `EventDocument` (201) | File purpose `EVENT_DOCUMENT`. Audit: `EVENT_DOCUMENT_ADDED`. |
+| GET | `/events/:id/documents/:documentId/url` | `events.view` (event in scope) | — | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+| PUT | `/events/:id/after-action` | `events.manage` (or organiser) | `SaveAfterActionReport` | `EventAfterActionReport` | Event COMPLETED. Creates (author = caller) or updates a DRAFT / RETURNED report (`expectedVersion`). `actualSpendMinor` integer minor units (reported figure; the ledger stays authoritative). Evidence files purpose `EVENT_DOCUMENT` become `AFTER_ACTION_EVIDENCE` documents. `submit: true` in the query moves DRAFT / RETURNED → SUBMITTED and notifies holders of `events.after_action.approve` in scope (`event.after_action_review`). Audit: `EVENT_AFTER_ACTION_SAVED`. |
+| POST | `/events/:id/after-action/review` | `events.after_action.approve` | `ReviewAfterActionReport` | `EventAfterActionReport` | SUBMITTED only. Reviewer ≠ author (403; DB check). APPROVE freezes the report (DB trigger). Audit: `EVENT_AFTER_ACTION_REVIEWED`. |
+
+### 26. Communications content (`apps/api/src/modules/campaign/comms`) — blueprint 5.4
+
+Web: `/comms`, `/comms/[id]`. Status `CONTENT_STATUS_TRANSITIONS`. Every body change and every workflow step
+appends a `content_revisions` row (title, body, `bodySha256`, from / to status, note, actor).
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/comms/content` | `comms.content.view` | `ContentQuery` | `Paginated<ContentSummary>` | `contentScopeWhere`. `awaiting_me`: EDITORIAL_REVIEW for `comms.content.edit` holders (not the author), AWAITING_APPROVAL for `comms.content.approve` holders (not the author), APPROVED for `comms.content.publish`. |
+| GET | `/comms/content/:id` | `comms.content.view` | `CampaignIdParam` | `ContentDetail` | Department scope (404). Revisions oldest first. |
+| POST | `/comms/content` | `comms.content.draft` | `CreateContent` | `ContentDetail` (201) | Reference `CNT`. Author = caller. Fields in `CONTENT_FORBIDDEN_FIELDS` → 400. Revision CREATED. Audit: `CONTENT_CREATED`. |
+| PATCH | `/comms/content/:id` | DRAFT: author with `comms.content.draft`; EDITORIAL_REVIEW: `comms.content.edit` (not the author) | `UpdateContent` | `ContentDetail` | Other states → 409 `IMMUTABLE_RECORD`. A body / title change bumps `revision` and appends EDITED. Audit: `CONTENT_UPDATED`. |
+| POST | `/comms/content/:id/transition` | per action (below) | `ContentTransition` | `ContentDetail` | SUBMIT (author, `comms.content.draft`): DRAFT → EDITORIAL_REVIEW (→ AWAITING_APPROVAL when `comms.requireEditorialReview` is off); notifies editors (`content.review_requested`). EDITORIAL_APPROVE (`comms.content.edit`, ≠ author): → AWAITING_APPROVAL, sets `editorId`; notifies approvers. RETURN (`comms.content.edit` or `.approve`): → DRAFT with note; notifies the author (`content.returned`). APPROVE (`comms.content.approve` **reauth**, ≠ author: 403 and DB check): AWAITING_APPROVAL → APPROVED, sets `approverId`, `approvedAt`. PUBLISH (`comms.content.publish`): APPROVED → PUBLISHED, `publishedAt` (set once), `publishedById`; records publication only (nothing is sent). ARCHIVE (`comms.content.publish`): PUBLISHED → ARCHIVED. WITHDRAW (`comms.content.approve`, note): PUBLISHED → WITHDRAWN. Each appends the matching revision kind. Audit: `CONTENT_STATUS_CHANGED`. |
+| POST | `/comms/content/:id/correct` | `comms.content.approve` **(reauth)**, ≠ author | `CorrectContent` | `ContentDetail` | PUBLISHED only. New body revision (DB trigger requires the bump), `correctionCount + 1`, revision CORRECTED with the public correction note; the previous text stays in the history. Audit: `CONTENT_CORRECTED`. |
+
+### 27. Finance (`apps/api/src/modules/campaign/finance`) — S10
+
+Web: `/finance`, `/finance/transactions/[id]`, `/finance/settings`. Organisation-level (no department scope).
+Status `FINANCE_TRANSACTION_STATUS_TRANSITIONS`; posted = `POSTED_FINANCE_STATUSES` (balances, budget vs actual and
+limit checks use posted entries net of reversals).
+
+#### 27.1 Ledger and transactions (`finance.controller.ts`)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/finance/ledger` | `finance.view` | `FinanceLedgerQuery` | `FinanceLedgerSummary` | Account balances, totals, pending counts, current compliance findings (`evaluateDeadlines` + period checks) with each setting's `verified` flag; unverified findings carry `UNVERIFIED_LIMIT_LABEL`. |
+| GET | `/finance/transactions` | `finance.view` | `FinanceTransactionQuery` | `Paginated<FinanceTransactionSummary>` | `awaiting_my_approval` = REQUESTED not requested by me; `awaiting_payment` = APPROVED, requested and (when segregation is on) approved by someone else; `flagged` = non-empty `complianceFlags`. |
+| GET | `/finance/transactions/:id` | `finance.view` | `CampaignIdParam` | `FinanceTransactionDetail` | `approvalBlockers` (`financeApprovalBlockers`), live `compliance`, timeline, documents, `allowedActions` (SoD applied). |
+| POST | `/finance/transactions` | `finance.request` | `CreateFinanceTransaction` | `FinanceTransactionDetail` (201) | DRAFT; requester = caller. Account ACTIVE and in the same currency (400). Category kind matches the type (INCOME for CONTRIBUTION, EXPENSE for EXPENSE / REFUND, TRANSFER for TRANSFER). Budget line APPROVED. Counterparty per type (zod + DB check). Reference `FIN`. Event CREATED. Audit: `FINANCE_TRANSACTION_CREATED`. |
+| PATCH | `/finance/transactions/:id` | `finance.request`, requester only | `UpdateFinanceTransaction` | `FinanceTransactionDetail` | DRAFT only (409 `IMMUTABLE_RECORD`). Event UPDATED. Audit: `FINANCE_TRANSACTION_UPDATED`. |
+| POST | `/finance/transactions/:id/documents` | `finance.request` (DRAFT / REQUESTED) | `AddFinanceDocument` | `FinanceDocument` (201) | File purpose `FINANCE_DOCUMENT`, uploaded by the caller. Append-only (documents of an approved entry can be added as later evidence but never removed). Event DOCUMENT_ADDED. Audit: `FINANCE_TRANSACTION_DOCUMENT_ADDED`. |
+| GET | `/finance/transactions/:id/documents/:documentId/url` | `finance.view` | — | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+| POST | `/finance/transactions/:id/transition` | per action | `FinanceTransition` | `FinanceTransactionDetail` | **SUBMIT** (`finance.request`, requester): DRAFT → REQUESTED, `requestedAt`; evaluates compliance and stores `complianceFlags`; notifies approvers (`finance.approval_requested`). **APPROVE** (`finance.approve` **reauth**): requester → 403 `SEPARATION_OF_DUTIES`; blockers → 409 `APPROVAL_INCOMPLETE` (DB trigger backstop); re-evaluates compliance with `evaluateContribution` / `evaluateExpense` against active `FinanceLimitSetting` rows; any BLOCK finding (verified + BLOCK only) → 409 `LIMIT_EXCEEDED`; WARN findings need `acknowledgeWarnings: true` (409 `CONFLICT`, `details.findings` otherwise) and are recorded on a COMPLIANCE_EVALUATED event; → APPROVED, frozen from here (DB trigger); for a REVERSAL entry the original moves to REVERSED (`reversedAt`) in the same transaction (event REVERSED on the original); notifies payers (`finance.payment_requested`). **REJECT** (`finance.approve`, ≠ requester, note): → REJECTED; notifies the requester (`finance.rejected`). **PAY** (`finance.pay` **reauth**): APPROVED → PAID; payer ≠ requester (403, DB check), payer ≠ approver when `finance.approverCannotPay` (403); `paymentReference` required, `paidAt` defaults to now; written once. **CANCEL** (requester or `finance.approve`): DRAFT / REQUESTED → CANCELLED with reason. Each appends `finance_transaction_events`. Audit: `FINANCE_TRANSACTION_STATUS_CHANGED` (from, to, amount, SoD actors). |
+| POST | `/finance/transactions/:id/reverse` | `finance.reverse` **(reauth)** | `ReverseFinanceTransaction` | `FinanceTransactionDetail` (201, the reversal) | Original APPROVED or PAID and not yet reversed (409). Creates a REVERSAL entry (same amount, currency, account, category, budget line, counterparty copied into the description; `reversesId`) in REQUESTED with the reason; it needs approval by someone other than its requester like any entry. Audit: `FINANCE_TRANSACTION_REVERSED` (original and reversal ids). |
+| POST | `/finance/exports` | `finance.export` + `reports.export_sensitive` **(reauth)** | `FinanceExportRequest` (`register`, `format`, `from`, `to`, `reason`) | `SignedUrlResponse` | Registers: LEDGER, CONTRIBUTIONS, EXPENDITURE, BUDGET_VS_ACTUAL, built on the §28 datasets (`finance.transactions`, `finance.contributions`, `finance.budget_vs_actual`). File header: title, generation time (Africa/Nairobi and UTC), generator, filters, classification CONFIDENTIAL (HIGHLY_RESTRICTED when masked identifiers are included), and the unverified-limit label where findings rely on unverified settings. Stored with purpose `EXPORT`; logged in `report_exports` (`sensitive: true`, `reauthAt`, reason). Audit: `FINANCE_EXPORTED` and `REPORT_EXPORTED`. |
+
+#### 27.2 Accounts and categories
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/finance/accounts` | `finance.view` | — | `FinanceAccount[]` | Balances from posted entries (transfers move between accounts; reversals net out). |
+| POST | `/finance/accounts` | `finance.settings.manage` **(reauth)** | `SaveFinanceAccount` | `FinanceAccount` (201) | Only the last 4 digits are accepted and stored masked. Audit: `FINANCE_ACCOUNT_SAVED`. |
+| PATCH | `/finance/accounts/:id` | `finance.settings.manage` **(reauth)** | `SaveFinanceAccount` (`expectedVersion`) | `FinanceAccount` | Currency fixed once an entry exists (409). Closing needs a zero posted balance (409). Audit: `FINANCE_ACCOUNT_SAVED`. |
+| GET | `/finance/categories` | `finance.view` | — | `FinanceCategory[]` | |
+| POST | `/finance/categories` | `finance.settings.manage` | `SaveFinanceCategory` | `FinanceCategory` (201) | Code unique (409). Audit: `FINANCE_CATEGORY_SAVED`. |
+| PATCH | `/finance/categories/:id` | `finance.settings.manage` | `SaveFinanceCategory` | `FinanceCategory` | Kind fixed once used (409). Deactivate instead of delete. Audit: `FINANCE_CATEGORY_SAVED`. |
+
+#### 27.3 Payees and contribution sources
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/finance/payees` | `finance.view` | `PaginationQuery` | `Paginated<FinancePayee>` | Masked PIN and phone only. |
+| POST | `/finance/payees` | `finance.request` | `SaveFinancePayee` | `FinancePayee` (201) | Tax PIN stored masked plus `identifierFingerprint(tenantId, pin, key)` (duplicate → 409 with the existing payee id). Audit: `FINANCE_PAYEE_SAVED` (no PIN, no phone). |
+| PATCH | `/finance/payees/:id` | `finance.request` | `SaveFinancePayee` | `FinancePayee` | Audit: `FINANCE_PAYEE_SAVED`. |
+| GET | `/finance/contribution-sources` | `finance.view` | `PaginationQuery & { electionCycleId? }` | `Paginated<ContributionSource>` | `totalContributedMinor` = posted contributions in the period. Identifier masked only; never returned in full. |
+| POST | `/finance/contribution-sources` | `finance.request` | `SaveContributionSource` | `ContributionSource` (201) | Identifier stored masked + fingerprint (one source per identifier: 409 with the existing id). `declared` sets `declaredAt`. Audit: `FINANCE_CONTRIBUTION_SOURCE_SAVED` (`hasIdentifier`, never the value). |
+| PATCH | `/finance/contribution-sources/:id` | `finance.request` | `SaveContributionSource` | `ContributionSource` | Audit: `FINANCE_CONTRIBUTION_SOURCE_SAVED`. |
+
+#### 27.4 Budget lines
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/finance/budget-lines` | `finance.view` | `{ departmentId?, eventId?, electionCycleId? }` | `BudgetLine[]` | `actual` = posted expenses net of reversals; `committed` = REQUESTED / APPROVED-not-paid. |
+| POST | `/finance/budget-lines` | `finance.request` | `SaveBudgetLine` | `BudgetLine` (201) | DRAFT. Department or event required (DB check). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
+| PATCH | `/finance/budget-lines/:id` | `finance.request` | `SaveBudgetLine` (`expectedVersion`) | `BudgetLine` | DRAFT only (DB trigger freezes APPROVED). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
+| POST | `/finance/budget-lines/:id/approve` | `finance.approve` **(reauth)** | `{ expectedVersion }` | `BudgetLine` | Approver ≠ creator (403; DB check). Audit: `FINANCE_BUDGET_LINE_APPROVED`. |
+| POST | `/finance/budget-lines/:id/close` | `finance.approve` | `{ expectedVersion, reason }` | `BudgetLine` | APPROVED → CLOSED (final). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
+
+#### 27.5 Contribution register
+
+The contribution register is the `finance.contributions` dataset (§28) plus
+`GET /finance/transactions?type=CONTRIBUTION`. Each contribution names a `ContributionSource` (kind, masked identifier,
+declaration) and carries `complianceFlags` evaluated at submission and approval against the tenant's settings
+(`SINGLE_SOURCE_CAP_EXCEEDED` / `_NEAR`, `UNDECLARED_SOURCE`, `UNVERIFIED_SETTING` when the setting behind a finding is
+not verified). The flags are frozen with the entry at approval.
+
+#### 27.6 Limit settings (`finance-settings.controller.ts`)
+
+Settings are versioned rows of `finance_limit_settings`: `kind` (`SINGLE_SOURCE_CAP_PCT` in basis points with
+`capBasis`, `SPENDING_LIMIT` in minor units + currency, `REPORTING_DEADLINE` date), election cycle, `periodLabel`,
+optional `officeType`, `effectiveFrom` / `effectiveTo`, mandatory `legalSourceNote`, `verified` (default **false**) and
+`enforcement` (WARN | BLOCK). **No limit, percentage or date is hardcoded**; a BLOCK takes effect only once the setting
+is verified (`complianceBlocks`), and every unverified finding is shown as a warning labelled "Unverified – configure to
+the applicable law".
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/finance/settings/limits` | `finance.view` | `FinanceLimitQuery` | `FinanceLimitSetting[]` | `activeOn` uses `activeLimitSettings` semantics; superseded rows only with `includeSuperseded`. |
+| POST | `/finance/settings/limits` | `finance.settings.manage` **(reauth)** | `CreateFinanceLimitSetting` | `FinanceLimitSetting` (201) | Kind columns (zod + DB check); `verified: true` records `verifiedById` / `verifiedAt` = caller / now. Overlapping active settings of the same kind, cycle and office type → 409 (supersede instead). Audit: `FINANCE_LIMIT_SETTING_CREATED`. |
+| POST | `/finance/settings/limits/:id/supersede` | `finance.settings.manage` **(reauth)** | `SupersedeFinanceLimitSetting` | `FinanceLimitSetting` (201, the new row) | One transaction: new row with `supersedesId`; old row `effectiveTo` = new `effectiveFrom` − 1 day (value columns stay immutable, DB trigger). Audit: `FINANCE_LIMIT_SETTING_SUPERSEDED` (old and new values, reason). |
+| POST | `/finance/settings/limits/:id/verify` | `finance.settings.manage` **(reauth)** | `VerifyFinanceLimitSetting` | `FinanceLimitSetting` | Sets or clears `verified` with who / when (DB check). Audit: `FINANCE_LIMIT_SETTING_VERIFIED` (reason). |
+
+### 28. Reports (`apps/api/src/modules/campaign/reports`) — S28, blueprint 10.1–10.2
+
+Web: `/reports` (builder + standard-report catalogue), `/reports/[id]`. Only datasets in `REPORT_DATASETS`
+(`packages/shared/src/campaign/reports/datasets.ts`) can be queried: dataset key, tenant module, required permission,
+permitted fields (each with a classification and optional extra permission), scope column(s), date field, export rules
+and an optional disclaimer. No free SQL, no raw column names. Every query runs in `prisma.tenantTx()` (RLS) and applies
+the dataset scope **in the query layer**: `organisation` (permission only), `geography` (`geographyColumn` inside the
+permission's grant; cycle-limited grants only for their cycle), `department_geography` (the campaign department-scope
+rule). Field-level permissions (`requiresPermission`) are applied before selection and filtering.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/reports/datasets` | any of `reports.view`, `reports.build` | — | `{ key, label, description, group, fields: DatasetField[] }[]` | `availableDatasets(permissions, enabledModules)` with `permittedFields` per dataset. |
+| GET | `/reports/standard` | any of `reports.view`, `reports.build` | — | `StandardReport[]` (+ `runnable`) | `STANDARD_REPORTS` the caller can run (dataset available and definition valid for the caller). |
+| POST | `/reports/preview` | `reports.build` (or `reports.view` for a standard / shared definition unchanged) | `ReportDefinition` | `ReportPreview` | `validateReportDefinition` → 403 `FORBIDDEN` with `details` (issues) for unpermitted datasets / fields, 400 for unknown ones. `geographicUnitId` / `departmentId` must be inside the caller's scope (403 `OUT_OF_SCOPE`). At most 50 sample rows or 500 groups; `rowCount` and `totals` over all matching rows; `appliedScope` and `filtersDescription` in plain language; `classification` = `reportClassification`; `disclaimer` (tally datasets: `PARALLEL_TALLY_DISCLAIMER`); `exportRequirements` with `allowed`. Not audited per call (only exports are). |
+| GET | `/reports/templates` | any of `reports.view`, `reports.build` | `ReportTemplateQuery` | `Paginated<ReportTemplate>` | Visible: own templates, ORGANISATION-scoped templates whose dataset the caller can use, ROLES-scoped templates sharing one of the caller's role keys. `runnable=false` when a field or dataset permission is missing. Archived hidden. |
+| GET | `/reports/templates/:id` | same | `CampaignIdParam` | `ReportTemplate` | 404 when not visible. |
+| POST | `/reports/templates` | `reports.save` | `SaveReportTemplate` | `ReportTemplate` (201) | Owner = caller; definition validated for the caller; `classification` computed. Audit: `REPORT_TEMPLATE_SAVED`. |
+| PATCH | `/reports/templates/:id` | `reports.save`, owner only | `SaveReportTemplate` (`expectedVersion`) | `ReportTemplate` | Audit: `REPORT_TEMPLATE_SAVED`. |
+| POST | `/reports/templates/:id/archive` | `reports.save`, owner only | `{ reason }` | `OkResponse` | Sets `archivedAt` (never deleted). Audit: `REPORT_TEMPLATE_DELETED` (`reports.template.archived`). |
+| POST | `/reports/exports` | `reports.export` (+ the rest of `exportRequirements`) | `CreateReportExport` | `ReportExport` + `SignedUrlResponse` | Definition validated for the caller (a shared template runs with the **caller's** permissions and scope, never the owner's). **Sensitive** exports (`dataset.sensitiveExport` or a CONFIDENTIAL / HIGHLY_RESTRICTED selection) need `reports.export_sensitive`, the dataset's `exportPermission` (finance → `finance.export`, tally → `tally.export`, audit → `audit.export`, breaches → `security.breach.export`), **re-authentication** and a `reason` (400 without). The file (CSV / XLSX / PDF, purpose `EXPORT`) starts with a header block: report name, generation time (Africa/Nairobi and UTC), generator, filters, applied scope, data classification and the dataset disclaimer (tally keeps "unofficial, not an IEBC result"). Logged append-only in `report_exports` (fields, definition, filters, scope, classification, `sensitive`, row count, SHA-256, `reauthAt`, reason). Audit: `REPORT_EXPORTED`. Notification `report.export_ready` when produced by the queue. |
+| GET | `/reports/exports` | `reports.export` (own) ; `audit.view` (all) | `ReportExportQuery` | `Paginated<ReportExport>` | Export log. |
+| GET | `/reports/exports/:id/url` | the generator, or `audit.export` | — | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+
+### 29. Notification centre (`apps/api/src/modules/campaign/notifications` + admin §7) — blueprint 10.3
+
+Web: `/notifications` (centre + preferences); the top-bar bell shows `NotificationCounts`. The existing
+`notifications` table and `/notifications` endpoints (§7, `modules/admin/notifications.service.ts`, owned by the
+notifications agent for this change) are **extended**, not duplicated: `GET /notifications` now returns
+`Paginated<NotificationCenterItem>` (adds `severity`, `requiresAck`, `acknowledgedAt`, `entityType`, `entityId`) and
+accepts `NotificationCenterQuery` (`unreadOnly`, `module`, `severity`, `awaitingAck`). External channels use
+`NotificationChannelProvider` (`providers/notification-provider.ts`); the default for EMAIL, SMS and PUSH is the
+**log provider** (records SKIPPED, sends nothing, no vendor credentials).
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/notifications/counts` | Authenticated | — | `NotificationCounts` | Unread and awaiting-acknowledgement counts over visible modules. |
+| GET | `/notifications/preferences` | `notifications.preferences` | — | `NotificationPreferences` | Every `NOTIFICATION_TYPES` × channel with the effective value (`notificationEnabled`), `locked` for mandatory in-app types, `availableChannels` (providers whose `isAvailable()` is true), `emailVerified`, `smsConsent`. |
+| PUT | `/notifications/preferences` | `notifications.preferences` | `UpdateNotificationPreferences` | `NotificationPreferences` | Upserts rows (own only). Switching off a mandatory in-app type → 400. Audit: `NOTIFICATION_PREFERENCES_UPDATED` (channel / type / enabled). |
+| POST | `/notifications/:id/acknowledge` | Authenticated (own notification) | `AcknowledgeNotification` | `NotificationCenterItem` | Only `requiresAck` notifications (409 otherwise). Appends `notification_acknowledgements` (ACKNOWLEDGED / ESCALATED / CLOSED with note); first ACKNOWLEDGED sets `acknowledgedAt` and `readAt`. Audit: `NOTIFICATION_ACKNOWLEDGED`. |
+| GET | `/notifications/:id/acknowledgements` | own notification, or `security.breach.view` for `security.*` types | — | `NotificationAcknowledgement[]` | The escalation and closure record. |
+| GET | `/notifications/deliveries` | Authenticated (own) | `PaginationQuery` | `Paginated<NotificationDelivery>` | The caller's delivery log per channel. |
+
+`NotificationCenterService.notify(tx, { tenantId, userIds, module, type, title, body, link, severity?, requiresAck?, entityType?, entityId? })`
+inserts the in-app rows in the caller's transaction and, after commit, dispatches enabled external channels: e-mail only
+to a verified address, SMS only with a phone and consent, push only to a registered subscription; one message per user;
+each attempt appends `notification_deliveries` (provider name, status, attempt, error). Critical alerts
+(`severity: CRITICAL`, `requiresAck: true`) are always delivered in-app (`MANDATORY_NOTIFICATION_TYPES`) and stay in
+`awaitingAck` until acknowledged; escalation goes to holders of `security.breach.manage`.
+
+### 30. Breach register (`apps/api/src/modules/campaign/security`) — blueprint 15.4
+
+Web: `/security/breaches`. Status `BREACH_STATUS_TRANSITIONS`; timeline types move the status per `breachStatusFor`.
+Drills are recorded with `isDrill: true` and labelled everywhere. The register holds categories and counts only.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/security/breaches` | `security.breach.view` | `BreachQuery` | `Paginated<BreachSummary>` | |
+| GET | `/security/breaches/:id` | `security.breach.view` | `CampaignIdParam` | `BreachDetail` | Timeline by `occurredAt`. |
+| POST | `/security/breaches` | `security.breach.record` | `CreateBreach` | `BreachDetail` (201) | Reference `BRE`; reporter = caller; status DETECTED; event DETECTED. Notifies holders of `security.breach.manage` with a CRITICAL, acknowledgement-required alert for HIGH / CRITICAL severity (`security.critical_alert`), else `security.breach_recorded`. Audit: `BREACH_RECORDED`. |
+| PATCH | `/security/breaches/:id` | `security.breach.manage` | `UpdateBreach` | `BreachDetail` | Not when CLOSED (reopen first). Audit: `BREACH_UPDATED`. |
+| POST | `/security/breaches/:id/events` | `security.breach.manage` (NOTE also `security.breach.record`) | `AddBreachEvent` | `BreachDetail` | Status moves via `canTransitionBreach` (409 `INVALID_TRANSITION`); `*_NOTIFIED` set the matching `…NotifiedAt`; NOTIFICATION_NOT_REQUIRED needs `notificationDecision`; CLOSED needs `lessonsLearned` and a closer ≠ reporter (403; DB checks); REOPENED → ASSESSED, clears `closedAt` / `closedById`. Evidence file purpose `BREACH_EVIDENCE`. Appends `breach_events`. Audit: `BREACH_EVENT_ADDED` (+ `BREACH_STATUS_CHANGED`). |
+| POST | `/security/breaches/:id/export` | `security.breach.export` **(reauth)** | `ExportBreachTimeline` | `SignedUrlResponse` | PDF / CSV timeline with drill label, generation time and classification CONFIDENTIAL; logged in `report_exports` (`datasetKey: 'security.breaches'`, `sensitive: true`). Audit: `BREACH_TIMELINE_EXPORTED`. |
+
+### Campaign status, audit and error summary
+
+| Record | Transitions | History | Audit actions |
+| --- | --- | --- | --- |
+| Department / team | — (move re-paths) | audit; `team_members.left_at` | `DEPARTMENT_CREATED`, `DEPARTMENT_UPDATED`, `DEPARTMENT_MOVED`, `TEAM_CREATED`, `TEAM_UPDATED`, `TEAM_MEMBERS_ADDED`, `TEAM_MEMBER_REMOVED` |
+| Task | `TASK_STATUS_TRANSITIONS` | `task_events`, `task_comments`, `task_attachments` | `TASK_CREATED`, `TASK_UPDATED`, `TASK_ASSIGNED`, `TASK_STATUS_CHANGED`, `TASK_REVIEWED`, `TASK_DEPENDENCY_CHANGED`, `TASK_CHECKLIST_SAVED`, `TASK_COMMENTED`, `TASK_ATTACHMENT_ADDED` |
+| Event | `CAMPAIGN_EVENT_STATUS_TRANSITIONS`, `LOGISTICS_STATUS_TRANSITIONS`, `AFTER_ACTION_STATUS_TRANSITIONS` | `event_documents`, audit | `EVENT_CREATED`, `EVENT_UPDATED`, `EVENT_STATUS_CHANGED`, `EVENT_AGENDA_SAVED`, `EVENT_LOGISTICS_SAVED`, `EVENT_ATTENDANCE_RECORDED`, `EVENT_ATTENDANCE_CONTACT_VIEWED`, `EVENT_ATTENDANCE_EXPORTED`, `EVENT_DOCUMENT_ADDED`, `EVENT_AFTER_ACTION_SAVED`, `EVENT_AFTER_ACTION_REVIEWED` |
+| Content | `CONTENT_STATUS_TRANSITIONS` | `content_revisions` | `CONTENT_CREATED`, `CONTENT_UPDATED`, `CONTENT_STATUS_CHANGED`, `CONTENT_CORRECTED` |
+| Ledger entry | `FINANCE_TRANSACTION_STATUS_TRANSITIONS` | `finance_transaction_events`, `finance_transaction_documents` | `FINANCE_TRANSACTION_CREATED`, `FINANCE_TRANSACTION_UPDATED`, `FINANCE_TRANSACTION_DOCUMENT_ADDED`, `FINANCE_TRANSACTION_STATUS_CHANGED`, `FINANCE_TRANSACTION_REVERSED`, `FINANCE_EXPORTED` |
+| Finance master data | budget line DRAFT → APPROVED → CLOSED | audit | `FINANCE_ACCOUNT_SAVED`, `FINANCE_CATEGORY_SAVED`, `FINANCE_PAYEE_SAVED`, `FINANCE_CONTRIBUTION_SOURCE_SAVED`, `FINANCE_BUDGET_LINE_SAVED`, `FINANCE_BUDGET_LINE_APPROVED` |
+| Limit setting | versioned (supersede) | rows kept; audit | `FINANCE_LIMIT_SETTING_CREATED`, `FINANCE_LIMIT_SETTING_SUPERSEDED`, `FINANCE_LIMIT_SETTING_VERIFIED` |
+| Report template / export | archive | `report_exports` | `REPORT_TEMPLATE_SAVED`, `REPORT_TEMPLATE_DELETED`, `REPORT_EXPORTED` |
+| Notification | read / acknowledge | `notification_acknowledgements`, `notification_deliveries` | `NOTIFICATION_PREFERENCES_UPDATED`, `NOTIFICATION_ACKNOWLEDGED` |
+| Breach | `BREACH_STATUS_TRANSITIONS` | `breach_events` | `BREACH_RECORDED`, `BREACH_UPDATED`, `BREACH_EVENT_ADDED`, `BREACH_STATUS_CHANGED`, `BREACH_TIMELINE_EXPORTED` |
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| Module off | 403 | `MODULE_DISABLED` |
+| Record outside the department scope | 404 | `NOT_FOUND` |
+| Body names a unit / department outside the caller's scope | 403 | `OUT_OF_SCOPE` |
+| Unpermitted report dataset or field | 403 | `FORBIDDEN` (`details` = issues) |
+| Sensitive export or high-risk action without recent re-auth | 403 | `REAUTH_REQUIRED` |
+| Stale `expectedVersion` | 409 | `CONFLICT` (`details.serverState`) |
+| Illegal transition | 409 | `INVALID_TRANSITION` |
+| Editing frozen content (DB trigger) | 409 | `IMMUTABLE_RECORD` |
+| Ledger approval without category, counterparty, reference or document | 409 | `APPROVAL_INCOMPLETE` |
+| Verified BLOCK limit finding | 409 | `LIMIT_EXCEEDED` |
+| Unacknowledged WARN findings on approval | 409 | `CONFLICT` (`details.findings`) |
+| Requester approves / pays, approver pays (segregation on), author approves, owner reviews, reporter closes | 403 | `SEPARATION_OF_DUTIES` |
+| Dependency cycle, duplicate code / identifier | 409 | `CONFLICT` |

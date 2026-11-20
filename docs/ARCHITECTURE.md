@@ -30,6 +30,10 @@ apps/
         field/        ← field and election operations (blueprint 6, 7, 13.4): agents/, deployment/,
                         readiness/, reports/, incidents/, warroom/, sync/, common/ (station-code
                         location and scope, election cycle, idempotency ledger), field.dto.ts
+        campaign/     ← campaign and organisation (blueprint 5, 10, 15.3, 15.4): org/, tasks/, events/,
+                        comms/, finance/, reports/ (report builder), notifications/ (centre +
+                        channel providers), security/ (breach register), common/ (department
+                        scope, support helpers), campaign.dto.ts, campaign.constants.ts
   web/                Next.js App Router (TypeScript), Tailwind, PWA shell
     src/
       app/            routes; (app)/ = authenticated shell; tally/ layout adds the parallel-tally banner
@@ -60,6 +64,9 @@ docs/                 BLUEPRINT, DECISIONS, RESEARCH, this file, API_CONTRACT, D
 | Field B: field reports, incidents, offline sync and the mobile PWA (S11, S17) | API `modules/field/reports/**`, `modules/field/incidents/**`, `modules/field/sync/**`; web `app/m/**`, `app/(app)/field/incidents/**`, `components/field/mobile/**`, `components/field/reports/**`, `components/field/incidents/**`, `lib/offline/**`, `public/sw.js` | same, plus `lib/nav.ts` (items already present) |
 | Field C: War Room (S16) | API `modules/field/warroom/**`; web `app/(app)/warroom/**`, `components/field/warroom/**` | same; `components/field/war-room-banner.tsx` must stay in the War Room layout |
 | Office: projects + institutions + public projects | API `modules/office/projects/**`, `modules/office/public/public-projects.controller.ts`; web `app/(app)/office/projects/**`, `app/p/[tenantSlug]/projects/**`, `components/office/projects/**`, `components/office/public/projects-*` | same as above |
+| Campaign A: organisation, tasks, events (S05, S08, S09) | API `modules/campaign/org/**`, `modules/campaign/tasks/**`, `modules/campaign/events/**`; web `app/(app)/org/**`, `app/(app)/tasks/**`, `app/(app)/events/**`, `components/campaign/org/**`, `components/campaign/tasks/**`, `components/campaign/events/**` | `campaign.module.ts`, `campaign.dto.ts`, `campaign.constants.ts`, `campaign/common/**`, the `org`, `tasks` and `events` `layout.tsx` files, `lib/nav.ts` (items already present) |
+| Campaign B: finance and communications (S10, blueprint 5.4) | API `modules/campaign/finance/**`, `modules/campaign/comms/**`; web `app/(app)/finance/**`, `app/(app)/comms/**`, `components/campaign/finance/**`, `components/campaign/comms/**` | same; limit evaluation stays in `packages/shared/src/campaign/finance/limits.ts` (no hardcoded limits) |
+| Campaign C: reports, notification centre, breach register (S28, blueprint 10.1–10.3, 15.4) | API `modules/campaign/reports/**`, `modules/campaign/notifications/**`, `modules/campaign/security/**`, `modules/admin/notifications.service.ts` and the notification routes of `modules/admin/dashboard.controller.ts`; web `app/(app)/reports/**`, `app/(app)/notifications/**`, `app/(app)/security/**`, `components/campaign/reports/**`, `components/campaign/notifications/**`, `components/campaign/security/**`, the top-bar bell in `components/layout/topbar.tsx` | same; the dataset registry `packages/shared/src/campaign/reports/datasets.ts` may gain datasets (additive) |
 
 Shared contracts in `packages/shared` and `packages/db/prisma/schema.prisma` already cover the full data
 model and DTOs. If a module needs to extend them, the change must be additive (new optional fields,
@@ -301,3 +308,54 @@ Blueprint 6 (field, registry, agents), 7 (War Room), 11.3 (mobile PWA), 13.4 (of
   On sign-out the database and key are deleted; confirmed items are deleted after `ACCEPTED`.
 - Idempotency keys are generated when a record is first saved, before any upload, and reused on
   every retry; conflicts are shown to the person (never resolved by overwriting server data).
+
+## 15. Campaign and organisation
+
+Blueprint 5.1–5.4 (organisation, tasks, events, communications), 10.1–10.3 (standard reports, report builder,
+notification centre), 14 (Task / Event, Finance transaction), 15.2–15.4. Contract:
+[API_CONTRACT.md](./API_CONTRACT.md) §23–30. Module key `campaign` (default off) gates org/, tasks/, events/, comms/
+and finance/; the report builder, notification centre and breach register are platform features (each report dataset
+names its own module).
+
+- **Data model** (migration `20261125000000_campaign_organisation`): `departments` (materialised `path`, `depth`,
+  lead, budget code, active dates, visibility), `teams`, `team_members` (history via `left_at`; partial unique index on
+  active rows); `tasks` (one accountable owner, reviewer ≠ owner, source link to dashboard / project / event / incident /
+  case), `task_collaborators`, `task_dependencies`, `task_checklist_items`, `task_comments`, `task_attachments`,
+  `task_events`; `campaign_events`, `event_invited_teams`, `event_agenda_items`, `event_logistics_items`,
+  `event_attendances`, `event_attendance_contacts` (consent-based contact kept apart; erasure only),
+  `event_documents`, `event_after_action_reports` (reviewer ≠ author; frozen once approved); `content_items` (approver ≠
+  author; published text changes only with a new revision) and `content_revisions`; finance: `finance_accounts`,
+  `finance_categories`, `finance_payees`, `contribution_sources` (masked identifier + keyed fingerprint),
+  `finance_budget_lines`, `finance_transactions`, `finance_transaction_documents`, `finance_transaction_events`,
+  `finance_limit_settings`; `report_templates`, `report_exports`; `notification_preferences`,
+  `notification_deliveries`, `notification_acknowledgements` (plus severity / acknowledgement columns on
+  `notifications`); `breach_records`, `breach_events`. RLS on every table; nothing is deleted except the three link
+  tables; histories append-only (triggers, also for the owner role).
+- **Ledger integrity.** Amounts are `BIGINT` minor units with an ISO currency (`MoneyMinor`; never floats). Entries
+  are inserted as DRAFT or REQUESTED only; approval needs a category, a counterparty per type, an external reference
+  and a supporting document (trigger); from APPROVED on the financial columns are frozen and the only moves are
+  APPROVED → PAID → REVERSED (trigger). Requester ≠ approver, requester ≠ payer, requester ≠ rejecter (checks);
+  approver ≠ payer when `CampaignModuleConfig.finance.approverCannotPay` (service). Corrections are REVERSAL entries
+  that go through the same approval. DB SoD violations map to 403 `SEPARATION_OF_DUTIES`, missing prerequisites to 409
+  `APPROVAL_INCOMPLETE` (`AllExceptionsFilter`).
+- **Configurable limits.** Single-source caps, spending limits and reporting deadlines are tenant rows with effective
+  dates, election cycle, office type, a mandatory legal source note, a `verified` flag and WARN / BLOCK enforcement;
+  value columns are immutable (supersede to change). `evaluateContribution`, `evaluateExpense` and `evaluateDeadlines`
+  (`packages/shared/src/campaign/finance/limits.ts`) are the only evaluators; a BLOCK applies only to a verified
+  setting and every unverified finding carries "Unverified – configure to the applicable law". Nothing is hardcoded
+  (docs/RESEARCH.md: the 2026 regulations are contested).
+- **Department scope.** `common/campaign-scope.ts`: involvement OR (department ∈ caller departments AND geography ∈
+  grant), with `org.departments.all` lifting the department test; list helpers per record type and
+  `campaignRecordInScope` for one record (404 outside). Geo kinds `campaignTeam`, `campaignTask`, `campaignEvent`.
+- **Report builder.** `REPORT_DATASETS` is the only queryable surface: per dataset the module, permission, permitted
+  fields with classification and extra permission, scope kind and columns, date field, export rules and disclaimer
+  (tally datasets keep `PARALLEL_TALLY_DISCLAIMER`). `validateReportDefinition`, `permittedFields`,
+  `reportClassification` and `exportRequirements` are shared with the web client. Exports carry generation time,
+  filters, scope and classification, are logged in `report_exports` and audited; sensitive ones need
+  `reports.export_sensitive` + the dataset's export permission + re-auth.
+- **Notification centre.** Extends `notifications`; preferences per user, channel and type (`notificationEnabled`);
+  `NotificationChannelProvider` per external channel with the log provider as default (no vendor credentials, nothing
+  sent); every attempt in `notification_deliveries`; critical alerts need acknowledgement (append-only record).
+- **Political boundary.** No voter lists, recipient lists, personal targeting or bulk outreach anywhere in the model:
+  content has audience categories, notifications go to signed-in users about their own work, event contact details are
+  consent-based, stored apart and never exported.
