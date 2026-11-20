@@ -18,7 +18,10 @@
     "db:migrate:dev": "pnpm --filter @ngao360/db run migrate:dev",
     "db:seed": "pnpm --filter @ngao360/db run seed",
     "db:reset": "pnpm --filter @ngao360/db run reset",
-    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css,yml,yaml}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css,yml,yaml}\"",
+    "test:rehearsal": "pnpm --filter @ngao360/api run test:rehearsal",
+    "smoke:web": "node scripts/smoke/web-smoke.cjs",
+    "fixtures:forms": "python3 scripts/fixtures/generate-form-images.py"
   },
   "devDependencies": {
     "prettier": "3.6.2",
