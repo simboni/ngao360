@@ -111,7 +111,7 @@ export class EventsController {
 
   @RequirePermission(['events.attendance', 'events.view'])
   @Get(':id/attendance')
-  attendance(@CurrentAuth() auth: AuthContext, @Param() p: CampaignIdParamDto, @Query() q: PaginationQueryDto): Promise<Paginated<EventAttendance> & AttendanceSummary> {
+  attendance(@CurrentAuth() auth: AuthContext, @Param() p: CampaignIdParamDto, @Query() q: PaginationQueryDto): Promise<Paginated<EventAttendance> & AttendanceSummary & { summary: AttendanceSummary }> {
     return this.service.attendance(auth, p.id, q);
   }
 

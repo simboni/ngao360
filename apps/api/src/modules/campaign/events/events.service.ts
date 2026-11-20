@@ -535,7 +535,7 @@ export class EventsService {
     });
   }
 
-  attendance(auth: AuthContext, id: string, q: PaginationQuery): Promise<Paginated<EventAttendance> & AttendanceSummary> {
+  attendance(auth: AuthContext, id: string, q: PaginationQuery): Promise<Paginated<EventAttendance> & AttendanceSummary & { summary: AttendanceSummary }> {
     return this.prisma.tenantTx(async (tx) => {
       await this.loadForView(tx, auth, id);
       const where = { eventId: id };
@@ -546,15 +546,14 @@ export class EventsService {
         tx.eventAttendance.groupBy({ by: ['checkInMethod'], where, _count: { _all: true } }),
         tx.eventAttendance.count({ where: { ...where, hasContact: true } }),
       ]);
-      return {
-        items: rows.map(toAttendance),
-        page: q.page,
-        pageSize: q.pageSize,
+      // The summary is returned both flat (contract "Paginated + AttendanceSummary") and as `summary` (web client).
+      const summary: AttendanceSummary = {
         total,
         byRole: Object.fromEntries(byRole.map((r) => [r.role, r._count._all])),
         byMethod: Object.fromEntries(byMethod.map((r) => [r.checkInMethod, r._count._all])),
         withContact,
       };
+      return { items: rows.map(toAttendance), page: q.page, pageSize: q.pageSize, ...summary, summary };
     });
   }
 

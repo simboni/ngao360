@@ -646,3 +646,48 @@ Components live in `apps/web/src/components/{org,tasks,events,comms}` (this run'
 5. **People picker for viewers.** `GET /org/assignable-users` needs a create / assign / manage permission, so a viewer
    with only `tasks.view` sees just themselves in the task board "Assignee" filter. Proposed: also allow `tasks.view` and
    `events.view` (display names only, as today).
+
+## Campaign: API (organisation, tasks, events, comms, finance, reports, notification centre, breach register; from the campaign API agent)
+
+All endpoints of §23–30 are implemented in `apps/api/src/modules/campaign/**` with integration suites
+(`apps/api/test/campaign-operations`, `finance-ledger`, `reports-builder`, `notifications-centre`). Requests that need
+files outside the campaign API folder:
+
+1. **Extended `GET /notifications` (§7 / §29) — admin files.** `NotificationCenterService.list(auth, NotificationCenterQuery)`
+   returns `Paginated<NotificationCenterItem>` (severity, `requiresAck`, `acknowledgedAt`, `entityType`, `entityId`;
+   filters `module`, `severity`, `awaitingAck`; in-app rows only). The route itself lives in
+   `modules/admin/dashboard.controller.ts` and `modules/admin/notifications.service.ts`, which this agent did not edit.
+   Proposed: the dashboard controller's `GET /notifications` takes `NotificationCenterQueryDto` (from `campaign.dto.ts`)
+   and returns the extended item (either delegate to `NotificationCenterService.list` by importing
+   `NotificationCenterModule`, or add the five fields and three filters to the admin service), and `baseWhere` adds
+   `channel: 'IN_APP'` so rows a user only wanted on an external channel are not listed in-app (the counts endpoint
+   already filters this way).
+2. **Address verification, SMS consent and push subscriptions (schema).** The `users` table has no e-mail verification
+   flag, SMS consent record or push subscription table, so `NotificationPreferences.emailVerified` / `smsConsent` are
+   always false and every external attempt is recorded as SKIPPED (the log provider sends nothing either way).
+   Proposed: `users.email_verified_at`, a consent table for SMS (purpose, notice version, time) and
+   `notification_push_subscriptions`; `NotificationCenterService.resolveAddress` is the single place to wire them.
+3. **Inline request shapes → shared schemas.** `{ reason }`, `{ expectedVersion }`, `{ expectedVersion, reason }`,
+   `{ format: 'CSV' | 'PDF', reason }` (attendance export), the budget-line query, the contribution-source query
+   (`electionCycleId`, `from`, `to`) and `SaveFinanceAccount & { expectedVersion }` are defined locally in
+   `campaign.dto.ts`. Proposed: move them to `packages/shared/src/campaign` and name them in the contract.
+4. **Dependency override flag.** The task description asks for "cannot complete while a dependency is open unless
+   overridden with reason"; `ChangeTaskStatusSchema` has no override flag. Implemented: a holder of `tasks.manage_all`
+   who gives a `reason` (≥ 3 characters) may move a task to IN_PROGRESS / SUBMITTED_FOR_REVIEW / COMPLETED with open
+   dependencies; the timeline note starts with "Dependency override:" and the audit entry carries
+   `dependencyOverride: true`. Proposed: an explicit `overrideOpenDependencies: boolean` in the schema.
+5. **Workflow reviewers and department scope.** The seeded Communications approver, Finance approver and the
+   after-action reviewers hold no `org.departments.all`; under `DEPARTMENT_SCOPE_RULE` they see content / events only in
+   their own departments or once involved, so `awaiting_me` is empty for an approver outside the author's department.
+   Proposed (roles, shared): give `COMMUNICATIONS_APPROVER` and `CAMPAIGN_MANAGER` `org.departments.all`, or extend the
+   rule so the holders of the next workflow permission count as involved for items at that step.
+6. **Attendance list shape.** Implemented as both the flat merge (contract wording "Paginated + AttendanceSummary") and a
+   `summary` object (what the web reads); see the web agent's request 2 for a shared schema.
+7. **Task sort keys.** `GET /tasks` accepts `sort` = `dueAt`, `priority`, `reference`, otherwise `updatedAt`
+   (answers 200 with the default for other keys today). Matches the web agent's request 4 once documented.
+8. **`task.due_soon` notifications** need a scheduled job (BullMQ repeatable); not implemented.
+9. **Report preview narrowing on organisation datasets.** `geographicUnitId` on a dataset without a geography column
+   (finance, audit, breaches) answers 400; `departmentId` narrows finance datasets by the entry's department.
+10. **Finance "committed".** §27.4 says committed = REQUESTED / APPROVED-not-paid, while `BudgetLineSchema` and the
+    dataset label say "requested but not yet approved". Implemented: committed = REQUESTED expense entries; actual =
+    APPROVED + PAID expense entries (reversed originals and reversing entries both drop out, so reversals net to zero).

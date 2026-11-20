@@ -175,7 +175,7 @@ export class FinanceService {
 
   private async detail(tx: TenantTx, auth: AuthContext, t: DetailRow, config?: CampaignModuleConfig): Promise<FinanceTransactionDetail> {
     const cfg = config ?? (await this.modules.campaignConfig(tx));
-    const live = t.status === 'DRAFT' || t.status === 'REQUESTED' ? await evaluateEntry(tx, t, cfg) : [];
+    const live = t.status === 'REJECTED' || t.status === 'CANCELLED' ? [] : await evaluateEntry(tx, t, cfg);
     const p = (k: Parameters<typeof auth.permissions.has>[0]) => auth.permissions.has(k);
     const me = auth.userId;
     const isRequester = t.requestedById === me;
