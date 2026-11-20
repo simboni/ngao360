@@ -9,7 +9,7 @@ coverage/
 .env.local
 .env.*.local
 !.env.example
-storage/
+/storage/
 apps/api/storage/
 *.log
 .DS_Store
