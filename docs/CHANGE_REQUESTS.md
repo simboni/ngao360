@@ -216,3 +216,44 @@ Requests from module agents for changes outside the files they own. Append below
    invitation e-mail. Proposed: `POST /auth/invitations/accept { token, password }` with a
    single-use, 72-hour token (hash stored on a new `user_invitations` table with `tenant_id`, RLS
    and an audit event), plus `POST /admin/users/:id/resend-invitation` (`users.create`, reauth).
+
+## Tally UI (from the tally web agent)
+
+The S18–S22 screens live in `apps/web/src/app/(app)/tally/**` and `apps/web/src/components/tally/**`.
+
+1. **Web test script.** The tally UI tests use `node:test` with `tsx` (no new dependencies) and a
+   test-only tsconfig that switches JSX to `react-jsx`. Please set the `test` script in
+   `apps/web/package.json` to:
+   ```json
+   "test": "tsx --tsconfig src/components/tally/__tests__/tsconfig.json --test src/components/tally/__tests__/*.test.ts src/components/tally/__tests__/*.test.tsx"
+   ```
+   and add `tsx` (already present in the workspace, currently resolved transitively) as an explicit
+   `devDependency` of `@ngao360/web` so the binary is guaranteed.
+
+2. **Charting library (optional).** The brief named Recharts for the S21 candidate bar chart. Adding a
+   dependency means editing `apps/web/package.json` and the lockfile, which this agent does not own,
+   so `components/tally/charts.tsx` ships dependency-free, accessible CSS/SVG charts (single
+   neutral hue, ballot order, keyboard-focusable bars with tooltips, a table view beside each chart).
+   If Recharts is still wanted, add `recharts` to `@ngao360/web`; the chart components take the
+   same `CandidateTotal[]` / `Coverage` props, so they can be swapped without changing the dashboard.
+
+3. **Validation evaluator import.** The live validation checklist (S19/S20) uses the shared
+   reference evaluator through `@ngao360/shared/dist/reference/rules`. Once reference item 1 lands
+   (`export * from './reference'` in the shared root), switch the import in
+   `components/tally/capture-model.ts` to `@ngao360/shared`.
+
+4. **`StationCoverageRow`.** `components/tally/types.ts` mirrors the API row type from tally item 3.
+   Replace it with the shared schema when that is added.
+
+5. **Discrepancy owner picker.** `POST /tally/discrepancies/:id/assign` takes a user id, but the tally
+   roles cannot list users (`/admin/users` needs `users.view`). S22 therefore offers "Assign to me"
+   and "Unassign" only. Proposed: `GET /tally/assignees` (`tally.discrepancy.manage`) returning
+   `UserRef[]` of active users holding `tally.discrepancy.manage` or `tally.discrepancy.resolve`
+   within the case's geography.
+
+6. **Content Security Policy.** The source viewer fetches the original through the audited signed
+   URL, checks its SHA-256 in the browser and displays it from a `blob:` URL (this also works with
+   `X-Frame-Options: DENY` for PDFs). If a CSP is added to the web app, it must allow
+   `img-src blob:` and `frame-src blob:` (and `connect-src` for the S3/MinIO host when the S3 driver
+   is used; that bucket also needs CORS for `GET` from the web origin, otherwise the viewer falls
+   back to the signed URL without the browser-side hash check).
