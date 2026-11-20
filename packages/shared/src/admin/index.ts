@@ -70,6 +70,30 @@ export const ROLE_SOD_RULES: readonly RoleSodRule[] = [
     message: "A field agent role cannot view other agents' records or plan deployments.",
   },
   {
+    id: 'finance-request-vs-approve',
+    left: ['finance.request'],
+    right: ['finance.approve'],
+    message: 'A role cannot both record ledger entries and approve them; requester and approver are different people.',
+  },
+  {
+    id: 'finance-approve-vs-pay',
+    left: ['finance.approve'],
+    right: ['finance.pay'],
+    message: 'A role cannot both approve ledger entries and mark them paid; approver and payer are different people.',
+  },
+  {
+    id: 'comms-draft-vs-approve',
+    left: ['comms.content.draft'],
+    right: ['comms.content.approve'],
+    message: 'A role cannot both draft content and authorise it for publication; author and approver are different people.',
+  },
+  {
+    id: 'operations-vs-finance',
+    left: ['events.logistics'],
+    right: ['finance.request', 'finance.approve', 'finance.pay', 'finance.reverse', 'finance.settings.manage'],
+    message: 'Operations roles have no finance access; logistics and ledger work are held by different roles.',
+  },
+  {
     id: 'access-admin-vs-tally-write',
     left: ACCESS_ADMIN_PERMISSIONS,
     right: TALLY_VALUE_WRITE_PERMISSIONS,

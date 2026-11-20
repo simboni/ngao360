@@ -164,3 +164,17 @@ export function otpauthUrl(params: { issuer: string; account: string; secret: st
   });
   return `otpauth://totp/${label}?${q.toString()}`;
 }
+
+/* ------------------------- Identifier fingerprints ------------------------- */
+
+/**
+ * Keyed fingerprint of a personal identifier (contributor ID / registration
+ * number, payee tax PIN) for duplicate detection without storing the value:
+ * HMAC-SHA256(key, "<tenantId>:<normalised value>"), hex. Normalisation drops
+ * spaces, dashes and case. The API and seed pass the server secret
+ * (MFA_ENCRYPTION_KEY); only masked values are ever stored next to it.
+ */
+export function identifierFingerprint(tenantId: string, value: string, key: string): string {
+  const normalised = value.replace(/[\s-]/g, '').toUpperCase();
+  return createHmac('sha256', key).update(`${tenantId}:${normalised}`).digest('hex');
+}

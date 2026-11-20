@@ -264,6 +264,10 @@ enum StoredFilePurpose {
   PROJECT_EVIDENCE
   FIELD_EVIDENCE
   AGENT_DOCUMENT
+  TASK_ATTACHMENT
+  EVENT_DOCUMENT
+  FINANCE_DOCUMENT
+  BREACH_EVIDENCE
 }
 
 enum MalwareScanStatus {
@@ -288,6 +292,7 @@ enum NotificationChannel {
   IN_APP
   EMAIL
   SMS
+  PUSH
 }
 
 // ---------------------------------------------------------------------------
@@ -643,6 +648,44 @@ model Tenant {
   clientSubmissions    ClientSubmission[]
   fieldFileClaims      FieldFileClaim[]
 
+  // Campaign and organisation
+  departments                  Department[]
+  teams                        Team[]
+  teamMembers                  TeamMember[]
+  tasks                        Task[]
+  taskCollaborators            TaskCollaborator[]
+  taskDependencies             TaskDependency[]
+  taskChecklistItems           TaskChecklistItem[]
+  taskComments                 TaskComment[]
+  taskAttachments              TaskAttachment[]
+  taskEvents                   TaskEvent[]
+  campaignEvents               CampaignEvent[]
+  eventInvitedTeams            EventInvitedTeam[]
+  eventAgendaItems             EventAgendaItem[]
+  eventLogisticsItems          EventLogisticsItem[]
+  eventAttendances             EventAttendance[]
+  eventAttendanceContacts      EventAttendanceContact[]
+  eventDocuments               EventDocument[]
+  eventAfterActionReports      EventAfterActionReport[]
+  contentItems                 ContentItem[]
+  contentRevisions             ContentRevision[]
+  financeAccounts              FinanceAccount[]
+  financeCategories            FinanceCategory[]
+  financePayees                FinancePayee[]
+  contributionSources          ContributionSource[]
+  financeBudgetLines           FinanceBudgetLine[]
+  financeTransactions          FinanceTransaction[]
+  financeTransactionDocuments  FinanceTransactionDocument[]
+  financeTransactionEvents     FinanceTransactionEvent[]
+  financeLimitSettings         FinanceLimitSetting[]
+  reportTemplates              ReportTemplate[]
+  reportExports                ReportExport[]
+  notificationPreferences      NotificationPreference[]
+  notificationDeliveries       NotificationDelivery[]
+  notificationAcknowledgements NotificationAcknowledgement[]
+  breachRecords                BreachRecord[]
+  breachEvents                 BreachEvent[]
+
   @@map("tenants")
 }
 
@@ -755,6 +798,62 @@ model User {
   stationStatusEvents        StationStatusEvent[]  @relation("StationStatusEventActor")
   clientSubmissions          ClientSubmission[]    @relation("ClientSubmissionUser")
   fieldFileClaims            FieldFileClaim[]      @relation("FieldFileClaimUser")
+
+  // Campaign and organisation
+  departmentsLed           Department[]                  @relation("DepartmentLead")
+  departmentsCreated       Department[]                  @relation("DepartmentCreatedBy")
+  teamsCoordinated         Team[]                        @relation("TeamCoordinator")
+  teamsCreated             Team[]                        @relation("TeamCreatedBy")
+  teamMemberships          TeamMember[]                  @relation("TeamMemberUser")
+  teamMembersAdded         TeamMember[]                  @relation("TeamMemberAddedBy")
+  teamMembersRemoved       TeamMember[]                  @relation("TeamMemberRemovedBy")
+  tasksOwned               Task[]                        @relation("TaskOwner")
+  tasksReviewing           Task[]                        @relation("TaskReviewer")
+  tasksCreated             Task[]                        @relation("TaskCreatedBy")
+  taskCollaborations       TaskCollaborator[]            @relation("TaskCollaboratorUser")
+  taskCollaboratorsAdded   TaskCollaborator[]            @relation("TaskCollaboratorAddedBy")
+  taskDependenciesCreated  TaskDependency[]              @relation("TaskDependencyCreatedBy")
+  taskChecklistDone        TaskChecklistItem[]           @relation("TaskChecklistDoneBy")
+  taskChecklistCreated     TaskChecklistItem[]           @relation("TaskChecklistCreatedBy")
+  taskComments             TaskComment[]                 @relation("TaskCommentAuthor")
+  taskAttachments          TaskAttachment[]              @relation("TaskAttachmentAddedBy")
+  taskEvents               TaskEvent[]                   @relation("TaskEventActor")
+  eventsOrganised          CampaignEvent[]               @relation("EventOrganiser")
+  eventsCreated            CampaignEvent[]               @relation("EventCreatedBy")
+  agendaItemsOwned         EventAgendaItem[]             @relation("AgendaOwner")
+  logisticsCustody         EventLogisticsItem[]          @relation("LogisticsCustodian")
+  logisticsCreated         EventLogisticsItem[]          @relation("LogisticsCreatedBy")
+  attendances              EventAttendance[]             @relation("AttendanceUser")
+  attendancesRecorded      EventAttendance[]             @relation("AttendanceRecordedBy")
+  eventDocumentsAdded      EventDocument[]               @relation("EventDocumentAddedBy")
+  afterActionAuthored      EventAfterActionReport[]      @relation("AfterActionAuthor")
+  afterActionReviewed      EventAfterActionReport[]      @relation("AfterActionReviewer")
+  contentAuthored          ContentItem[]                 @relation("ContentAuthor")
+  contentEdited            ContentItem[]                 @relation("ContentEditor")
+  contentApproved          ContentItem[]                 @relation("ContentApprover")
+  contentPublished         ContentItem[]                 @relation("ContentPublisher")
+  contentRevisions         ContentRevision[]             @relation("ContentRevisionActor")
+  financeAccountsCreated   FinanceAccount[]              @relation("FinanceAccountCreatedBy")
+  financePayeesCreated     FinancePayee[]                @relation("FinancePayeeCreatedBy")
+  contributionSourcesAdded ContributionSource[]          @relation("ContributionSourceCreatedBy")
+  budgetLinesApproved      FinanceBudgetLine[]           @relation("BudgetLineApprovedBy")
+  budgetLinesCreated       FinanceBudgetLine[]           @relation("BudgetLineCreatedBy")
+  financeRequested         FinanceTransaction[]          @relation("FinanceRequestedBy")
+  financeApproved          FinanceTransaction[]          @relation("FinanceApprovedBy")
+  financeRejected          FinanceTransaction[]          @relation("FinanceRejectedBy")
+  financePaid              FinanceTransaction[]          @relation("FinancePaidBy")
+  financeDocumentsAdded    FinanceTransactionDocument[]  @relation("FinanceDocumentAddedBy")
+  financeEvents            FinanceTransactionEvent[]     @relation("FinanceEventActor")
+  limitSettingsCreated     FinanceLimitSetting[]         @relation("LimitSettingCreatedBy")
+  limitSettingsVerified    FinanceLimitSetting[]         @relation("LimitSettingVerifiedBy")
+  reportTemplates          ReportTemplate[]              @relation("ReportTemplateOwner")
+  reportExports            ReportExport[]                @relation("ReportExportGeneratedBy")
+  notificationPreferences  NotificationPreference[]      @relation("NotificationPreferenceUser")
+  notificationAcks         NotificationAcknowledgement[] @relation("NotificationAckUser")
+  breachesOwned            BreachRecord[]                @relation("BreachOwner")
+  breachesReported         BreachRecord[]                @relation("BreachReporter")
+  breachesClosed           BreachRecord[]                @relation("BreachCloser")
+  breachEvents             BreachEvent[]                 @relation("BreachEventActor")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -976,6 +1075,11 @@ model ElectionCycle {
   incidents            Incident[]
   stationStatuses      StationStatus[]
 
+  // Campaign finance (limit settings and entries per election period)
+  financeBudgetLines   FinanceBudgetLine[]   @relation("BudgetLineCycle")
+  financeTransactions  FinanceTransaction[]  @relation("FinanceTransactionCycle")
+  financeLimitSettings FinanceLimitSetting[] @relation("LimitSettingCycle")
+
   @@unique([tenantId, name])
   @@map("election_cycles")
 }
@@ -1086,6 +1190,11 @@ model GeographicUnit {
   agentsHomeWard Agent[]       @relation("AgentHomeWard")
   fieldReports   FieldReport[] @relation("FieldReportUnit")
   incidents      Incident[]    @relation("IncidentUnit")
+
+  // Campaign and organisation (team area, task and event geography)
+  teams          Team[]          @relation("TeamGeography")
+  tasks          Task[]          @relation("TaskGeography")
+  campaignEvents CampaignEvent[] @relation("EventGeography")
 
   @@unique([tenantId, electionCycleId, type, officialCode, sourceVersion])
   @@index([tenantId, electionCycleId, type])
@@ -1277,6 +1386,12 @@ model StoredFile {
   fieldReportEvidence FieldReportEvidence[]
   incidentEvidence    IncidentEvidence[]
   fieldFileClaims     FieldFileClaim[]
+
+  taskAttachments  TaskAttachment[]
+  eventDocuments   EventDocument[]
+  financeDocuments FinanceTransactionDocument[]
+  reportExports    ReportExport[]
+  breachEvents     BreachEvent[]
 
   @@unique([tenantId, sha256])
   @@map("stored_files")
@@ -1615,21 +1730,29 @@ model TallyExport {
 // ============================================================================
 
 model Notification {
-  id        String              @id @default(uuid()) @db.Uuid
-  tenantId  String              @map("tenant_id") @db.Uuid
-  userId    String              @map("user_id") @db.Uuid
-  channel   NotificationChannel @default(IN_APP)
+  id             String               @id @default(uuid()) @db.Uuid
+  tenantId       String               @map("tenant_id") @db.Uuid
+  userId         String               @map("user_id") @db.Uuid
+  channel        NotificationChannel  @default(IN_APP)
   /// Permission module the notification belongs to; hidden if the user loses access.
-  module    String
-  type      String
-  title     String
-  body      String
-  link      String?
-  readAt    DateTime?           @map("read_at") @db.Timestamptz(3)
-  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  module         String
+  type           String
+  title          String
+  body           String
+  link           String?
+  readAt         DateTime?            @map("read_at") @db.Timestamptz(3)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Notification centre (blueprint 10.3): severity, critical-alert acknowledgement, source record.
+  severity       NotificationSeverity @default(INFO)
+  requiresAck    Boolean              @default(false) @map("requires_ack")
+  acknowledgedAt DateTime?            @map("acknowledged_at") @db.Timestamptz(3)
+  entityType     String?              @map("entity_type")
+  entityId       String?              @map("entity_id")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant           Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user             User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries       NotificationDelivery[]
+  acknowledgements NotificationAcknowledgement[]
 
   @@index([tenantId, userId, readAt])
   @@map("notifications")
@@ -3011,4 +3134,1413 @@ model FieldFileClaim {
   @@unique([tenantId, storedFileId, userId, purpose])
   @@index([tenantId, userId])
   @@map("field_file_claims")
+}
+
+// ============================================================================
+// Campaign and organisation (blueprint 5, 10, 14, 15.3, 15.4). Tenant module
+// 'campaign'. Finance tables are separate and behind their own permission
+// family (blueprint 15.2). Nothing here is ever deleted except link rows
+// (task collaborators / dependencies, invited teams); histories are
+// append-only and approved ledger entries are immutable (DB triggers,
+// migration 20261125000000_campaign_organisation).
+// Enum values must match packages/shared/src/campaign/enums.ts.
+// ============================================================================
+
+enum DepartmentVisibility {
+  ORGANISATION
+  DEPARTMENT
+  RESTRICTED
+}
+
+enum TeamStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum TeamContactChannel {
+  IN_APP
+  EMAIL
+  PHONE
+  MESSAGING_GROUP
+  OTHER
+}
+
+enum TeamMemberRole {
+  COORDINATOR
+  MEMBER
+  VOLUNTEER
+}
+
+enum TaskStatus {
+  DRAFT
+  READY
+  IN_PROGRESS
+  BLOCKED
+  SUBMITTED_FOR_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskSourceType {
+  DASHBOARD
+  PROJECT
+  EVENT
+  INCIDENT
+  CASE
+}
+
+enum TaskEventType {
+  CREATED
+  UPDATED
+  ASSIGNED
+  COLLABORATORS_CHANGED
+  REVIEWER_CHANGED
+  STATUS_CHANGED
+  DEPENDENCY_ADDED
+  DEPENDENCY_REMOVED
+  CHECKLIST_UPDATED
+  COMMENTED
+  ATTACHMENT_ADDED
+  EVIDENCE_ADDED
+  REVIEW_APPROVED
+  REVIEW_RETURNED
+}
+
+enum TaskAttachmentKind {
+  ATTACHMENT
+  COMPLETION_EVIDENCE
+}
+
+enum CampaignEventType {
+  MEETING
+  TOWN_HALL
+  PUBLIC_RALLY
+  TRAINING
+  PRESS_BRIEFING
+  FUNDRAISER
+  COMMUNITY_SERVICE
+  INTERNAL
+  OTHER
+}
+
+enum CampaignEventStatus {
+  DRAFT
+  PLANNED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  POSTPONED
+  CANCELLED
+}
+
+enum CampaignEventVisibility {
+  INTERNAL
+  INVITED_TEAMS
+  PUBLIC
+}
+
+enum LogisticsItemType {
+  VEHICLE
+  EQUIPMENT
+  VENUE_SERVICE
+  MATERIALS
+  CATERING
+  OTHER
+}
+
+enum LogisticsStatus {
+  REQUESTED
+  CONFIRMED
+  COLLECTED
+  RETURNED
+  DAMAGED
+  LOST
+  CANCELLED
+}
+
+enum CheckInMethod {
+  MANUAL
+  QR_CODE
+  SIGN_IN_SHEET
+  SELF_CHECK_IN
+}
+
+enum AttendanceRole {
+  ORGANISER
+  STAFF
+  VOLUNTEER
+  SPEAKER
+  GUEST
+  PARTICIPANT
+  MEDIA
+}
+
+enum EventDocumentKind {
+  AGENDA
+  PERMIT
+  BRIEFING
+  PHOTO
+  AFTER_ACTION_EVIDENCE
+  OTHER
+}
+
+enum AfterActionStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  RETURNED
+}
+
+enum ContentType {
+  NOTICE
+  PRESS_RELEASE
+  BULLETIN
+  WEBSITE_UPDATE
+  EVENT_INFO
+}
+
+enum ContentAudience {
+  INTERNAL_ALL
+  INTERNAL_DEPARTMENT
+  MEDIA
+  PUBLIC_WEBSITE
+  PUBLIC_NOTICE
+  PARTNERS
+}
+
+enum ContentStatus {
+  DRAFT
+  EDITORIAL_REVIEW
+  AWAITING_APPROVAL
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  WITHDRAWN
+}
+
+enum ContentRevisionKind {
+  CREATED
+  EDITED
+  SUBMITTED_FOR_REVIEW
+  RETURNED
+  EDITORIAL_APPROVED
+  APPROVED
+  PUBLISHED
+  CORRECTED
+  ARCHIVED
+  WITHDRAWN
+}
+
+enum FinanceAccountType {
+  BANK
+  MOBILE_MONEY
+  CASH
+  OTHER
+}
+
+enum FinanceAccountStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum FinanceCategoryKind {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum FinancePayeeKind {
+  SUPPLIER
+  INDIVIDUAL
+  ORGANISATION
+  STAFF
+  OTHER
+}
+
+enum ContributionSourceKind {
+  INDIVIDUAL
+  ORGANISATION
+  POLITICAL_PARTY
+  OWN_FUNDS
+  OTHER
+}
+
+enum FinanceTransactionType {
+  CONTRIBUTION
+  EXPENSE
+  TRANSFER
+  REFUND
+  REVERSAL
+}
+
+enum FinanceTransactionStatus {
+  DRAFT
+  REQUESTED
+  APPROVED
+  PAID
+  REJECTED
+  CANCELLED
+  REVERSED
+}
+
+enum FinanceDocumentKind {
+  INVOICE
+  RECEIPT
+  CONTRACT
+  BANK_SLIP
+  MOBILE_MONEY_STATEMENT
+  APPROVAL_MEMO
+  DECLARATION
+  OTHER
+}
+
+enum FinanceTransactionEventType {
+  CREATED
+  UPDATED
+  DOCUMENT_ADDED
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+  REVERSED
+  COMPLIANCE_EVALUATED
+}
+
+enum BudgetLineStatus {
+  DRAFT
+  APPROVED
+  CLOSED
+}
+
+enum FinanceLimitKind {
+  SINGLE_SOURCE_CAP_PCT
+  SPENDING_LIMIT
+  REPORTING_DEADLINE
+}
+
+enum FinanceCapBasis {
+  TOTAL_CONTRIBUTIONS
+  SPENDING_LIMIT
+}
+
+enum LimitEnforcement {
+  WARN
+  BLOCK
+}
+
+enum ReportTemplateScope {
+  PRIVATE
+  ROLES
+  ORGANISATION
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum NotificationDeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum NotificationAckAction {
+  ACKNOWLEDGED
+  ESCALATED
+  CLOSED
+}
+
+enum BreachStatus {
+  DETECTED
+  CONTAINED
+  EVIDENCE_PRESERVED
+  ASSESSED
+  NOTIFIED
+  REMEDIATED
+  CLOSED
+}
+
+enum BreachSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BreachEventType {
+  DETECTED
+  CONTAINED
+  EVIDENCE_PRESERVED
+  ASSESSED
+  CONTROLLER_NOTIFIED
+  REGULATOR_NOTIFIED
+  SUBJECTS_NOTIFIED
+  NOTIFICATION_NOT_REQUIRED
+  REMEDIATED
+  LESSONS_RECORDED
+  CLOSED
+  REOPENED
+  NOTE
+}
+
+// ---------------------------------------------------------------------------
+// Organisation (blueprint 5.1, S05)
+// ---------------------------------------------------------------------------
+
+/// Department tree. `path` is the materialised ancestor path "/<root id>/…/<own id>/"
+/// (department scope uses it for sub-departments); rewritten by the service on move.
+model Department {
+  id          String               @id @default(uuid()) @db.Uuid
+  tenantId    String               @map("tenant_id") @db.Uuid
+  code        String
+  name        String
+  description String?
+  leadUserId  String?              @map("lead_user_id") @db.Uuid
+  parentId    String?              @map("parent_id") @db.Uuid
+  path        String
+  depth       Int                  @default(0)
+  budgetCode  String?              @map("budget_code")
+  activeFrom  DateTime?            @map("active_from") @db.Date
+  activeTo    DateTime?            @map("active_to") @db.Date
+  visibility  DepartmentVisibility @default(ORGANISATION)
+  createdById String               @map("created_by_id") @db.Uuid
+  version     Int                  @default(1)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lead                User?                @relation("DepartmentLead", fields: [leadUserId], references: [id], onDelete: Restrict)
+  parent              Department?          @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children            Department[]         @relation("DepartmentTree")
+  createdBy           User                 @relation("DepartmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  teams               Team[]
+  tasks               Task[]
+  events              CampaignEvent[]
+  contentItems        ContentItem[]
+  budgetLines         FinanceBudgetLine[]
+  financeTransactions FinanceTransaction[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, parentId])
+  @@index([tenantId, leadUserId])
+  @@map("departments")
+}
+
+model Team {
+  id                String             @id @default(uuid()) @db.Uuid
+  tenantId          String             @map("tenant_id") @db.Uuid
+  departmentId      String             @map("department_id") @db.Uuid
+  name              String
+  coordinatorUserId String?            @map("coordinator_user_id") @db.Uuid
+  geographicUnitId  String?            @map("geographic_unit_id") @db.Uuid
+  contactChannel    TeamContactChannel @default(IN_APP) @map("contact_channel")
+  /// Internal coordination detail (e.g. group name). Never a public or voter list.
+  contactDetail     String?            @map("contact_detail")
+  status            TeamStatus         @default(ACTIVE)
+  createdById       String             @map("created_by_id") @db.Uuid
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  department     Department         @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  coordinator    User?              @relation("TeamCoordinator", fields: [coordinatorUserId], references: [id], onDelete: Restrict)
+  geographicUnit GeographicUnit?    @relation("TeamGeography", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  createdBy      User               @relation("TeamCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  members        TeamMember[]
+  tasks          Task[]
+  invitedTo      EventInvitedTeam[]
+  attendances    EventAttendance[]
+
+  @@unique([tenantId, departmentId, name])
+  @@index([tenantId, coordinatorUserId])
+  @@index([tenantId, geographicUnitId])
+  @@map("teams")
+}
+
+/// Membership history: removal sets left_at (one active row per team and user, partial unique index).
+model TeamMember {
+  id          String         @id @default(uuid()) @db.Uuid
+  tenantId    String         @map("tenant_id") @db.Uuid
+  teamId      String         @map("team_id") @db.Uuid
+  userId      String         @map("user_id") @db.Uuid
+  role        TeamMemberRole @default(MEMBER)
+  joinedAt    DateTime       @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt      DateTime?      @map("left_at") @db.Timestamptz(3)
+  addedById   String         @map("added_by_id") @db.Uuid
+  removedById String?        @map("removed_by_id") @db.Uuid
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  team      Team   @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  user      User   @relation("TeamMemberUser", fields: [userId], references: [id], onDelete: Restrict)
+  addedBy   User   @relation("TeamMemberAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+  removedBy User?  @relation("TeamMemberRemovedBy", fields: [removedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, userId])
+  @@index([tenantId, teamId])
+  @@map("team_members")
+}
+
+// ---------------------------------------------------------------------------
+// Tasks (blueprint 5.2, S08)
+// ---------------------------------------------------------------------------
+
+model Task {
+  id                 String          @id @default(uuid()) @db.Uuid
+  tenantId           String          @map("tenant_id") @db.Uuid
+  /// TSK-YYYY-NNNNNN
+  reference          String
+  title              String
+  description        String?
+  acceptanceCriteria String?         @map("acceptance_criteria")
+  /// The one accountable owner (blueprint 5.2).
+  ownerId            String          @map("owner_id") @db.Uuid
+  reviewerId         String?         @map("reviewer_id") @db.Uuid
+  createdById        String          @map("created_by_id") @db.Uuid
+  priority           TaskPriority    @default(NORMAL)
+  status             TaskStatus      @default(DRAFT)
+  startAt            DateTime?       @map("start_at") @db.Timestamptz(3)
+  dueAt              DateTime?       @map("due_at") @db.Timestamptz(3)
+  departmentId       String?         @map("department_id") @db.Uuid
+  teamId             String?         @map("team_id") @db.Uuid
+  geographicUnitId   String?         @map("geographic_unit_id") @db.Uuid
+  sourceType         TaskSourceType? @map("source_type")
+  /// Id of the source record (project, event, incident, case). Polymorphic: no FK.
+  sourceId           String?         @map("source_id") @db.Uuid
+  sourceLabel        String?         @map("source_label")
+  completedAt        DateTime?       @map("completed_at") @db.Timestamptz(3)
+  cancelledAt        DateTime?       @map("cancelled_at") @db.Timestamptz(3)
+  version            Int             @default(1)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  owner          User                @relation("TaskOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  reviewer       User?               @relation("TaskReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  createdBy      User                @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  department     Department?         @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  team           Team?               @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  geographicUnit GeographicUnit?     @relation("TaskGeography", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  collaborators  TaskCollaborator[]
+  dependencies   TaskDependency[]    @relation("TaskDependencies")
+  dependents     TaskDependency[]    @relation("TaskDependents")
+  checklistItems TaskChecklistItem[]
+  comments       TaskComment[]
+  attachments    TaskAttachment[]
+  events         TaskEvent[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, ownerId, status])
+  @@index([tenantId, reviewerId, status])
+  @@index([tenantId, departmentId])
+  @@index([tenantId, dueAt])
+  @@index([tenantId, sourceType, sourceId])
+  @@map("tasks")
+}
+
+model TaskCollaborator {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  taskId    String   @map("task_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  addedById String   @map("added_by_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task    Task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  user    User   @relation("TaskCollaboratorUser", fields: [userId], references: [id], onDelete: Restrict)
+  addedBy User   @relation("TaskCollaboratorAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@id([taskId, userId])
+  @@index([tenantId, userId])
+  @@map("task_collaborators")
+}
+
+model TaskDependency {
+  tenantId        String   @map("tenant_id") @db.Uuid
+  taskId          String   @map("task_id") @db.Uuid
+  dependsOnTaskId String   @map("depends_on_task_id") @db.Uuid
+  createdById     String   @map("created_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task      Task   @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Restrict)
+  dependsOn Task   @relation("TaskDependents", fields: [dependsOnTaskId], references: [id], onDelete: Restrict)
+  createdBy User   @relation("TaskDependencyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@id([taskId, dependsOnTaskId])
+  @@index([tenantId, dependsOnTaskId])
+  @@map("task_dependencies")
+}
+
+model TaskChecklistItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  taskId      String    @map("task_id") @db.Uuid
+  label       String
+  position    Int
+  isDone      Boolean   @default(false) @map("is_done")
+  doneById    String?   @map("done_by_id") @db.Uuid
+  doneAt      DateTime? @map("done_at") @db.Timestamptz(3)
+  /// Removed from the checklist (kept as history; the timeline records the change).
+  removedAt   DateTime? @map("removed_at") @db.Timestamptz(3)
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task      Task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  doneBy    User?  @relation("TaskChecklistDoneBy", fields: [doneById], references: [id], onDelete: Restrict)
+  createdBy User   @relation("TaskChecklistCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, taskId])
+  @@map("task_checklist_items")
+}
+
+/// Append-only.
+model TaskComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  taskId    String   @map("task_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  author User   @relation("TaskCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, taskId, createdAt])
+  @@map("task_comments")
+}
+
+/// Append-only. Files use storage purpose TASK_ATTACHMENT.
+model TaskAttachment {
+  id        String             @id @default(uuid()) @db.Uuid
+  tenantId  String             @map("tenant_id") @db.Uuid
+  taskId    String             @map("task_id") @db.Uuid
+  fileId    String             @map("file_id") @db.Uuid
+  kind      TaskAttachmentKind @default(ATTACHMENT)
+  note      String?
+  addedById String             @map("added_by_id") @db.Uuid
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task    Task       @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  file    StoredFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  addedBy User       @relation("TaskAttachmentAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, taskId])
+  @@map("task_attachments")
+}
+
+/// Append-only activity timeline (assignment changes and status updates, blueprint 5.2).
+model TaskEvent {
+  id         String        @id @default(uuid()) @db.Uuid
+  tenantId   String        @map("tenant_id") @db.Uuid
+  taskId     String        @map("task_id") @db.Uuid
+  type       TaskEventType
+  fromStatus TaskStatus?   @map("from_status")
+  toStatus   TaskStatus?   @map("to_status")
+  actorId    String        @map("actor_id") @db.Uuid
+  note       String?
+  data       Json?
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  actor  User   @relation("TaskEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, taskId, createdAt])
+  @@map("task_events")
+}
+
+// ---------------------------------------------------------------------------
+// Events and logistics (blueprint 5.3, S09)
+// ---------------------------------------------------------------------------
+
+model CampaignEvent {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  tenantId           String                  @map("tenant_id") @db.Uuid
+  /// EVT-YYYY-NNNNNN
+  reference          String
+  title              String
+  type               CampaignEventType
+  purpose            String?
+  startsAt           DateTime                @map("starts_at") @db.Timestamptz(3)
+  endsAt             DateTime                @map("ends_at") @db.Timestamptz(3)
+  venueName          String?                 @map("venue_name")
+  venueAddress       String?                 @map("venue_address")
+  /// Venue coordinates (a place, never a person).
+  latitude           Decimal?                @db.Decimal(9, 6)
+  longitude          Decimal?                @db.Decimal(9, 6)
+  geographicUnitId   String?                 @map("geographic_unit_id") @db.Uuid
+  organiserId        String                  @map("organiser_id") @db.Uuid
+  departmentId       String?                 @map("department_id") @db.Uuid
+  budgetMinor        BigInt?                 @map("budget_minor")
+  currency           String                  @default("KES") @db.Char(3)
+  visibility         CampaignEventVisibility @default(INTERNAL)
+  status             CampaignEventStatus     @default(DRAFT)
+  cancellationReason String?                 @map("cancellation_reason")
+  createdById        String                  @map("created_by_id") @db.Uuid
+  version            Int                     @default(1)
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant              Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  organiser           User                    @relation("EventOrganiser", fields: [organiserId], references: [id], onDelete: Restrict)
+  createdBy           User                    @relation("EventCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  department          Department?             @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  geographicUnit      GeographicUnit?         @relation("EventGeography", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  invitedTeams        EventInvitedTeam[]
+  agendaItems         EventAgendaItem[]
+  logisticsItems      EventLogisticsItem[]
+  attendances         EventAttendance[]
+  documents           EventDocument[]
+  afterActionReport   EventAfterActionReport?
+  contentItems        ContentItem[]
+  budgetLines         FinanceBudgetLine[]
+  financeTransactions FinanceTransaction[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, startsAt])
+  @@index([tenantId, status])
+  @@index([tenantId, departmentId])
+  @@map("campaign_events")
+}
+
+model EventInvitedTeam {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  eventId   String   @map("event_id") @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event  CampaignEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  team   Team          @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@id([eventId, teamId])
+  @@index([tenantId, teamId])
+  @@map("event_invited_teams")
+}
+
+model EventAgendaItem {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @map("tenant_id") @db.Uuid
+  eventId         String    @map("event_id") @db.Uuid
+  position        Int
+  startsAt        DateTime? @map("starts_at") @db.Timestamptz(3)
+  durationMinutes Int?      @map("duration_minutes")
+  title           String
+  notes           String?
+  ownerId         String?   @map("owner_id") @db.Uuid
+  /// Removed from the agenda (kept as history).
+  removedAt       DateTime? @map("removed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event  CampaignEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  owner  User?         @relation("AgendaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, eventId])
+  @@map("event_agenda_items")
+}
+
+model EventLogisticsItem {
+  id             String            @id @default(uuid()) @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
+  eventId        String            @map("event_id") @db.Uuid
+  itemType       LogisticsItemType @map("item_type")
+  description    String
+  assetReference String?           @map("asset_reference")
+  /// Supplier name as text; finance payee records stay in finance.
+  supplierName   String?           @map("supplier_name")
+  quantity       Int               @default(1)
+  custodianId    String?           @map("custodian_id") @db.Uuid
+  collectionAt   DateTime?         @map("collection_at") @db.Timestamptz(3)
+  returnDueAt    DateTime?         @map("return_due_at") @db.Timestamptz(3)
+  returnedAt     DateTime?         @map("returned_at") @db.Timestamptz(3)
+  status         LogisticsStatus   @default(REQUESTED)
+  damageNotes    String?           @map("damage_notes")
+  createdById    String            @map("created_by_id") @db.Uuid
+  version        Int               @default(1)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event     CampaignEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  custodian User?         @relation("LogisticsCustodian", fields: [custodianId], references: [id], onDelete: Restrict)
+  createdBy User          @relation("LogisticsCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, eventId])
+  @@index([tenantId, custodianId])
+  @@map("event_logistics_items")
+}
+
+model EventAttendance {
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @map("tenant_id") @db.Uuid
+  eventId           String         @map("event_id") @db.Uuid
+  participantName   String         @map("participant_name")
+  participantUserId String?        @map("participant_user_id") @db.Uuid
+  teamId            String?        @map("team_id") @db.Uuid
+  role              AttendanceRole @default(PARTICIPANT)
+  checkInMethod     CheckInMethod  @default(MANUAL) @map("check_in_method")
+  checkedInAt       DateTime       @default(now()) @map("checked_in_at") @db.Timestamptz(3)
+  recordedById      String         @map("recorded_by_id") @db.Uuid
+  hasContact        Boolean        @default(false) @map("has_contact")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant          Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event           CampaignEvent           @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  participantUser User?                   @relation("AttendanceUser", fields: [participantUserId], references: [id], onDelete: Restrict)
+  team            Team?                   @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  recordedBy      User                    @relation("AttendanceRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  contact         EventAttendanceContact?
+
+  @@index([tenantId, eventId])
+  @@map("event_attendances")
+}
+
+/// Optional consent-based contact details, stored apart from attendance and read
+/// only through the audited endpoint (events.attendance.contact). Erasure nulls the values.
+model EventAttendanceContact {
+  attendanceId         String    @id @map("attendance_id") @db.Uuid
+  tenantId             String    @map("tenant_id") @db.Uuid
+  phone                String?
+  email                String?
+  consentNoticeVersion String    @map("consent_notice_version")
+  purpose              String
+  consentedAt          DateTime  @map("consented_at") @db.Timestamptz(3)
+  erasedAt             DateTime? @map("erased_at") @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  attendance EventAttendance @relation(fields: [attendanceId], references: [id], onDelete: Restrict)
+
+  @@map("event_attendance_contacts")
+}
+
+/// Append-only. Files use storage purpose EVENT_DOCUMENT.
+model EventDocument {
+  id        String            @id @default(uuid()) @db.Uuid
+  tenantId  String            @map("tenant_id") @db.Uuid
+  eventId   String            @map("event_id") @db.Uuid
+  fileId    String            @map("file_id") @db.Uuid
+  kind      EventDocumentKind
+  note      String?
+  addedById String            @map("added_by_id") @db.Uuid
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event   CampaignEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  file    StoredFile    @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  addedBy User          @relation("EventDocumentAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, eventId])
+  @@map("event_documents")
+}
+
+/// One per event. Approved reports are immutable; reviewer ≠ author (DB check).
+model EventAfterActionReport {
+  id                  String            @id @default(uuid()) @db.Uuid
+  tenantId            String            @map("tenant_id") @db.Uuid
+  eventId             String            @unique @map("event_id") @db.Uuid
+  status              AfterActionStatus @default(DRAFT)
+  whatOccurred        String            @map("what_occurred")
+  attendanceTotal     Int               @map("attendance_total")
+  attendanceBreakdown Json              @default("{}") @map("attendance_breakdown")
+  actualSpendMinor    BigInt?           @map("actual_spend_minor")
+  currency            String            @default("KES") @db.Char(3)
+  issues              String?
+  lessons             String?
+  authorId            String            @map("author_id") @db.Uuid
+  reviewerId          String?           @map("reviewer_id") @db.Uuid
+  reviewedAt          DateTime?         @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote          String?           @map("review_note")
+  version             Int               @default(1)
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  event    CampaignEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  author   User          @relation("AfterActionAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  reviewer User?         @relation("AfterActionReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@map("event_after_action_reports")
+}
+
+// ---------------------------------------------------------------------------
+// Communications content workflow (blueprint 5.4)
+// ---------------------------------------------------------------------------
+
+/// Content item. Audience is a broad category, never a recipient list. Approver ≠ author (DB check);
+/// published text changes only with a new revision (DB trigger).
+model ContentItem {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @map("tenant_id") @db.Uuid
+  /// CNT-YYYY-NNNNNN
+  reference       String
+  type            ContentType
+  title           String
+  summary         String?
+  body            String
+  audience        ContentAudience
+  departmentId    String?         @map("department_id") @db.Uuid
+  eventId         String?         @map("event_id") @db.Uuid
+  authorId        String          @map("author_id") @db.Uuid
+  editorId        String?         @map("editor_id") @db.Uuid
+  approverId      String?         @map("approver_id") @db.Uuid
+  approvedAt      DateTime?       @map("approved_at") @db.Timestamptz(3)
+  publishedAt     DateTime?       @map("published_at") @db.Timestamptz(3)
+  publishedById   String?         @map("published_by_id") @db.Uuid
+  archivedAt      DateTime?       @map("archived_at") @db.Timestamptz(3)
+  withdrawnAt     DateTime?       @map("withdrawn_at") @db.Timestamptz(3)
+  scheduledFor    DateTime?       @map("scheduled_for") @db.Timestamptz(3)
+  status          ContentStatus   @default(DRAFT)
+  /// Body revision number (1 = first draft); bumped on every text change.
+  revision        Int             @default(1)
+  correctionCount Int             @default(0) @map("correction_count")
+  version         Int             @default(1)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  department  Department?       @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  event       CampaignEvent?    @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  author      User              @relation("ContentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  editor      User?             @relation("ContentEditor", fields: [editorId], references: [id], onDelete: Restrict)
+  approver    User?             @relation("ContentApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  publishedBy User?             @relation("ContentPublisher", fields: [publishedById], references: [id], onDelete: Restrict)
+  revisions   ContentRevision[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, authorId])
+  @@map("content_items")
+}
+
+/// Append-only revision, workflow and correction history.
+model ContentRevision {
+  id         String              @id @default(uuid()) @db.Uuid
+  tenantId   String              @map("tenant_id") @db.Uuid
+  contentId  String              @map("content_id") @db.Uuid
+  kind       ContentRevisionKind
+  revision   Int
+  title      String
+  body       String
+  bodySha256 String              @map("body_sha256") @db.Char(64)
+  fromStatus ContentStatus?      @map("from_status")
+  toStatus   ContentStatus?      @map("to_status")
+  note       String?
+  actorId    String              @map("actor_id") @db.Uuid
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  content ContentItem @relation(fields: [contentId], references: [id], onDelete: Restrict)
+  actor   User        @relation("ContentRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, contentId, createdAt])
+  @@map("content_revisions")
+}
+
+// ---------------------------------------------------------------------------
+// Finance (blueprint 5, 10.1, 14, 15.3). Integer minor units + currency only.
+// ---------------------------------------------------------------------------
+
+model FinanceAccount {
+  id                         String               @id @default(uuid()) @db.Uuid
+  tenantId                   String               @map("tenant_id") @db.Uuid
+  name                       String
+  type                       FinanceAccountType
+  institution                String?
+  /// "•••• 4821" — full account numbers are never stored.
+  accountNumberMasked        String?              @map("account_number_masked")
+  currency                   String               @default("KES") @db.Char(3)
+  isDedicatedCampaignAccount Boolean              @default(false) @map("is_dedicated_campaign_account")
+  status                     FinanceAccountStatus @default(ACTIVE)
+  createdById                String               @map("created_by_id") @db.Uuid
+  version                    Int                  @default(1)
+  createdAt                  DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy           User                 @relation("FinanceAccountCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  transactions        FinanceTransaction[] @relation("TransactionAccount")
+  counterTransactions FinanceTransaction[] @relation("TransactionCounterAccount")
+
+  @@unique([tenantId, name])
+  @@map("finance_accounts")
+}
+
+model FinanceCategory {
+  id          String              @id @default(uuid()) @db.Uuid
+  tenantId    String              @map("tenant_id") @db.Uuid
+  code        String
+  name        String
+  kind        FinanceCategoryKind
+  parentId    String?             @map("parent_id") @db.Uuid
+  description String?
+  active      Boolean             @default(true)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  parent       FinanceCategory?     @relation("FinanceCategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     FinanceCategory[]    @relation("FinanceCategoryTree")
+  transactions FinanceTransaction[]
+  budgetLines  FinanceBudgetLine[]
+
+  @@unique([tenantId, code])
+  @@map("finance_categories")
+}
+
+/// Supplier / payee. Tax PIN and phone stored masked; a keyed hash detects duplicates.
+model FinancePayee {
+  id           String           @id @default(uuid()) @db.Uuid
+  tenantId     String           @map("tenant_id") @db.Uuid
+  name         String
+  kind         FinancePayeeKind
+  taxPinMasked String?          @map("tax_pin_masked")
+  taxPinHash   String?          @map("tax_pin_hash")
+  phoneMasked  String?          @map("phone_masked")
+  active       Boolean          @default(true)
+  notes        String?
+  createdById  String           @map("created_by_id") @db.Uuid
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy    User                 @relation("FinancePayeeCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  transactions FinanceTransaction[]
+
+  @@unique([tenantId, taxPinHash])
+  @@index([tenantId, name])
+  @@map("finance_payees")
+}
+
+/// Contributor (contribution register). The identifier is stored masked plus a keyed hash.
+model ContributionSource {
+  id               String                 @id @default(uuid()) @db.Uuid
+  tenantId         String                 @map("tenant_id") @db.Uuid
+  displayName      String                 @map("display_name")
+  kind             ContributionSourceKind
+  identifierMasked String?                @map("identifier_masked")
+  identifierHash   String?                @map("identifier_hash")
+  declared         Boolean                @default(false)
+  declaredAt       DateTime?              @map("declared_at") @db.Timestamptz(3)
+  notes            String?
+  createdById      String                 @map("created_by_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdBy    User                 @relation("ContributionSourceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  transactions FinanceTransaction[]
+
+  @@unique([tenantId, identifierHash])
+  @@index([tenantId, displayName])
+  @@map("contribution_sources")
+}
+
+/// Budget line for a department or an event. Approver ≠ creator (DB check).
+model FinanceBudgetLine {
+  id              String           @id @default(uuid()) @db.Uuid
+  tenantId        String           @map("tenant_id") @db.Uuid
+  code            String
+  name            String
+  departmentId    String?          @map("department_id") @db.Uuid
+  eventId         String?          @map("event_id") @db.Uuid
+  categoryId      String?          @map("category_id") @db.Uuid
+  electionCycleId String?          @map("election_cycle_id") @db.Uuid
+  amountMinor     BigInt           @map("amount_minor")
+  currency        String           @default("KES") @db.Char(3)
+  periodStart     DateTime?        @map("period_start") @db.Date
+  periodEnd       DateTime?        @map("period_end") @db.Date
+  status          BudgetLineStatus @default(DRAFT)
+  approvedById    String?          @map("approved_by_id") @db.Uuid
+  approvedAt      DateTime?        @map("approved_at") @db.Timestamptz(3)
+  createdById     String           @map("created_by_id") @db.Uuid
+  version         Int              @default(1)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  department    Department?          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  event         CampaignEvent?       @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  category      FinanceCategory?     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle?       @relation("BudgetLineCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
+  approvedBy    User?                @relation("BudgetLineApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdBy     User                 @relation("BudgetLineCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  transactions  FinanceTransaction[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, departmentId])
+  @@index([tenantId, eventId])
+  @@map("finance_budget_lines")
+}
+
+/// Ledger entry. Requester ≠ approver and requester ≠ payer (DB checks); approver ≠ payer when
+/// configured (service). Approval needs category, counterparty, reference and a document (DB
+/// trigger). Financial fields are frozen from APPROVED on; corrections are REVERSAL entries.
+model FinanceTransaction {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  tenantId              String                   @map("tenant_id") @db.Uuid
+  /// FIN-YYYY-NNNNNN
+  reference             String
+  type                  FinanceTransactionType
+  status                FinanceTransactionStatus @default(DRAFT)
+  accountId             String                   @map("account_id") @db.Uuid
+  counterAccountId      String?                  @map("counter_account_id") @db.Uuid
+  categoryId            String                   @map("category_id") @db.Uuid
+  budgetLineId          String?                  @map("budget_line_id") @db.Uuid
+  amountMinor           BigInt                   @map("amount_minor")
+  currency              String                   @default("KES") @db.Char(3)
+  transactionDate       DateTime                 @map("transaction_date") @db.Date
+  payeeId               String?                  @map("payee_id") @db.Uuid
+  contributionSourceId  String?                  @map("contribution_source_id") @db.Uuid
+  /// Receipt / invoice / bank or mobile-money reference.
+  externalReference     String?                  @map("external_reference")
+  description           String
+  departmentId          String?                  @map("department_id") @db.Uuid
+  eventId               String?                  @map("event_id") @db.Uuid
+  electionCycleId       String?                  @map("election_cycle_id") @db.Uuid
+  requestedById         String                   @map("requested_by_id") @db.Uuid
+  requestedAt           DateTime?                @map("requested_at") @db.Timestamptz(3)
+  approvedById          String?                  @map("approved_by_id") @db.Uuid
+  approvedAt            DateTime?                @map("approved_at") @db.Timestamptz(3)
+  rejectedById          String?                  @map("rejected_by_id") @db.Uuid
+  rejectedAt            DateTime?                @map("rejected_at") @db.Timestamptz(3)
+  rejectionReason       String?                  @map("rejection_reason")
+  paidById              String?                  @map("paid_by_id") @db.Uuid
+  paidAt                DateTime?                @map("paid_at") @db.Timestamptz(3)
+  paymentReference      String?                  @map("payment_reference")
+  cancelledAt           DateTime?                @map("cancelled_at") @db.Timestamptz(3)
+  cancellationReason    String?                  @map("cancellation_reason")
+  /// For REVERSAL entries: the entry being reversed (each entry can be reversed once).
+  reversesId            String?                  @unique @map("reverses_id") @db.Uuid
+  reversedAt            DateTime?                @map("reversed_at") @db.Timestamptz(3)
+  complianceFlags       String[]                 @default([]) @map("compliance_flags")
+  complianceEvaluatedAt DateTime?                @map("compliance_evaluated_at") @db.Timestamptz(3)
+  version               Int                      @default(1)
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant             Tenant                       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  account            FinanceAccount               @relation("TransactionAccount", fields: [accountId], references: [id], onDelete: Restrict)
+  counterAccount     FinanceAccount?              @relation("TransactionCounterAccount", fields: [counterAccountId], references: [id], onDelete: Restrict)
+  category           FinanceCategory              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  budgetLine         FinanceBudgetLine?           @relation(fields: [budgetLineId], references: [id], onDelete: Restrict)
+  payee              FinancePayee?                @relation(fields: [payeeId], references: [id], onDelete: Restrict)
+  contributionSource ContributionSource?          @relation(fields: [contributionSourceId], references: [id], onDelete: Restrict)
+  department         Department?                  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  event              CampaignEvent?               @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  electionCycle      ElectionCycle?               @relation("FinanceTransactionCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
+  requestedBy        User                         @relation("FinanceRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy         User?                        @relation("FinanceApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+  rejectedBy         User?                        @relation("FinanceRejectedBy", fields: [rejectedById], references: [id], onDelete: Restrict)
+  paidBy             User?                        @relation("FinancePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
+  reverses           FinanceTransaction?          @relation("TransactionReversal", fields: [reversesId], references: [id], onDelete: Restrict)
+  reversedBy         FinanceTransaction?          @relation("TransactionReversal")
+  documents          FinanceTransactionDocument[]
+  events             FinanceTransactionEvent[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, type, transactionDate])
+  @@index([tenantId, accountId])
+  @@index([tenantId, contributionSourceId])
+  @@index([tenantId, budgetLineId])
+  @@map("finance_transactions")
+}
+
+/// Append-only. Files use storage purpose FINANCE_DOCUMENT.
+model FinanceTransactionDocument {
+  id            String              @id @default(uuid()) @db.Uuid
+  tenantId      String              @map("tenant_id") @db.Uuid
+  transactionId String              @map("transaction_id") @db.Uuid
+  fileId        String              @map("file_id") @db.Uuid
+  kind          FinanceDocumentKind
+  note          String?
+  addedById     String              @map("added_by_id") @db.Uuid
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction FinanceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  file        StoredFile         @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  addedBy     User               @relation("FinanceDocumentAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, transactionId])
+  @@map("finance_transaction_documents")
+}
+
+/// Append-only.
+model FinanceTransactionEvent {
+  id            String                      @id @default(uuid()) @db.Uuid
+  tenantId      String                      @map("tenant_id") @db.Uuid
+  transactionId String                      @map("transaction_id") @db.Uuid
+  type          FinanceTransactionEventType
+  fromStatus    FinanceTransactionStatus?   @map("from_status")
+  toStatus      FinanceTransactionStatus?   @map("to_status")
+  actorId       String                      @map("actor_id") @db.Uuid
+  note          String?
+  data          Json?
+  createdAt     DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  transaction FinanceTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  actor       User               @relation("FinanceEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, transactionId, createdAt])
+  @@map("finance_transaction_events")
+}
+
+/// Tenant-configured finance limit (blueprint 15.3: never hardcoded). Versioned: value columns are
+/// immutable (DB trigger); a change creates a new row that supersedes this one.
+model FinanceLimitSetting {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
+  kind             FinanceLimitKind
+  label            String
+  /// SINGLE_SOURCE_CAP_PCT in basis points (2000 = 20 %).
+  valueBasisPoints Int?             @map("value_basis_points")
+  capBasis         FinanceCapBasis? @map("cap_basis")
+  /// SPENDING_LIMIT in minor units.
+  valueMinor       BigInt?          @map("value_minor")
+  currency         String?          @db.Char(3)
+  deadlineDate     DateTime?        @map("deadline_date") @db.Date
+  electionCycleId  String?          @map("election_cycle_id") @db.Uuid
+  periodLabel      String           @map("period_label")
+  officeType       OfficeType?      @map("office_type")
+  effectiveFrom    DateTime         @map("effective_from") @db.Date
+  effectiveTo      DateTime?        @map("effective_to") @db.Date
+  legalSourceNote  String           @map("legal_source_note")
+  verified         Boolean          @default(false)
+  verifiedById     String?          @map("verified_by_id") @db.Uuid
+  verifiedAt       DateTime?        @map("verified_at") @db.Timestamptz(3)
+  enforcement      LimitEnforcement @default(WARN)
+  supersedesId     String?          @unique @map("supersedes_id") @db.Uuid
+  createdById      String           @map("created_by_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle?       @relation("LimitSettingCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
+  verifiedBy    User?                @relation("LimitSettingVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  createdBy     User                 @relation("LimitSettingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  supersedes    FinanceLimitSetting? @relation("LimitSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy  FinanceLimitSetting? @relation("LimitSupersedes")
+
+  @@index([tenantId, kind, effectiveFrom])
+  @@map("finance_limit_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Report builder (blueprint 10.2, S28)
+// ---------------------------------------------------------------------------
+
+/// Saved report template. Archived instead of deleted.
+model ReportTemplate {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  name              String
+  description       String?
+  /// Key in REPORT_DATASETS (packages/shared/src/campaign/reports/datasets.ts).
+  datasetKey        String              @map("dataset_key")
+  /// ReportDefinition (validated against the registry on every save and run).
+  definition        Json
+  ownerId           String              @map("owner_id") @db.Uuid
+  permissionScope   ReportTemplateScope @default(PRIVATE) @map("permission_scope")
+  sharedRoleKeys    String[]            @default([]) @map("shared_role_keys")
+  classification    SensitivityLevel    @default(INTERNAL)
+  standardReportKey String?             @map("standard_report_key")
+  archivedAt        DateTime?           @map("archived_at") @db.Timestamptz(3)
+  version           Int                 @default(1)
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  owner   User           @relation("ReportTemplateOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  exports ReportExport[]
+
+  @@index([tenantId, ownerId])
+  @@index([tenantId, datasetKey])
+  @@map("report_templates")
+}
+
+/// Append-only export log (blueprint 10.2 steps 6–7).
+model ReportExport {
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @map("tenant_id") @db.Uuid
+  templateId         String?          @map("template_id") @db.Uuid
+  datasetKey         String           @map("dataset_key")
+  format             ExportFormat
+  fields             String[]         @default([])
+  definition         Json
+  filtersDescription String           @map("filters_description")
+  appliedScope       String           @map("applied_scope")
+  classification     SensitivityLevel
+  sensitive          Boolean          @default(false)
+  rowCount           Int              @map("row_count")
+  fileId             String?          @map("file_id") @db.Uuid
+  sha256             String?          @db.Char(64)
+  reason             String?
+  /// Time of the re-authentication that allowed a sensitive export.
+  reauthAt           DateTime?        @map("reauth_at") @db.Timestamptz(3)
+  generatedById      String           @map("generated_by_id") @db.Uuid
+  generatedAt        DateTime         @default(now()) @map("generated_at") @db.Timestamptz(3)
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  template    ReportTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  file        StoredFile?     @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  generatedBy User            @relation("ReportExportGeneratedBy", fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, generatedAt])
+  @@index([tenantId, generatedById])
+  @@map("report_exports")
+}
+
+// ---------------------------------------------------------------------------
+// Notification centre (blueprint 10.3). Extends `notifications`.
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id        String              @id @default(uuid()) @db.Uuid
+  tenantId  String              @map("tenant_id") @db.Uuid
+  userId    String              @map("user_id") @db.Uuid
+  channel   NotificationChannel
+  /// A notification type or '*' (channel default).
+  type      String
+  enabled   Boolean
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation("NotificationPreferenceUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, userId, channel, type])
+  @@map("notification_preferences")
+}
+
+/// Append-only: one row per delivery attempt and channel (in-app rows are implicit).
+model NotificationDelivery {
+  id                String                     @id @default(uuid()) @db.Uuid
+  tenantId          String                     @map("tenant_id") @db.Uuid
+  notificationId    String                     @map("notification_id") @db.Uuid
+  channel           NotificationChannel
+  provider          String
+  status            NotificationDeliveryStatus
+  attempt           Int                        @default(1)
+  error             String?
+  providerMessageId String?                    @map("provider_message_id")
+  createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, notificationId])
+  @@index([tenantId, status, createdAt])
+  @@map("notification_deliveries")
+}
+
+/// Append-only acknowledgement / escalation / closure record for critical alerts.
+model NotificationAcknowledgement {
+  id             String                @id @default(uuid()) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  notificationId String                @map("notification_id") @db.Uuid
+  userId         String                @map("user_id") @db.Uuid
+  action         NotificationAckAction
+  note           String?
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  user         User         @relation("NotificationAckUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, notificationId])
+  @@map("notification_acknowledgements")
+}
+
+// ---------------------------------------------------------------------------
+// Data breach register (blueprint 15.4)
+// ---------------------------------------------------------------------------
+
+/// Breach or drill record. Categories and counts only, never copies of personal data.
+/// Closer ≠ reporter and closure needs lessons (DB checks).
+model BreachRecord {
+  id                   String         @id @default(uuid()) @db.Uuid
+  tenantId             String         @map("tenant_id") @db.Uuid
+  /// BRE-YYYY-NNNNNN
+  reference            String
+  title                String
+  description          String
+  isDrill              Boolean        @default(false) @map("is_drill")
+  status               BreachStatus   @default(DETECTED)
+  severity             BreachSeverity
+  detectedAt           DateTime       @map("detected_at") @db.Timestamptz(3)
+  dataCategories       String[]       @default([]) @map("data_categories")
+  estimatedSubjects    Int?           @map("estimated_subjects")
+  systemsAffected      String?        @map("systems_affected")
+  containmentSummary   String?        @map("containment_summary")
+  riskAssessment       String?        @map("risk_assessment")
+  notificationDecision String?        @map("notification_decision")
+  controllerNotifiedAt DateTime?      @map("controller_notified_at") @db.Timestamptz(3)
+  regulatorNotifiedAt  DateTime?      @map("regulator_notified_at") @db.Timestamptz(3)
+  subjectsNotifiedAt   DateTime?      @map("subjects_notified_at") @db.Timestamptz(3)
+  remediationSummary   String?        @map("remediation_summary")
+  lessonsLearned       String?        @map("lessons_learned")
+  ownerId              String?        @map("owner_id") @db.Uuid
+  reportedById         String         @map("reported_by_id") @db.Uuid
+  closedById           String?        @map("closed_by_id") @db.Uuid
+  closedAt             DateTime?      @map("closed_at") @db.Timestamptz(3)
+  version              Int            @default(1)
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  owner      User?         @relation("BreachOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  reportedBy User          @relation("BreachReporter", fields: [reportedById], references: [id], onDelete: Restrict)
+  closedBy   User?         @relation("BreachCloser", fields: [closedById], references: [id], onDelete: Restrict)
+  events     BreachEvent[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@map("breach_records")
+}
+
+/// Append-only, exportable incident timeline.
+model BreachEvent {
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String          @map("tenant_id") @db.Uuid
+  breachId       String          @map("breach_id") @db.Uuid
+  type           BreachEventType
+  fromStatus     BreachStatus?   @map("from_status")
+  toStatus       BreachStatus?   @map("to_status")
+  note           String
+  occurredAt     DateTime        @map("occurred_at") @db.Timestamptz(3)
+  actorId        String          @map("actor_id") @db.Uuid
+  evidenceFileId String?         @map("evidence_file_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  breach   BreachRecord @relation(fields: [breachId], references: [id], onDelete: Restrict)
+  actor    User         @relation("BreachEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  evidence StoredFile?  @relation(fields: [evidenceFileId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, breachId, occurredAt])
+  @@map("breach_events")
 }

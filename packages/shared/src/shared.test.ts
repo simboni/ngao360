@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import * as enums from './enums';
 import * as office from './office/enums';
 import * as field from './field/enums';
+import * as campaign from './campaign/enums';
 import {
   ALL_PERMISSION_KEYS,
   PERMISSION_DEFINITIONS,
@@ -168,6 +169,49 @@ describe('enum parity with Prisma schema', () => {
     ['StationStatusSource', field.STATION_STATUS_SOURCES],
     ['ClientSubmissionKind', field.CLIENT_SUBMISSION_KINDS],
     ['ClientSubmissionOutcome', field.CLIENT_SUBMISSION_OUTCOMES],
+    // Campaign and organisation
+    ['DepartmentVisibility', campaign.DEPARTMENT_VISIBILITIES],
+    ['TeamStatus', campaign.TEAM_STATUSES],
+    ['TeamContactChannel', campaign.TEAM_CONTACT_CHANNELS],
+    ['TeamMemberRole', campaign.TEAM_MEMBER_ROLES],
+    ['TaskStatus', campaign.TASK_STATUSES],
+    ['TaskPriority', campaign.TASK_PRIORITIES],
+    ['TaskSourceType', campaign.TASK_SOURCE_TYPES],
+    ['TaskEventType', campaign.TASK_EVENT_TYPES],
+    ['TaskAttachmentKind', campaign.TASK_ATTACHMENT_KINDS],
+    ['CampaignEventType', campaign.CAMPAIGN_EVENT_TYPES],
+    ['CampaignEventStatus', campaign.CAMPAIGN_EVENT_STATUSES],
+    ['CampaignEventVisibility', campaign.CAMPAIGN_EVENT_VISIBILITIES],
+    ['LogisticsItemType', campaign.LOGISTICS_ITEM_TYPES],
+    ['LogisticsStatus', campaign.LOGISTICS_STATUSES],
+    ['CheckInMethod', campaign.CHECK_IN_METHODS],
+    ['AttendanceRole', campaign.ATTENDANCE_ROLES],
+    ['EventDocumentKind', campaign.EVENT_DOCUMENT_KINDS],
+    ['AfterActionStatus', campaign.AFTER_ACTION_STATUSES],
+    ['ContentType', campaign.CONTENT_TYPES],
+    ['ContentAudience', campaign.CONTENT_AUDIENCES],
+    ['ContentStatus', campaign.CONTENT_STATUSES],
+    ['ContentRevisionKind', campaign.CONTENT_REVISION_KINDS],
+    ['FinanceAccountType', campaign.FINANCE_ACCOUNT_TYPES],
+    ['FinanceAccountStatus', campaign.FINANCE_ACCOUNT_STATUSES],
+    ['FinanceCategoryKind', campaign.FINANCE_CATEGORY_KINDS],
+    ['FinancePayeeKind', campaign.FINANCE_PAYEE_KINDS],
+    ['ContributionSourceKind', campaign.CONTRIBUTION_SOURCE_KINDS],
+    ['FinanceTransactionType', campaign.FINANCE_TRANSACTION_TYPES],
+    ['FinanceTransactionStatus', campaign.FINANCE_TRANSACTION_STATUSES],
+    ['FinanceDocumentKind', campaign.FINANCE_DOCUMENT_KINDS],
+    ['FinanceTransactionEventType', campaign.FINANCE_TRANSACTION_EVENT_TYPES],
+    ['BudgetLineStatus', campaign.BUDGET_LINE_STATUSES],
+    ['FinanceLimitKind', campaign.FINANCE_LIMIT_KINDS],
+    ['FinanceCapBasis', campaign.FINANCE_CAP_BASES],
+    ['LimitEnforcement', campaign.LIMIT_ENFORCEMENTS],
+    ['ReportTemplateScope', campaign.REPORT_TEMPLATE_SCOPES],
+    ['NotificationSeverity', campaign.NOTIFICATION_SEVERITIES],
+    ['NotificationDeliveryStatus', campaign.NOTIFICATION_DELIVERY_STATUSES],
+    ['NotificationAckAction', campaign.NOTIFICATION_ACK_ACTIONS],
+    ['BreachStatus', campaign.BREACH_STATUSES],
+    ['BreachSeverity', campaign.BREACH_SEVERITIES],
+    ['BreachEventType', campaign.BREACH_EVENT_TYPES],
   ];
   it.each(pairs)('%s matches', (name, values) => {
     expect(prismaEnums.get(name)).toEqual([...values]);

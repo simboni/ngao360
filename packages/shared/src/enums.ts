@@ -410,6 +410,12 @@ export const STORED_FILE_PURPOSES = [
   // Field and election operations (incident and field-report evidence, accreditation documents)
   'FIELD_EVIDENCE',
   'AGENT_DOCUMENT',
+  // Campaign and organisation (task attachments and evidence, event documents, finance
+  // supporting documents kept apart from everything else, breach evidence, report exports)
+  'TASK_ATTACHMENT',
+  'EVENT_DOCUMENT',
+  'FINANCE_DOCUMENT',
+  'BREACH_EVIDENCE',
 ] as const;
 export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];
 export const StoredFilePurpose = enumObject(STORED_FILE_PURPOSES);
@@ -432,7 +438,7 @@ export const ExportFormatSchema = z.enum(EXPORT_FORMATS);
 // Incident statuses, severities and categories live in ./field/enums.ts
 // (blueprint 7.3 workflow; the foundation's placeholder enums were replaced).
 
-export const NOTIFICATION_CHANNELS = ['IN_APP', 'EMAIL', 'SMS'] as const;
+export const NOTIFICATION_CHANNELS = ['IN_APP', 'EMAIL', 'SMS', 'PUSH'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 export const NotificationChannel = enumObject(NOTIFICATION_CHANNELS);
 export const NotificationChannelSchema = z.enum(NOTIFICATION_CHANNELS);

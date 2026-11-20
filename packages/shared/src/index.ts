@@ -14,3 +14,4 @@ export * from './admin';
 export * from './modules';
 export * from './office';
 export * from './field';
+export * from './campaign';

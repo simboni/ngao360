@@ -67,6 +67,10 @@ export const ERROR_CODES = {
   CSRF_HEADER_MISSING: 'CSRF_HEADER_MISSING',
   /** An idempotency key was reused with a different payload (field offline sync). Nothing was applied. */
   IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
+  /** A ledger entry lacks category, counterparty, reference or a supporting document (finance approval). */
+  APPROVAL_INCOMPLETE: 'APPROVAL_INCOMPLETE',
+  /** A verified finance limit setting configured to BLOCK refuses the action (details carry the findings). */
+  LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

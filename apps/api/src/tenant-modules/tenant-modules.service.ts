@@ -1,6 +1,8 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
 import {
+  type CampaignModuleConfig,
+  CampaignModuleConfigSchema,
   type FieldModuleConfig,
   FieldModuleConfigSchema,
   AUDIT_ACTIONS,
@@ -56,6 +58,12 @@ export class TenantModulesService {
   async fieldConfig(tx: TenantTx): Promise<FieldModuleConfig> {
     const row = await tx.tenantModule.findFirst({ where: { moduleKey: 'field' }, select: { config: true } });
     return FieldModuleConfigSchema.parse(row?.config ?? {});
+  }
+
+  /** Campaign configuration with defaults applied (works when no row exists). */
+  async campaignConfig(tx: TenantTx): Promise<CampaignModuleConfig> {
+    const row = await tx.tenantModule.findFirst({ where: { moduleKey: 'campaign' }, select: { config: true } });
+    return CampaignModuleConfigSchema.parse(row?.config ?? {});
   }
 
   /** Office configuration with defaults applied (works when no row exists). */
@@ -127,6 +135,11 @@ export class TenantModulesService {
     if (key === 'field') {
       const parsed = FieldModuleConfigSchema.safeParse(raw ?? {});
       if (!parsed.success) throw AppException.validation('Invalid field module configuration', parsed.error.issues);
+      return parsed.data;
+    }
+    if (key === 'campaign') {
+      const parsed = CampaignModuleConfigSchema.safeParse(raw ?? {});
+      if (!parsed.success) throw AppException.validation('Invalid campaign module configuration', parsed.error.issues);
       return parsed.data;
     }
     if (key !== 'office') return (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;

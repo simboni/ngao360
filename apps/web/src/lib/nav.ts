@@ -1,5 +1,13 @@
 import type { PermissionKey, PermissionModule } from '@ngao360/shared';
 import {
+  Banknote,
+  Bell,
+  Building2,
+  CalendarDays,
+  FileWarning,
+  ListTodo,
+  Megaphone,
+  SlidersHorizontal,
   AlertTriangle,
   ClipboardList,
   RadioTower,
@@ -28,6 +36,8 @@ export interface NavItem {
   icon: LucideIcon;
   /** Shown when the user holds ANY of these permissions. */
   anyOf: PermissionKey[];
+  /** Item hidden without access to this module (for groups mixing modules, e.g. Campaign). */
+  module?: PermissionModule;
 }
 
 export interface NavGroup {
@@ -52,7 +62,25 @@ export const NAV_GROUPS: NavGroup[] = [
         // Office staff see the Office overview there (office KPIs scoped by their own permissions).
         anyOf: ['dashboard.view', 'office.correspondence.view', 'office.appointments.view', 'office.meetings.view', 'office.cases.view', 'office.projects.view'],
       },
+      { label: 'Notifications', href: '/notifications', icon: Bell, anyOf: ['notifications.view'] },
     ],
+  },
+  {
+    // Campaign and organisation (blueprint 2.2). Each item needs the tenant's `campaign`
+    // module and its own permission family; finance is separate (operations roles never see it).
+    label: 'Campaign',
+    items: [
+      { label: 'Tasks', href: '/tasks', icon: ListTodo, anyOf: ['tasks.view'], module: 'tasks' },
+      { label: 'Events', href: '/events', icon: CalendarDays, anyOf: ['events.view'], module: 'events' },
+      { label: 'Communications', href: '/comms', icon: Megaphone, anyOf: ['comms.content.view'], module: 'comms' },
+      { label: 'Finance', href: '/finance', icon: Banknote, anyOf: ['finance.view'], module: 'finance' },
+      { label: 'Finance settings', href: '/finance/settings', icon: SlidersHorizontal, anyOf: ['finance.settings.manage'], module: 'finance' },
+    ],
+  },
+  {
+    label: 'Organisation',
+    module: 'org',
+    items: [{ label: 'Departments and teams', href: '/org', icon: Building2, anyOf: ['org.departments.view', 'org.teams.view'] }],
   },
   {
     label: 'NGAO TALLY',
@@ -97,6 +125,11 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [{ label: 'War Room', href: '/warroom', icon: RadioTower, anyOf: ['warroom.view'] }],
   },
   {
+    // Report builder and standard reports (blueprint 10.1, 10.2). Datasets carry their own module gates.
+    label: 'Reports',
+    items: [{ label: 'Reports', href: '/reports', icon: BarChart3, anyOf: ['reports.view', 'reports.build'] }],
+  },
+  {
     label: 'Reference data',
     items: [
       { label: 'Station registry', href: '/reference/stations', icon: MapPin, anyOf: ['reference.view'] },
@@ -109,6 +142,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Users', href: '/admin/users', icon: Users, anyOf: ['users.view'] },
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, anyOf: ['roles.view'] },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText, anyOf: ['audit.view'] },
+      { label: 'Breach register', href: '/security/breaches', icon: FileWarning, anyOf: ['security.breach.view'] },
     ],
   },
 ];
@@ -118,6 +152,6 @@ export function visibleNav(
   canAccessModule: (m: PermissionModule) => boolean,
 ): NavGroup[] {
   return NAV_GROUPS.filter((g) => !g.module || canAccessModule(g.module))
-    .map((g) => ({ ...g, items: g.items.filter((i) => i.anyOf.some((p) => can(p))) }))
+    .map((g) => ({ ...g, items: g.items.filter((i) => (!i.module || canAccessModule(i.module)) && i.anyOf.some((p) => can(p))) }))
     .filter((g) => g.items.length > 0);
 }

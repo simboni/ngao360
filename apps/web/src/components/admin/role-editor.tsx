@@ -31,6 +31,13 @@ const MODULE_LABELS: Record<string, string> = {
   field: 'Field operations',
   warroom: 'War Room',
   office: 'NGAO360 Office',
+  org: 'Organisation',
+  tasks: 'Tasks',
+  events: 'Events and logistics',
+  comms: 'Communications',
+  finance: 'Finance',
+  reports: 'Reports',
+  security: 'Breach register',
   platform: 'Platform operator',
 };
 

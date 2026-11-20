@@ -26,6 +26,21 @@ const STATUS_CODES: Record<number, ErrorCode> = {
 };
 
 /** Maps every error to the ApiError shape in @ngao360/shared. */
+/**
+ * Database separation-of-duties checks (campaign migration). A violation means
+ * the service missed a per-record rule; it still answers 403, never 500.
+ */
+const SOD_CHECK_CONSTRAINTS = [
+  'tasks_reviewer_not_owner_check',
+  'event_after_action_reviewer_check',
+  'content_items_approver_not_author_check',
+  'finance_budget_lines_approver_check',
+  'finance_transactions_approver_check',
+  'finance_transactions_payer_check',
+  'finance_transactions_rejecter_check',
+  'breach_records_closer_check',
+] as const;
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('Exceptions');
@@ -74,6 +89,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       };
     }
     const msg = exception instanceof Error ? exception.message : '';
+    if (msg.includes('APPROVAL_INCOMPLETE')) {
+      return {
+        statusCode: 409,
+        error: 'CONFLICT',
+        code: ERROR_CODES.APPROVAL_INCOMPLETE,
+        message: 'This entry needs a category, payee or contributor, a reference and a supporting document before approval',
+      };
+    }
+    const sod = SOD_CHECK_CONSTRAINTS.find((c) => msg.includes(c));
+    if (sod) {
+      return { statusCode: 403, error: 'FORBIDDEN', code: ERROR_CODES.SEPARATION_OF_DUTIES, message: 'The same person cannot perform both steps on this record' };
+    }
     if (msg.includes('IMMUTABLE_RECORD')) {
       return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.IMMUTABLE_RECORD, message: 'This record is immutable and cannot be changed or deleted' };
     }

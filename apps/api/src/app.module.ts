@@ -12,6 +12,7 @@ import { AppConfig } from './config/app-config';
 import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { CampaignModule } from './modules/campaign/campaign.module';
 import { ReferenceModule } from './modules/reference/reference.module';
 import { FieldModule } from './modules/field/field.module';
 import { OfficeModule } from './modules/office/office.module';
@@ -47,6 +48,7 @@ import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
     AdminModule,
     OfficeModule,
     FieldModule,
+    CampaignModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

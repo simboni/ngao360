@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, ReasonSchema, UserRefSchema } from './schemas/common';
 
-export const TENANT_MODULE_KEYS = ['tally', 'office', 'field'] as const;
+export const TENANT_MODULE_KEYS = ['tally', 'office', 'field', 'campaign'] as const;
 export type TenantModuleKey = (typeof TENANT_MODULE_KEYS)[number];
 export const TenantModuleKeySchema = z.enum(TENANT_MODULE_KEYS);
 
@@ -44,6 +44,13 @@ export const TENANT_MODULES: readonly TenantModuleDefinition[] = [
       'Agent registry, deployment planner, readiness, field reports, incidents, the offline mobile app and the election-day War Room (with NGAO TALLY).',
     defaultEnabled: false,
   },
+  {
+    key: 'campaign',
+    label: 'Campaign and organisation',
+    description:
+      'Departments and teams, tasks, events and logistics, the communications workflow and the finance ledger with configurable limits.',
+    defaultEnabled: false,
+  },
 ];
 
 /**
@@ -55,6 +62,13 @@ export const PERMISSION_MODULE_TENANT_MODULES: Readonly<Record<string, readonly 
   office: ['office'],
   field: ['field'],
   warroom: ['field', 'tally'],
+  // Campaign and organisation. Reports, notifications and the breach register are
+  // platform features (each report dataset names its own module).
+  org: ['campaign'],
+  tasks: ['campaign'],
+  events: ['campaign'],
+  comms: ['campaign'],
+  finance: ['campaign'],
 };
 
 export function moduleDefinition(key: TenantModuleKey): TenantModuleDefinition {
