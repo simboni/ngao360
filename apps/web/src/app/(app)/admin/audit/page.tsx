@@ -1,16 +1,19 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+'use client';
 
-export const metadata = { title: 'Audit log' };
+import { Suspense } from 'react';
+import { AuditLogView } from '@/components/admin/audit-log-view';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 /** S29 Audit log. API §6.4. */
 export default function AuditPage() {
   return (
-    <ModulePlaceholder
-      title="Audit log"
-      screen="S29 Audit log"
-      description="Actor, action, entity, timestamp, IP/device metadata, before/after hashes, export and retention hold."
-      breadcrumbs={[{ label: 'Administration' }, { label: 'Audit log' }]}
-      anyOf={['audit.view']}
-    />
+    <RequirePagePermission anyOf={['audit.view']}>
+      <ReauthProvider>
+        <Suspense>
+          <AuditLogView />
+        </Suspense>
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }

@@ -1,16 +1,19 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+'use client';
 
-export const metadata = { title: 'Users' };
+import { Suspense } from 'react';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { UsersDirectory } from '@/components/admin/users-directory';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
-/** S06 User directory. API §6.1. */
+/** S06 User directory. API §6.1 and §6.3. */
 export default function UsersPage() {
   return (
-    <ModulePlaceholder
-      title="Users"
-      screen="S06 User directory"
-      description="Search, filters, status, role chips, invite, suspend, reset MFA and access review."
-      breadcrumbs={[{ label: 'Administration' }, { label: 'Users' }]}
-      anyOf={['users.view']}
-    />
+    <RequirePagePermission anyOf={['users.view']}>
+      <ReauthProvider>
+        <Suspense>
+          <UsersDirectory />
+        </Suspense>
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }
