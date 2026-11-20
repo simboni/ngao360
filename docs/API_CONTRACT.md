@@ -5,11 +5,14 @@ Every request and response type named here is exported from `@ngao360/shared`
 (`packages/shared/src`). If you need a field that is not here, add it to the shared schema
 first, then update this file. Do not invent ad-hoc shapes.
 
-Status: §2–22 are **implemented** (NGAO360 Office and field and election operations included).
-§23–30 (campaign and organisation: organisation, tasks, events, communications, finance, reports,
-the notification centre and the breach register) are **to be implemented** by the campaign module
-agents; their data model, shared DTOs, permissions and roles, module activation, department-scope
-helpers, geo resolvers, notification provider interface and seed already exist.
+Status: §2–30 are **implemented**: the platform foundation, NGAO TALLY, NGAO360 Office, field and
+election operations, and campaign and organisation (organisation, tasks, events, communications,
+finance, reports, the notification centre and the breach register; §23–30, with the end-to-end
+campaign rehearsal in `apps/api/test/campaign-rehearsal.e2e.spec.ts`).
+
+Query-string flags (`unreadOnly`, `flagged`, `mine`, `includeDrills`, …) use `QueryBooleanSchema`: `true` / `1` and
+`false` / `0` only (anything else is 400). `z.coerce.boolean()` is not used for query flags because it reads `"false"`
+as true.
 
 ---
 
@@ -283,12 +286,13 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | Method | Path | Permission | Request | Response | Notes |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/dashboard/summary` | `dashboard.view` | `{ electionCycleId? }` | `DashboardSummary` | KPIs: expected stations, forms received, verified, awaiting review, open discrepancies. Tally KPIs only appear for callers with `tally.view`. "Stations with forms" match filed forms to the approved registry by station code within the cycle (station lineage), so a registry amendment never turns a received station into a missing one. `agent_coverage` is AVAILABLE when the `field` module is on and the caller holds `field.deployment.view`: approved-registry stations in that scope with a CONFIRMED / CHECKED_IN / CHECKED_OUT chief or station agent ÷ all such stations; otherwise NOT_AVAILABLE. |
-| GET | `/notifications` | Authenticated | `PaginationQuery & { unreadOnly? }` | `Paginated<Notification>` | Hides notifications whose `module` the user can no longer access. |
-| POST | `/notifications/:id/read` | Authenticated | `IdParam` | `OkResponse` | Only the caller's own notifications. |
-| POST | `/notifications/read-all` | Authenticated | none | `OkResponse` | |
+| GET | `/notifications` | Authenticated | `NotificationCenterQuery` (`unreadOnly`, `module`, `severity`, `awaitingAck`) | `Paginated<NotificationCenterItem>` | In-app rows only. Hides notifications whose `module` the user can no longer access. Served by `NotificationCenterService.list` (§29) from the admin `DashboardController`. |
+| POST | `/notifications/:id/read` | Authenticated | `IdParam` | `OkResponse` | Only the caller's own in-app notifications. |
+| POST | `/notifications/read-all` | Authenticated | none | `OkResponse` | Own in-app notifications. |
 
-The notification centre (§29) extends these endpoints: `GET /notifications` returns `NotificationCenterItem`
-(severity, acknowledgement and source record) and accepts `NotificationCenterQuery`.
+The notification centre (§29) adds counts, preferences, acknowledgement and the delivery log. The web dashboard
+(`/dashboard`) also shows campaign and finance tiles per permission (`components/campaign/campaign-kpis.tsx`),
+read from the §24–27 list endpoints' `total`, `GET /finance/ledger` and `GET /notifications/counts`.
 
 ## 8. Tenant module activation (implemented: `apps/api/src/tenant-modules`)
 
@@ -807,10 +811,12 @@ person resolves them (resubmit as a new item with a new key, or discard); clear 
 
 ## Campaign and organisation conventions (§23–30)
 
-Status: **contracted, not yet implemented** (prepared for parallel module work). Data model: migration
+Status: **implemented** (integration suites `campaign-*`, `finance-ledger`, `reports-builder`,
+`notifications-centre` and the end-to-end `campaign-rehearsal`). Data model: migration
 `20261125000000_campaign_organisation`; shared DTOs in `packages/shared/src/campaign/` (`finance/`,
-`reports/` subfolders); DTO classes in `apps/api/src/modules/campaign/campaign.dto.ts`; empty controllers
-and services in `apps/api/src/modules/campaign/{org,tasks,events,comms,finance,reports,notifications,security}`.
+`reports/` subfolders; small shared request shapes in `requests.ts`); DTO classes in
+`apps/api/src/modules/campaign/campaign.dto.ts`; controllers and services in
+`apps/api/src/modules/campaign/{org,tasks,events,comms,finance,reports,notifications,security}`.
 Blueprint: 2.2, 3, 4, 5.1–5.4, 10.1–10.3, 11 (S05, S08, S09, S10, S28), 14, 15.2–15.4.
 
 ### 23–30.0 Rules for every campaign endpoint
@@ -860,7 +866,7 @@ Web: `/org`. Departments form a tree with a materialised `path` ("/root/…/self
 
 | Method | Path | Permission | Request | Response | Notes |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/org/assignable-users` | any of `org.departments.manage`, `org.teams.manage`, `tasks.create`, `tasks.assign`, `events.create`, `events.manage` | `AssignableUserQuery` | `AssignableUser[]` | Active users of the tenant, display name only (no e-mail or phone), with department / team ids. `permission` filters to holders of that permission (e.g. `tasks.review` for reviewer pickers). |
+| GET | `/org/assignable-users` | any of `org.departments.manage`, `org.teams.manage`, `tasks.create`, `tasks.assign`, `tasks.view`, `events.create`, `events.manage`, `events.view` | `AssignableUserQuery` | `AssignableUser[]` | Active users of the tenant, display name only (no e-mail or phone), with department / team ids. Viewers use it for the board and list filters. `permission` filters to holders of that permission (e.g. `tasks.review` for reviewer pickers). |
 
 ### 24. Tasks (`apps/api/src/modules/campaign/tasks`) — S08
 
@@ -869,7 +875,7 @@ Web: `/tasks` (board / list / calendar / workload), `/tasks/[id]`. Status `TASK_
 
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/tasks` | `tasks.view` | `TaskQuery` | `Paginated<TaskSummary>` | `taskScopeWhere`. `view=mine` owner or collaborator; `review` reviewer and SUBMITTED_FOR_REVIEW; `overdue` due < now and open. |
+| GET | `/tasks` | `tasks.view` | `TaskQuery` | `Paginated<TaskSummary>` | `taskScopeWhere`. `view=mine` owner or collaborator; `review` reviewer and SUBMITTED_FOR_REVIEW; `overdue` due < now and open. `sort` = `dueAt`, `priority`, `reference` or `updatedAt` (default; other keys 400), with `order`. |
 | GET | `/tasks/board` | `tasks.view` | `TaskQuery` | `TaskBoard` | One column per status with total and first 50 cards. |
 | GET | `/tasks/calendar` | `tasks.view` | `TaskCalendarQuery` | `TaskSummary[]` | Tasks with start or due in [from, to] (max 92 days, 400 otherwise). |
 | GET | `/tasks/workload` | `tasks.view` | `TaskQuery` | `TaskWorkload` | Counts per owner over tasks in scope only. |
@@ -877,7 +883,7 @@ Web: `/tasks` (board / list / calendar / workload), `/tasks/[id]`. Status `TASK_
 | POST | `/tasks` | `tasks.create` | `CreateTask` | `TaskDetail` (201) | Reference `nextReference(tx, tenantId, 'TSK', campaignReferenceYear)`. Owner / reviewer / collaborators active users; reviewer ≠ owner (400 and DB check). Department must be one of the caller's (or `org.departments.all`); team must belong to the department; geography inside the `tasks.create` grant. Assigning an owner other than yourself needs `tasks.assign`. `source` resolves the record (event / project / incident / case) the caller can see and stores `sourceLabel` = its reference (400 when not visible; project and case need the Office module and permission). Dependencies: `wouldCreateDependencyCycle` (409). Events CREATED (+ ASSIGNED). Notification `task.assigned` to the owner (if not the caller). Audit: `TASK_CREATED`. |
 | PATCH | `/tasks/:id` | `tasks.create` and (owner or `tasks.manage_all`) | `UpdateTask` | `TaskDetail` | Not when COMPLETED / CANCELLED (409 `IMMUTABLE_RECORD`). Event UPDATED (changed field names). Audit: `TASK_UPDATED`. |
 | POST | `/tasks/:id/assign` | `tasks.assign` (own tasks) or `tasks.manage_all` | `AssignTask` | `TaskDetail` | Reviewer ≠ owner. Events ASSIGNED / REVIEWER_CHANGED / COLLABORATORS_CHANGED. Notifications `task.assigned`. Audit: `TASK_ASSIGNED` (before / after ids). |
-| POST | `/tasks/:id/status` | owner or collaborator with `tasks.create`; `tasks.manage_all` for others' tasks | `ChangeTaskStatus` | `TaskDetail` | `canTransitionTask` (409 `INVALID_TRANSITION`). → IN_PROGRESS or COMPLETED needs `dependenciesSatisfied` (409 `CONFLICT`, `details.openDependencies`). → COMPLETED directly only when there is no reviewer (`tasks.reviewRequiredWhenReviewerSet`) — otherwise SUBMITTED_FOR_REVIEW, which notifies the reviewer (`task.review_requested`). BLOCKED / CANCELLED need a reason. Event STATUS_CHANGED. Audit: `TASK_STATUS_CHANGED`. |
+| POST | `/tasks/:id/status` | owner or collaborator with `tasks.create`; `tasks.manage_all` for others' tasks | `ChangeTaskStatus` | `TaskDetail` | `canTransitionTask` (409 `INVALID_TRANSITION`). → IN_PROGRESS, SUBMITTED_FOR_REVIEW or COMPLETED needs `dependenciesSatisfied` (409 `CONFLICT`, `details.openDependencies`) unless `overrideOpenDependencies: true` with a reason (≥ 3 characters; 400 without) from a holder of `tasks.manage_all` (403 for others); the timeline note starts "Dependency override:" and the audit entry carries `dependencyOverride: true`. → COMPLETED directly only when there is no reviewer (`tasks.reviewRequiredWhenReviewerSet`) — otherwise SUBMITTED_FOR_REVIEW, which notifies the reviewer (`task.review_requested`). BLOCKED / CANCELLED need a reason. Event STATUS_CHANGED. Audit: `TASK_STATUS_CHANGED`. |
 | POST | `/tasks/:id/review` | `tasks.review` and caller = reviewer (or `tasks.manage_all` with reviewer ≠ caller ≠ owner) | `ReviewTask` | `TaskDetail` | Only SUBMITTED_FOR_REVIEW. Caller = owner → 403 `SEPARATION_OF_DUTIES`. APPROVE → COMPLETED (`completedAt`), event REVIEW_APPROVED; RETURN → IN_PROGRESS with note, event REVIEW_RETURNED, notification `task.returned`. Audit: `TASK_REVIEWED`. |
 | POST | `/tasks/:id/dependencies` | `tasks.create` and (owner or `tasks.manage_all`) | `AddTaskDependency` | `TaskDetail` | Both tasks visible; no cycle (409). Event DEPENDENCY_ADDED. Audit: `TASK_DEPENDENCY_CHANGED`. |
 | DELETE | `/tasks/:id/dependencies/:dependsOnTaskId` | same | `TaskDependencyParam` | `TaskDetail` | Removes the link row. Event DEPENDENCY_REMOVED. Audit: `TASK_DEPENDENCY_CHANGED`. |
@@ -901,11 +907,11 @@ after-action `AFTER_ACTION_STATUS_TRANSITIONS`.
 | PUT | `/events/:id/agenda` | `events.manage` (or organiser) | `SaveEventAgenda` | `CampaignEventDetail` | Replaces the agenda; removed items get `removedAt`. Audit: `EVENT_AGENDA_SAVED`. |
 | POST | `/events/:id/logistics` | `events.logistics` | `CreateLogisticsItem` | `EventLogisticsItem` (201) | Custodian active user. Supplier is text (finance payees stay in finance). Audit: `EVENT_LOGISTICS_SAVED`. |
 | PATCH | `/events/:id/logistics/:itemId` | `events.logistics` | `LogisticsParam` + `UpdateLogisticsItem` | `EventLogisticsItem` | Item must belong to the event (404). `canTransitionLogistics`; DAMAGED / LOST need `damageNotes` (DB check); RETURNED / DAMAGED set `returnedAt`. Audit: `EVENT_LOGISTICS_SAVED`. |
-| GET | `/events/:id/attendance` | `events.attendance` | `CampaignIdParam` + `PaginationQuery` | `Paginated<EventAttendance>` + `AttendanceSummary` | Names, role, method, time, `hasContact` only. |
+| GET | `/events/:id/attendance` | `events.attendance` | `CampaignIdParam` + `PaginationQuery` | `EventAttendancePage` (`Paginated<EventAttendance>` with `summary: AttendanceSummary`; the summary fields are also merged at the top level for older clients) | Names, role, method, time, `hasContact` only. |
 | POST | `/events/:id/attendance` | `events.attendance` | `RecordAttendance` | `EventAttendance` (201) | Event PLANNED / CONFIRMED / IN_PROGRESS / COMPLETED (same day). Contact only with `consent: true`, a notice version and a purpose; stored in `event_attendance_contacts`. Audit: `EVENT_ATTENDANCE_RECORDED` (`hasContact`, never values). |
 | POST | `/events/:id/attendance/:attendanceId/contact` | `events.attendance.contact` **(reauth)** | `AttendanceParam` + `RevealAttendanceContact` | `EventAttendanceContact` | `Cache-Control: no-store`. Audit: `EVENT_ATTENDANCE_CONTACT_VIEWED` (reason, field names). Never in lists, exports or notifications. |
 | POST | `/events/:id/attendance/:attendanceId/contact/erase` | `events.attendance.contact` | `AttendanceParam` + `{ reason }` | `OkResponse` | Nulls the values, sets `erasedAt` (DB trigger allows erasure only). Audit: `EVENT_ATTENDANCE_RECORDED` (erased). |
-| POST | `/events/:id/attendance/export` | `events.attendance` + `reports.export` **(reauth)** | `{ format: 'CSV' \| 'PDF', reason }` | `SignedUrlResponse` | Names, roles, methods and times only (no contact values); header with generation time and classification INTERNAL. Logged in `report_exports` (`datasetKey: 'campaign.event_attendance'`). Audit: `EVENT_ATTENDANCE_EXPORTED`. |
+| POST | `/events/:id/attendance/export` | `events.attendance` + `reports.export` **(reauth)** | `AttendanceExport` | `SignedUrlResponse` | Names, roles, methods and times only (no contact values); header with generation time and classification INTERNAL. Logged in `report_exports` (`datasetKey: 'campaign.event_attendance'`). Audit: `EVENT_ATTENDANCE_EXPORTED`. |
 | POST | `/events/:id/documents` | `events.manage` (or organiser) | `AddEventDocument` | `EventDocument` (201) | File purpose `EVENT_DOCUMENT`. Audit: `EVENT_DOCUMENT_ADDED`. |
 | GET | `/events/:id/documents/:documentId/url` | `events.view` (event in scope) | — | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
 | PUT | `/events/:id/after-action` | `events.manage` (or organiser) | `SaveAfterActionReport` | `EventAfterActionReport` | Event COMPLETED. Creates (author = caller) or updates a DRAFT / RETURNED report (`expectedVersion`). `actualSpendMinor` integer minor units (reported figure; the ledger stays authoritative). Evidence files purpose `EVENT_DOCUMENT` become `AFTER_ACTION_EVIDENCE` documents. `submit: true` in the query moves DRAFT / RETURNED → SUBMITTED and notifies holders of `events.after_action.approve` in scope (`event.after_action_review`). Audit: `EVENT_AFTER_ACTION_SAVED`. |
@@ -952,7 +958,7 @@ limit checks use posted entries net of reversals).
 | --- | --- | --- | --- | --- | --- |
 | GET | `/finance/accounts` | `finance.view` | — | `FinanceAccount[]` | Balances from posted entries (transfers move between accounts; reversals net out). |
 | POST | `/finance/accounts` | `finance.settings.manage` **(reauth)** | `SaveFinanceAccount` | `FinanceAccount` (201) | Only the last 4 digits are accepted and stored masked. Audit: `FINANCE_ACCOUNT_SAVED`. |
-| PATCH | `/finance/accounts/:id` | `finance.settings.manage` **(reauth)** | `SaveFinanceAccount` (`expectedVersion`) | `FinanceAccount` | Currency fixed once an entry exists (409). Closing needs a zero posted balance (409). Audit: `FINANCE_ACCOUNT_SAVED`. |
+| PATCH | `/finance/accounts/:id` | `finance.settings.manage` **(reauth)** | `UpdateFinanceAccount` | `FinanceAccount` | Currency fixed once an entry exists (409). Closing needs a zero posted balance (409). Audit: `FINANCE_ACCOUNT_SAVED`. |
 | GET | `/finance/categories` | `finance.view` | — | `FinanceCategory[]` | |
 | POST | `/finance/categories` | `finance.settings.manage` | `SaveFinanceCategory` | `FinanceCategory` (201) | Code unique (409). Audit: `FINANCE_CATEGORY_SAVED`. |
 | PATCH | `/finance/categories/:id` | `finance.settings.manage` | `SaveFinanceCategory` | `FinanceCategory` | Kind fixed once used (409). Deactivate instead of delete. Audit: `FINANCE_CATEGORY_SAVED`. |
@@ -964,7 +970,7 @@ limit checks use posted entries net of reversals).
 | GET | `/finance/payees` | `finance.view` | `PaginationQuery` | `Paginated<FinancePayee>` | Masked PIN and phone only. |
 | POST | `/finance/payees` | `finance.request` | `SaveFinancePayee` | `FinancePayee` (201) | Tax PIN stored masked plus `identifierFingerprint(tenantId, pin, key)` (duplicate → 409 with the existing payee id). Audit: `FINANCE_PAYEE_SAVED` (no PIN, no phone). |
 | PATCH | `/finance/payees/:id` | `finance.request` | `SaveFinancePayee` | `FinancePayee` | Audit: `FINANCE_PAYEE_SAVED`. |
-| GET | `/finance/contribution-sources` | `finance.view` | `PaginationQuery & { electionCycleId? }` | `Paginated<ContributionSource>` | `totalContributedMinor` = posted contributions in the period. Identifier masked only; never returned in full. |
+| GET | `/finance/contribution-sources` | `finance.view` | `ContributionSourceQuery` | `Paginated<ContributionSource>` | `totalContributedMinor` = posted contributions in the period. Identifier masked only; never returned in full. |
 | POST | `/finance/contribution-sources` | `finance.request` | `SaveContributionSource` | `ContributionSource` (201) | Identifier stored masked + fingerprint (one source per identifier: 409 with the existing id). `declared` sets `declaredAt`. Audit: `FINANCE_CONTRIBUTION_SOURCE_SAVED` (`hasIdentifier`, never the value). |
 | PATCH | `/finance/contribution-sources/:id` | `finance.request` | `SaveContributionSource` | `ContributionSource` | Audit: `FINANCE_CONTRIBUTION_SOURCE_SAVED`. |
 
@@ -972,11 +978,11 @@ limit checks use posted entries net of reversals).
 
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/finance/budget-lines` | `finance.view` | `{ departmentId?, eventId?, electionCycleId? }` | `BudgetLine[]` | `actual` = posted expenses net of reversals; `committed` = REQUESTED / APPROVED-not-paid. |
+| GET | `/finance/budget-lines` | `finance.view` | `BudgetLineQuery` | `BudgetLine[]` | `actual` = APPROVED + PAID expense entries (a reversed original and its reversal both drop out, so reversals net to zero); `committed` = REQUESTED expense entries (requested, not yet approved). |
 | POST | `/finance/budget-lines` | `finance.request` | `SaveBudgetLine` | `BudgetLine` (201) | DRAFT. Department or event required (DB check). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
 | PATCH | `/finance/budget-lines/:id` | `finance.request` | `SaveBudgetLine` (`expectedVersion`) | `BudgetLine` | DRAFT only (DB trigger freezes APPROVED). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
-| POST | `/finance/budget-lines/:id/approve` | `finance.approve` **(reauth)** | `{ expectedVersion }` | `BudgetLine` | Approver ≠ creator (403; DB check). Audit: `FINANCE_BUDGET_LINE_APPROVED`. |
-| POST | `/finance/budget-lines/:id/close` | `finance.approve` | `{ expectedVersion, reason }` | `BudgetLine` | APPROVED → CLOSED (final). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
+| POST | `/finance/budget-lines/:id/approve` | `finance.approve` **(reauth)** | `ExpectedVersionBody` | `BudgetLine` | Approver ≠ creator (403; DB check). Audit: `FINANCE_BUDGET_LINE_APPROVED`. |
+| POST | `/finance/budget-lines/:id/close` | `finance.approve` | `VersionReasonBody` | `BudgetLine` | APPROVED → CLOSED (final). Audit: `FINANCE_BUDGET_LINE_SAVED`. |
 
 #### 27.5 Contribution register
 
@@ -1029,8 +1035,8 @@ rule). Field-level permissions (`requiresPermission`) are applied before selecti
 ### 29. Notification centre (`apps/api/src/modules/campaign/notifications` + admin §7) — blueprint 10.3
 
 Web: `/notifications` (centre + preferences); the top-bar bell shows `NotificationCounts`. The existing
-`notifications` table and `/notifications` endpoints (§7, `modules/admin/notifications.service.ts`, owned by the
-notifications agent for this change) are **extended**, not duplicated: `GET /notifications` now returns
+`notifications` table and `/notifications` endpoints (§7; the admin `DashboardController` delegates the list to
+`NotificationCenterService.list`) are **extended**, not duplicated: `GET /notifications` returns
 `Paginated<NotificationCenterItem>` (adds `severity`, `requiresAck`, `acknowledgedAt`, `entityType`, `entityId`) and
 accepts `NotificationCenterQuery` (`unreadOnly`, `module`, `severity`, `awaitingAck`). External channels use
 `NotificationChannelProvider` (`providers/notification-provider.ts`); the default for EMAIL, SMS and PUSH is the
@@ -1064,6 +1070,7 @@ Drills are recorded with `isDrill: true` and labelled everywhere. The register h
 | POST | `/security/breaches` | `security.breach.record` | `CreateBreach` | `BreachDetail` (201) | Reference `BRE`; reporter = caller; status DETECTED; event DETECTED. Notifies holders of `security.breach.manage` with a CRITICAL, acknowledgement-required alert for HIGH / CRITICAL severity (`security.critical_alert`), else `security.breach_recorded`. Audit: `BREACH_RECORDED`. |
 | PATCH | `/security/breaches/:id` | `security.breach.manage` | `UpdateBreach` | `BreachDetail` | Not when CLOSED (reopen first). Audit: `BREACH_UPDATED`. |
 | POST | `/security/breaches/:id/events` | `security.breach.manage` (NOTE also `security.breach.record`) | `AddBreachEvent` | `BreachDetail` | Status moves via `canTransitionBreach` (409 `INVALID_TRANSITION`); `*_NOTIFIED` set the matching `…NotifiedAt`; NOTIFICATION_NOT_REQUIRED needs `notificationDecision`; CLOSED needs `lessonsLearned` and a closer ≠ reporter (403; DB checks); REOPENED → ASSESSED, clears `closedAt` / `closedById`. Evidence file purpose `BREACH_EVIDENCE`. Appends `breach_events`. Audit: `BREACH_EVENT_ADDED` (+ `BREACH_STATUS_CHANGED`). |
+| GET | `/security/breaches/:id/events/:eventId/evidence/url` | `security.breach.view` | — | `SignedUrlResponse` | Evidence file of a timeline entry. Audit: `FILE_SOURCE_ACCESSED`. |
 | POST | `/security/breaches/:id/export` | `security.breach.export` **(reauth)** | `ExportBreachTimeline` | `SignedUrlResponse` | PDF / CSV timeline with drill label, generation time and classification CONFIDENTIAL; logged in `report_exports` (`datasetKey: 'security.breaches'`, `sensitive: true`). Audit: `BREACH_TIMELINE_EXPORTED`. |
 
 ### Campaign status, audit and error summary

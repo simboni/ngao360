@@ -740,3 +740,38 @@ updating, as for the org/tasks/events/comms screens).
    register and budget views read these records.
 10. **Ledger period by election cycle.** `FinanceLedgerQuery.electionCycleId` is not offered (no cycle list for
     finance users, request 7); the ledger summary uses the from / to dates of the filter bar.
+
+## Campaign: integration status (after the three campaign agents)
+
+Applied in the integration pass (contract updated in `docs/API_CONTRACT.md` §1, §7, §23–30):
+
+| Request | Status |
+| --- | --- |
+| API 1: extended `GET /notifications` | **Applied.** The admin `DashboardController` takes `NotificationCenterQueryDto` and delegates to `NotificationCenterService.list` (`AdminModule` imports `NotificationCenterModule`): severity, `requiresAck`, `acknowledgedAt`, `entityType`, `entityId`; filters `module`, `severity`, `awaitingAck`; in-app rows only. Mark-read and mark-all-read also ignore external-channel rows. The admin service's old list method is removed. |
+| API 2: e-mail verification, SMS consent, push subscriptions | **Open.** Needs a verification flow and a consent notice, not only columns; every external delivery stays SKIPPED through the log provider. `NotificationCenterService.resolveAddress` remains the single place to wire them. |
+| API 3: inline request shapes | **Applied.** `packages/shared/src/campaign/requests.ts`: `ReasonBody`, `ExpectedVersionBody`, `VersionReasonBody`, `AttendanceExport`, `BudgetLineQuery`, `ContributionSourceQuery`, `UpdateFinanceAccount`, `AttachmentParam`, `DocumentParam`; `campaign.dto.ts` builds its DTO classes from them. |
+| API 4: dependency override flag | **Applied.** `ChangeTaskStatus.overrideOpenDependencies` (needs a reason, 400 otherwise; only `tasks.manage_all`, 403 otherwise). A reason alone no longer overrides. The web status dialog offers the override to task managers when dependencies are open. |
+| API 5: reviewers and department scope | **Applied for communications.** `COMMUNICATIONS_APPROVER` holds `org.departments.all`, so "awaiting me" lists content from every department. Finance is organisation-level (no department scope); after-action approval stays with the campaign manager (`org.departments.all`) and department leads (own departments). |
+| API 6 / Web 2: attendance page shape | **Applied.** `EventAttendancePageSchema` (`Paginated<EventAttendance>` with `summary`); the flat merge stays for older clients. |
+| API 7 / Web 4: task sort keys | **Applied.** `TaskQuery.sort` is `dueAt` / `priority` / `reference` / `updatedAt` (400 for others). The list view may now sort server-side. |
+| API 8: `task.due_soon` job | **Open.** Needs a BullMQ repeatable job. |
+| API 9: report narrowing on organisation datasets | Recorded (400 for `geographicUnitId` on datasets without a geography column). |
+| API 10: finance "committed" | **Applied (contract).** §27.4 now matches the implementation and the shared schema: committed = REQUESTED expense entries; actual = APPROVED + PAID, reversals netting to zero. |
+| Web 1 / B/C 7: geography and scope options lookup | **Open.** `GET /org/geography` / `GET /reports/scope-options` (units, cycles and departments inside the caller's grant) is not built; pickers keep the "your scope applies automatically" fallback. |
+| Web 3: attendance notice version | **Open.** Still the web constant `event-attendance-v1`. |
+| Web 5: people picker for viewers | **Applied.** `GET /org/assignable-users` also accepts `tasks.view` and `events.view` (display names only). |
+| B/C 1: mount the notification bell | **Applied.** `components/layout/topbar.tsx` renders `<NotificationBell />`. |
+| B/C 2: breach evidence URL | **Applied (contract).** Row added to §30. |
+| B/C 3: why a finance action is unavailable | **Open.** The web still assumes `approverCannotPay` is on when an approver is refused payment. |
+| B/C 4: currency on contribution totals | **Open.** |
+| B/C 5: finance export answer with the export record | **Open.** `POST /finance/exports` still returns `SignedUrlResponse` only. |
+| B/C 6: shared schemas for report listings | **Open.** |
+| B/C 8: notification counts by module | **Open.** |
+| B/C 9, 10: finance management screens, ledger by cycle | **Open (UI).** |
+| (integration) dashboard campaign / finance KPIs | **Done.** `components/campaign/campaign-kpis.tsx` on `/dashboard`: my open tasks, overdue, to review, events in the next 14 days, content awaiting me, alerts to acknowledge; finance tiles (awaiting approval, approved not paid, limit findings, expenses posted in KES) only with `finance.view`, which operations roles never hold. Unit-tested per system role. |
+| ARCHITECTURE component paths | **Applied.** §1 now lists `components/{org,tasks,events,comms,finance,reports,notifications,security}`. |
+
+Found and fixed during integration (not requested):
+
+- **Query flags read "false" as true.** Every `z.coerce.boolean()` query flag (`unreadOnly`, `flagged`, `mine`, `includeDrills`, `includeInactive`, `includeSuperseded`, field and tally flags) turned the string `"false"` into `true`, so for example `GET /security/breaches?includeDrills=false` still listed drills. They now use `QueryBooleanSchema` (`true`/`1`, `false`/`0`, anything else 400).
+- **Implicit dependency override.** A task manager who typed a note while moving a blocked task overrode its open dependencies without asking; the web dialog said the move would be refused. The override is now explicit (API 4).
