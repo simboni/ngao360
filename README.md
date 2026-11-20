@@ -10,14 +10,15 @@ NGAO360 **is**:
 
 - a multi-tenant workspace with roles, geography-scoped access, separation of duties and an append-only audit log;
 - a reference-data registry: election cycles, counties down to polling stations (versioned, approved registry imports), contests, candidates and approved form templates for all six positions (34–39 series);
-- NGAO TALLY: form intake, where originals are stored unchanged and SHA-256 hashed; manual capture with optional OCR drafts; validation; independent second review; discrepancy cases; immutable snapshots; and exports labelled as non-official.
+- NGAO TALLY: form intake, where originals are stored unchanged and SHA-256 hashed; manual capture with optional OCR drafts; validation; independent second review; discrepancy cases; immutable snapshots; and exports labelled as non-official;
+- **NGAO360 Office** for an elected office (pilot: a County Governor's office): correspondence register, appointments and lean meetings, citizen cases with a public request portal and tracking page, and a project register with independent verification and a public project view. Office data sits in its own tables behind its own `office.*` permissions, apart from campaign and tally data (blueprint 15.2), and the module can be switched off per organisation.
 
 NGAO360 **is not**: an election management body, a voter register, a KIEMS replacement, an official results-transmission channel or a declaration authority. It never captures IEBC certificates (34D/35C/36C/37D/38D/39D), and it never alters, hides or discards a source record.
 
 What this build covers (see [docs/DECISIONS.md](docs/DECISIONS.md)):
 
-- **Platform:** platform foundation and NGAO TALLY MVP (roadmap stages 1 and 4).
-- **First rehearsal:** County Governor (Forms 37A, 37B and 37C).
+- **Platform:** platform foundation, NGAO TALLY MVP and NGAO360 Office (roadmap stages 1, 4 and 5).
+- **Rehearsals:** County Governor tally (Forms 37A, 37B and 37C) and a County Governor's office (citizen request to closure, project to verified public view).
 - **Demo data:** all synthetic. Fictional candidates, a synthetic Bungoma registry of 153 stations, invented figures. Only the 47 county codes and names are real public reference data.
 
 ## Quick start
@@ -38,9 +39,12 @@ Checks:
 pnpm typecheck && pnpm lint && pnpm build
 pnpm test                         # unit + DB integration tests (integration runs when TEST_* URLs are set)
 pnpm smoke:web                    # Playwright smoke against the running app; writes docs/screenshots/
+pnpm smoke:office                 # Office smoke: public portal, case workspace, project register; docs/screenshots/office-*.png
 ```
 
 To run the Governor rehearsal on its own: `pnpm test:rehearsal`. It runs the whole flow through the API: upload, capture, a separation-of-duties refusal, verification, an arithmetic discrepancy, the snapshot, an export, a 37B cross-stage variance case and the audit trail.
+
+The Office rehearsal is `pnpm test:rehearsal:office`: a citizen submits a request on the public portal without an account, the office administrator triages and assigns it, the case officer refers it to the responsible institution and proposes a resolution, the citizen tracks it and sees only public updates, and a second person closes it. A project is recorded with its responsible institution, evidence is verified by someone other than the uploader, a photograph alone is refused as proof of completion, and the public page shows only the fields the public-information editor approved.
 
 ## Demo accounts (synthetic)
 
@@ -78,14 +82,16 @@ Organisation code **`bungoma-governor`**, same password. The `office` module and
 | `projects@` | Projects officer (records and evidence; cannot verify or publish) | Organisation | none |
 | `publicinfo@` | Public-information editor (publishes approved project fields) | Organisation | TOTP |
 
-A short walkthrough: sign in as the clerk and upload `fixtures/forms/synthetic-37a-*.png` from **Form inbox**, then capture the figures and submit for review. Next, sign in as the verifier to verify the form. Finally, sign in as the supervisor and open **Parallel tally**: totals include only verified stations, measured against the 153 stations in the approved registry.
+Office walkthrough: open `/p/bungoma-governor/request` in a private window and send a request (no account; read the privacy notice, choose "Do not contact me" if you like). Keep the reference and tracking code from the receipt and open **Track a request**. Then sign in as `officeadmin@` (TOTP), open **Citizen cases**, triage the request and assign it to the case officer; sign in as `caseofficer@` to add a public update, refer it and propose a resolution; track it again as the citizen. For projects, sign in as `projects@` and open **Projects**; verification needs `officeadmin@` and publishing needs `publicinfo@`. The public project pages are at `/p/bungoma-governor/projects`. Office staff land on an Office overview on the dashboard.
+
+Tally walkthrough: sign in as the clerk and upload `fixtures/forms/synthetic-37a-*.png` from **Form inbox**, then capture the figures and submit for review. Next, sign in as the verifier to verify the form. Finally, sign in as the supervisor and open **Parallel tally**: totals include only verified stations, measured against the 153 stations in the approved registry.
 
 ## Repository
 
 | Path | What |
 | --- | --- |
-| `apps/api` | NestJS API: auth (JWT cookies, TOTP, re-auth), RBAC and geography guard, reference, tally and admin modules, BullMQ workers |
-| `apps/web` | Next.js PWA: command centre, NGAO TALLY screens S18–S22, admin and reference screens |
+| `apps/api` | NestJS API: auth (JWT cookies, TOTP, re-auth), RBAC and geography guard, reference, tally, office (with the public portal) and admin modules, BullMQ workers |
+| `apps/web` | Next.js PWA: command centre, NGAO TALLY screens S18–S22, Office screens S23–S27 and the public portal (`/p/[tenantSlug]`), admin and reference screens |
 | `packages/db` | Prisma schema, migrations with row-level security and immutability triggers, synthetic seed |
 | `packages/shared` | zod contracts, permissions and roles, form-template catalogue, validation-rule evaluator |
 | `fixtures/` | Synthetic registry CSVs and rehearsal form images |
@@ -94,3 +100,5 @@ A short walkthrough: sign in as the clerk and upload `fixtures/forms/synthetic-3
 Docs: [blueprint](docs/BLUEPRINT.md) · [decisions](docs/DECISIONS.md) · [architecture](docs/ARCHITECTURE.md) · [API contract](docs/API_CONTRACT.md) · [development](docs/DEVELOPMENT.md) · [change requests](docs/CHANGE_REQUESTS.md) · [open questions](docs/QUESTIONS.md)
 
 ![Parallel tally results (synthetic data)](docs/screenshots/05-supervisor-results.png)
+
+![Office citizen case workspace (synthetic data)](docs/screenshots/office-09-case-workspace.png)

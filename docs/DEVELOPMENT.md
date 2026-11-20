@@ -73,6 +73,15 @@ The seed is idempotent and contains:
 - form templates for all 22 forms of the 34–39 series. The Governor series (37A/B/C, plus 37D as a reference-only certificate) is approved by the legal officer, not by its creator; the others are awaiting approval.
 - the NGAO360 Office tenant `bungoma-governor` (synthetic County Governor's office): `office` module and public portal on, `tally` off; Bungoma county with the synthetic constituencies and wards; 18 synthetic institutions; one user per office role (see the README); 25 citizen cases across every stage, 15 correspondence items, 10 appointments, 2 meetings and 12 projects with milestones and evidence. Evidence files are small synthetic PNGs and PDFs written under `apps/api/storage` (override with `SEED_STORAGE_ROOT`) with the same content-addressed keys the API uses. The seed prints one synthetic public reference and tracking code for `/p/bungoma-governor/track`.
 
+### NGAO360 Office
+
+The Office module (`apps/api/src/modules/office`, web `/office/*` and `/p/[tenantSlug]`) is switched on per organisation in `tenant_modules` (`moduleKey = 'office'`). Its `config` (`OfficeModuleConfigSchema` in `packages/shared/src/office/common.ts`) holds the public-portal switches, the controller name and data-protection contact shown in the privacy notices, retention periods, the second-person closure rule and `captchaProvider`. With the module off every Office endpoint answers 403 `MODULE_DISABLED`, the sidebar group disappears and the public portal answers 404.
+
+- **Public portal.** No account. Per-IP limits come from `PUBLIC_RATE_LIMIT_WINDOW_SECONDS` (600), `PUBLIC_SUBMIT_RATE_LIMIT_MAX` (5), `PUBLIC_TRACK_RATE_LIMIT_MAX` (30) and `PUBLIC_READ_RATE_LIMIT_MAX` (600). The counters live in memory per API process, so restarting the API resets them; move them to Redis before running more than one instance. Every public POST needs the `x-ngao-client: web` header and passes the honeypot check. When `captchaProvider` is anything but `none`, bind a verifier to `CAPTCHA_VERIFIER` in the API and register a widget with `registerCaptchaWidget()` in `apps/web/src/components/public/captcha.tsx`; until then public writes fail closed.
+- **Separation from campaign data.** Office roles hold no `tally.*` permissions; Office tables are never joined to tally or campaign data (blueprint 15.2). The dashboard shows Office staff an Office overview (office KPIs scoped by their own permissions) when the organisation has no NGAO TALLY or the user lacks `dashboard.view`.
+- **Form support without the portal.** `GET /office/geography`, `GET /office/privacy-notice` and `GET /office/cases/:id/assignable-officers` (API contract §9a) feed the Office forms, so walk-in recording works with the portal off.
+- **Not built yet.** Notifications for portal acknowledgements are queued (`office.case.acknowledgement` on `NOTIFICATION_QUEUE`) but no processor sends them. Contact details get a `retentionUntil` date when a case closes, but no scheduled job erases them yet.
+
 ### OCR
 
 `OCR_PROVIDER=none` (default) means every value is captured by hand. `OCR_PROVIDER=stub` writes synthetic, low-confidence draft values (development only). In both cases OCR output is only ever a draft (`ocrValue`), never a confirmed value. With Redis queues enabled the OCR worker runs the provider; with `QUEUES_ENABLED=false` it runs in process.
@@ -95,6 +104,7 @@ pnpm test             # every package; API DB integration tests run when TEST_* 
                       # (export them, e.g. `set -a; . ./.env; set +a; pnpm test`)
 pnpm --filter @ngao360/api test:integration   # loads .env: RLS, guards and the Governor rehearsal
 pnpm test:rehearsal   # County Governor end-to-end rehearsal only
+pnpm test:rehearsal:office   # NGAO360 Office end-to-end rehearsal only
 ```
 
 The test layers:
@@ -102,12 +112,15 @@ The test layers:
 | Suite | Where | What |
 | --- | --- | --- |
 | Shared unit tests (vitest) | `packages/shared` | contracts, enums, registry CSV validation, rule evaluator, SoD rules |
-| Web unit tests (node:test + tsx) | `apps/web/src/components/tally/__tests__` | capture model, verify model, forbidden wording |
+| Web unit tests (node:test + tsx) | `apps/web/src/components/**/__tests__` (one `tsconfig.test.json`) | tally capture and verify models, forbidden wording; public portal (no contact sent for "do not contact me", privacy acknowledgement, project wording); Office case, correspondence, appointment and project screen models |
 | API unit tests (jest) | `apps/api/src/**/domain`, `rbac`, `audit` | validation engine, aggregation, separation of duties, guard |
 | API integration (jest + supertest) | `apps/api/src/modules/*/__tests__`, `apps/api/test` | full HTTP stack against `ngao360_test`, with the runtime role under RLS |
 | RLS and guards | `apps/api/test/rls.integration.spec.ts` | cross-tenant reads by id return nothing; append-only and immutability triggers |
 | Governor rehearsal | `apps/api/test/governor-rehearsal.e2e.spec.ts` | the demo seed in a fresh synthetic tenant, with real sign-in and TOTP, and the 37A/37B flow from start to finish |
+| Office integration | `apps/api/test/office-*.integration.spec.ts` | case stage machine and second-person closure, public tracking leakage, rate limits, cross-tenant isolation of every Office table, `MODULE_DISABLED`, project verification rules, correspondence and appointments |
+| Office rehearsal | `apps/api/test/office-governor-rehearsal.e2e.spec.ts` | system roles with real sign-in, TOTP and re-auth: portal request → triage → assign → referral → resolution → citizen tracking (public events only) → closure by a second person; project → evidence verified by another user → verified completion → publication showing only approved fields |
 | Browser smoke (Playwright) | `scripts/smoke/web-smoke.cjs` | clerk inbox and capture image, supervisor results banner; writes `docs/screenshots/` |
+| Office browser smoke (Playwright) | `scripts/smoke/office-smoke.cjs` | public portal submit and track (phone viewport), public project pages, Office overview, case list and workspace, project register and detail; writes `docs/screenshots/office-*.png` |
 
 Integration suites create their own synthetic tenants with random slugs in `ngao360_test` and do not delete them. Recreate the test database whenever you want a clean one.
 
@@ -123,7 +136,9 @@ set -a; . ./.env; set +a
 pnpm smoke:web
 ```
 
-The smoke test needs Playwright with Chromium; `require('playwright')` must resolve. Each run uploads one synthetic 37A as the demo clerk, so a second run against the same database shows a "possible duplicate", which is the intended behaviour.
+The smoke test needs Playwright with Chromium; `require('playwright')` must resolve (for a global install, set `NODE_PATH` to its `node_modules`). Each run uploads one synthetic 37A as the demo clerk, so a second run against the same database shows a "possible duplicate", which is the intended behaviour.
+
+The Office smoke (`pnpm smoke:office`) uses the same running stack and the `bungoma-governor` seed. It signs in only as accounts without MFA (`caseofficer@`, `projects@`) and submits one synthetic portal request per run. The public submit limit is 5 per IP per 10 minutes, so restart the API if you run it more often.
 
 ## 5. Working with the schema
 

@@ -427,3 +427,31 @@ request or response shape.
    the API's separation-of-duties answer (last status editor cannot verify). Proposed: per-milestone
    `canVerify` (or `verifyBlockedReason`) on `ProjectMilestoneSchema`, computed like
    `verify_evidence`.
+
+## Office: integration status (after the three Office agents)
+
+Applied in the integration pass on `feat/office-governor`:
+
+- **Web tests in `pnpm test`** (cases item 1, office web item 1): `@ngao360/web` now runs every
+  `src/components/**/__tests__` suite with one `apps/web/tsconfig.test.json` (113 tests).
+- **Contract and shared schemas for the extra endpoints** (Office API item 1): API contract §9a;
+  `OfficeGeographySchema`, `OfficePrivacyNoticesSchema`, `AssignableOfficersSchema` and
+  `PossibleDuplicateSchema` in `packages/shared/src/office/workspace.ts`; the API uses them.
+- **Feedback labels** (Office API item 5): `CITIZEN_FEEDBACK_LABELS` moved to
+  `packages/shared/src/office/enums.ts`.
+- **Assignee lookup for cases** (cases item 2): the assign dialog reads
+  `GET /office/cases/:id/assignable-officers`.
+- **Geography and notices without the portal** (cases item 3, office web item 5): cases and projects
+  read `GET /office/geography`; walk-in recording and the appointment form read
+  `GET /office/privacy-notice`, so clerks see the configured notice without `workspace.view`.
+- **Office KPIs on the dashboard** (office web item 2): `<OfficeKpis />` is mounted in the command
+  centre; Office staff without `dashboard.view`, and organisations without NGAO TALLY, get an Office
+  overview (office KPIs and their screens). The sidebar "Dashboard" link shows for Office view
+  permissions. No migration was needed: role permissions are unchanged.
+
+Still open (unchanged): Kiswahili privacy notice (cases item 4), captcha widget and verifier (cases
+item 5, Office API item 6), public bundle size (cases item 6), acknowledgement processor (Office API
+item 2), review-date SLA as a tenant setting (Office API item 3), Redis-backed public limiter and
+contact-retention job (Office API item 6), assignee endpoint for correspondence, appointments and
+projects (office web item 3), coordinates and a map (office web item 4), per-milestone verify flag
+(office web item 7).
