@@ -50,7 +50,7 @@ pnpm smoke:campaign               # Campaign smoke: dashboard tiles, org tree, t
 ```bash
 pnpm demo:2022-bungoma                                                     # organisation bungoma-2022-demo, idempotent
 pnpm demo:import-34a --dir <local 34A scans> --tenant bungoma-2022-demo --dry-run
-pnpm demo:redact-34a --tenant bungoma-2022-demo --submission <SUB-…> --file <redacted image>
+pnpm demo:redact-34a --tenant bungoma-2022-demo --submission <SUB-…> --file <redacted image> --reason <text>
 pnpm test:demo-2022                                                        # e2e demo + importer tests (synthetic fixtures)
 ```
 
