@@ -123,7 +123,7 @@ function syntheticPng(label: string): Buffer {
   ]);
 }
 /** A one-page PDF stating it is a synthetic demo document. */
-function syntheticPdf(title: string): Buffer {
+export function syntheticPdf(title: string): Buffer {
   const text = `SYNTHETIC DEMO DOCUMENT - NOT A REAL RECORD. ${title}`.replace(/[()\\]/g, '');
   const stream = `BT /F1 10 Tf 40 760 Td (${text.slice(0, 110)}) Tj ET`;
   const objs = [
@@ -150,14 +150,14 @@ function syntheticPdf(title: string): Buffer {
  * never overwritten). Bytes go to SEED_STORAGE_ROOT, else STORAGE_LOCAL_ROOT
  * resolved from apps/api (the API's working directory under `pnpm dev`).
  */
-async function storeSyntheticFile(
+export async function storeSyntheticFile(
   prisma: PrismaClient,
   tenantId: string,
   uploadedById: string,
   bytes: Buffer,
   mimeType: 'image/png' | 'application/pdf',
   filename: string,
-  purpose: 'PROJECT_EVIDENCE' | 'CORRESPONDENCE' | 'CASE_EVIDENCE',
+  purpose: 'PROJECT_EVIDENCE' | 'CORRESPONDENCE' | 'CASE_EVIDENCE' | 'TASK_ATTACHMENT' | 'EVENT_DOCUMENT' | 'FINANCE_DOCUMENT' | 'BREACH_EVIDENCE',
 ): Promise<string> {
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const existing = await prisma.storedFile.findUnique({ where: { tenantId_sha256: { tenantId, sha256 } } });

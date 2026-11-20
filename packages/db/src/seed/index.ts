@@ -22,6 +22,7 @@ import { SYSTEM_ROLES, type SystemRoleKey } from '@ngao360/shared';
 import { provisionSystemRoles, syncPermissionCatalogue } from '../provisioning';
 import { sealSecret } from '../security';
 import { seedFormTemplates } from './form-templates';
+import { seedCampaign } from './campaign';
 import { seedField } from './field';
 import { seedOffice } from './office';
 import { approveSeedRegistry, seedReferenceData } from './reference-data';
@@ -199,6 +200,16 @@ async function main() {
 
   /* ---------- Field and election operations (demo tenant, synthetic Bungoma) ---------- */
   await seedField(prisma, {
+    tenantId: tenant.id,
+    ref,
+    roleIds,
+    passwordHash,
+    mfaRoles,
+    applyDemoMfa: (tenantId, userId) => applyDemoMfa(tenantId, userId),
+  });
+
+  /* -------- Campaign and organisation (demo tenant, synthetic Bungoma campaign) -------- */
+  await seedCampaign(prisma, {
     tenantId: tenant.id,
     ref,
     roleIds,
