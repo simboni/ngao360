@@ -36,8 +36,8 @@ export class AppException extends HttpException {
     );
   }
   /** Blueprint 3.2: submitter, verifier and approver must be different people. */
-  static separationOfDuties(message: string) {
-    return new AppException(ERROR_CODES.SEPARATION_OF_DUTIES, HttpStatus.FORBIDDEN, message);
+  static separationOfDuties(message: string, details?: unknown) {
+    return new AppException(ERROR_CODES.SEPARATION_OF_DUTIES, HttpStatus.FORBIDDEN, message, details);
   }
   static validation(message: string, details?: unknown) {
     return new AppException(ERROR_CODES.VALIDATION_FAILED, HttpStatus.BAD_REQUEST, message, details);

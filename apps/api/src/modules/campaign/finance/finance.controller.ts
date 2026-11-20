@@ -189,7 +189,8 @@ export class FinanceController {
     return this.settings.savePayee(auth, body);
   }
 
-  @RequirePermission('finance.request')
+  /** A payee named on posted entries needs finance.settings.manage, and its identity is frozen (service + DB trigger). */
+  @RequirePermission(['finance.request', 'finance.settings.manage'], { anyOf: true })
   @Patch('payees/:id')
   updatePayee(@CurrentAuth() auth: AuthContext, @Param() p: CampaignIdParamDto, @Body() body: SaveFinancePayeeDto): Promise<FinancePayee> {
     return this.settings.savePayee(auth, body, p.id);
@@ -209,7 +210,8 @@ export class FinanceController {
     return this.settings.saveSource(auth, body);
   }
 
-  @RequirePermission('finance.request')
+  /** The declaration flag is recorded by finance.approve holders; identity frozen once posted entries name the source. */
+  @RequirePermission(['finance.request', 'finance.approve', 'finance.settings.manage'], { anyOf: true })
   @Patch('contribution-sources/:id')
   updateSource(@CurrentAuth() auth: AuthContext, @Param() p: CampaignIdParamDto, @Body() body: SaveContributionSourceDto): Promise<ContributionSource> {
     return this.settings.saveSource(auth, body, p.id);

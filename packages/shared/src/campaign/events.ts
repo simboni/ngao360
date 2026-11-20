@@ -14,6 +14,9 @@ import {
   CampaignEventTypeSchema,
   CampaignEventVisibilitySchema,
   CheckInMethodSchema,
+  ContentAudienceSchema,
+  ContentStatusSchema,
+  ContentTypeSchema,
   EventDocumentKindSchema,
   LogisticsItemTypeSchema,
   LogisticsStatusSchema,
@@ -141,6 +144,18 @@ export const CAMPAIGN_EVENT_ALLOWED_ACTIONS = [
   'APPROVE_AFTER_ACTION',
 ] as const;
 
+export const EventLinkedContentSchema = z.object({
+  id: UuidSchema,
+  reference: z.string(),
+  type: ContentTypeSchema,
+  title: z.string(),
+  status: ContentStatusSchema,
+  audience: ContentAudienceSchema,
+  publishedAt: IsoDateTimeSchema.nullable(),
+  correctionCount: z.number().int(),
+});
+export type EventLinkedContent = z.infer<typeof EventLinkedContentSchema>;
+
 export const CampaignEventDetailSchema = CampaignEventSummarySchema.extend({
   purpose: z.string().nullable(),
   venueAddress: z.string().nullable(),
@@ -152,6 +167,12 @@ export const CampaignEventDetailSchema = CampaignEventSummarySchema.extend({
   logistics: z.array(EventLogisticsItemSchema),
   tasks: z.array(TaskSummarySchema),
   documents: z.array(EventDocumentSchema),
+  /**
+   * Approved communications linked to the event (blueprint 5.3): content with
+   * this eventId in APPROVED, PUBLISHED or ARCHIVED, within the caller's
+   * comms.content.view scope (empty without it).
+   */
+  communications: z.array(EventLinkedContentSchema),
   afterAction: EventAfterActionReportSchema.nullable(),
   cancellationReason: z.string().nullable(),
   createdBy: UserRefSchema,

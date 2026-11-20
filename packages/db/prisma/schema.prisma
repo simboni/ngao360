@@ -846,6 +846,8 @@ model User {
   financeEvents            FinanceTransactionEvent[]     @relation("FinanceEventActor")
   limitSettingsCreated     FinanceLimitSetting[]         @relation("LimitSettingCreatedBy")
   limitSettingsVerified    FinanceLimitSetting[]         @relation("LimitSettingVerifiedBy")
+  limitSettingsVerificationChanged FinanceLimitSetting[] @relation("LimitSettingVerificationChangedBy")
+  contributionSourcesDeclared ContributionSource[]       @relation("ContributionSourceDeclaredBy")
   reportTemplates          ReportTemplate[]              @relation("ReportTemplateOwner")
   reportExports            ReportExport[]                @relation("ReportExportGeneratedBy")
   notificationPreferences  NotificationPreference[]      @relation("NotificationPreferenceUser")
@@ -4143,6 +4145,8 @@ model ContributionSource {
   identifierHash   String?                @map("identifier_hash")
   declared         Boolean                @default(false)
   declaredAt       DateTime?              @map("declared_at") @db.Timestamptz(3)
+  /// Who recorded the declaration (finance.approve holder).
+  declaredById     String?                @map("declared_by_id") @db.Uuid
   notes            String?
   createdById      String                 @map("created_by_id") @db.Uuid
   createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -4150,6 +4154,7 @@ model ContributionSource {
 
   tenant       Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   createdBy    User                 @relation("ContributionSourceCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  declaredBy   User?                @relation("ContributionSourceDeclaredBy", fields: [declaredById], references: [id], onDelete: Restrict)
   transactions FinanceTransaction[]
 
   @@unique([tenantId, identifierHash])
@@ -4231,8 +4236,9 @@ model FinanceTransaction {
   paymentReference      String?                  @map("payment_reference")
   cancelledAt           DateTime?                @map("cancelled_at") @db.Timestamptz(3)
   cancellationReason    String?                  @map("cancellation_reason")
-  /// For REVERSAL entries: the entry being reversed (each entry can be reversed once).
-  reversesId            String?                  @unique @map("reverses_id") @db.Uuid
+  /// For REVERSAL entries: the entry being reversed. Each entry has at most one
+  /// live (not REJECTED / CANCELLED) reversal (partial unique index in SQL).
+  reversesId            String?                  @map("reverses_id") @db.Uuid
   reversedAt            DateTime?                @map("reversed_at") @db.Timestamptz(3)
   complianceFlags       String[]                 @default([]) @map("compliance_flags")
   complianceEvaluatedAt DateTime?                @map("compliance_evaluated_at") @db.Timestamptz(3)
@@ -4255,11 +4261,12 @@ model FinanceTransaction {
   rejectedBy         User?                        @relation("FinanceRejectedBy", fields: [rejectedById], references: [id], onDelete: Restrict)
   paidBy             User?                        @relation("FinancePaidBy", fields: [paidById], references: [id], onDelete: Restrict)
   reverses           FinanceTransaction?          @relation("TransactionReversal", fields: [reversesId], references: [id], onDelete: Restrict)
-  reversedBy         FinanceTransaction?          @relation("TransactionReversal")
+  reversals          FinanceTransaction[]         @relation("TransactionReversal")
   documents          FinanceTransactionDocument[]
   events             FinanceTransactionEvent[]
 
   @@unique([tenantId, reference])
+  @@index([reversesId])
   @@index([tenantId, status])
   @@index([tenantId, type, transactionDate])
   @@index([tenantId, accountId])
@@ -4332,6 +4339,10 @@ model FinanceLimitSetting {
   verified         Boolean          @default(false)
   verifiedById     String?          @map("verified_by_id") @db.Uuid
   verifiedAt       DateTime?        @map("verified_at") @db.Timestamptz(3)
+  /// Last person to change the verified flag (set or clear) and when; such a person
+  /// cannot approve an entry that setting governs while it is not blocking.
+  verificationChangedById String?   @map("verification_changed_by_id") @db.Uuid
+  verificationChangedAt   DateTime? @map("verification_changed_at") @db.Timestamptz(3)
   enforcement      LimitEnforcement @default(WARN)
   supersedesId     String?          @unique @map("supersedes_id") @db.Uuid
   createdById      String           @map("created_by_id") @db.Uuid
@@ -4341,6 +4352,7 @@ model FinanceLimitSetting {
   tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   electionCycle ElectionCycle?       @relation("LimitSettingCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
   verifiedBy    User?                @relation("LimitSettingVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  verificationChangedBy User?        @relation("LimitSettingVerificationChangedBy", fields: [verificationChangedById], references: [id], onDelete: Restrict)
   createdBy     User                 @relation("LimitSettingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   supersedes    FinanceLimitSetting? @relation("LimitSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
   supersededBy  FinanceLimitSetting? @relation("LimitSupersedes")

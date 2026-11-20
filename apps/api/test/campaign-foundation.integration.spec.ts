@@ -220,8 +220,12 @@ d('campaign and organisation foundation (database)', () => {
     expect(s.verified).toBe(false);
     await expect(asA((tx) => tx.financeLimitSetting.update({ where: { id: s.id }, data: { valueBasisPoints: 3000 } }))).rejects.toThrow(/IMMUTABLE_RECORD/);
     await expect(asA((tx) => tx.financeLimitSetting.update({ where: { id: s.id }, data: { verified: true } }))).rejects.toThrow(/finance_limit_settings_verified_check/);
+    // The person who entered a setting never verifies it.
+    await expect(asA((tx) => tx.financeLimitSetting.update({ where: { id: s.id }, data: { verified: true, verifiedById: ids.approver!, verifiedAt: new Date() } }))).rejects.toThrow(
+      /finance_limit_settings_second_verifier_check/,
+    );
     await expect(
-      asA((tx) => tx.financeLimitSetting.update({ where: { id: s.id }, data: { verified: true, verifiedById: ids.approver!, verifiedAt: new Date(), effectiveTo: new Date('2027-12-31') } })),
+      asA((tx) => tx.financeLimitSetting.update({ where: { id: s.id }, data: { verified: true, verifiedById: ids.officer!, verifiedAt: new Date(), effectiveTo: new Date('2027-12-31') } })),
     ).resolves.toMatchObject({ verified: true });
   });
 

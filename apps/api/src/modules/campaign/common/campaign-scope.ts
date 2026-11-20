@@ -104,11 +104,27 @@ export function teamScopeWhere(scope: CampaignScope): Prisma.TeamWhereInput | un
     | undefined;
 }
 
-/** Content has no geography: involvement OR department. */
-export function contentScopeWhere(scope: CampaignScope): Prisma.ContentItemWhereInput | undefined {
+/**
+ * Workflow stages a communications role works on across departments: editors
+ * see items in editorial review (and approved items they may return),
+ * publishers see approved and published items. Otherwise department scope
+ * would hide the items awaiting their step (blueprint 5.4).
+ */
+export function commsWorkflowStatuses(auth: AuthContext): Array<'EDITORIAL_REVIEW' | 'AWAITING_APPROVAL' | 'APPROVED' | 'PUBLISHED'> {
+  const out = new Set<'EDITORIAL_REVIEW' | 'AWAITING_APPROVAL' | 'APPROVED' | 'PUBLISHED'>();
+  if (auth.permissions.has('comms.content.edit')) ['EDITORIAL_REVIEW', 'APPROVED'].forEach((s) => out.add(s as 'APPROVED'));
+  if (auth.permissions.has('comms.content.approve')) ['AWAITING_APPROVAL', 'APPROVED', 'PUBLISHED'].forEach((s) => out.add(s as 'APPROVED'));
+  if (auth.permissions.has('comms.content.publish')) ['APPROVED', 'PUBLISHED'].forEach((s) => out.add(s as 'APPROVED'));
+  return [...out];
+}
+
+/** Content has no geography: involvement OR department, plus the caller's workflow stages (commsWorkflowStatuses). */
+export function contentScopeWhere(scope: CampaignScope, workflowStatuses: readonly string[] = []): Prisma.ContentItemWhereInput | undefined {
   if (!scope.held) return { id: { in: [] } };
   const me = scope.userId;
-  return combine(scope, [{ authorId: me }, { editorId: me }, { approverId: me }], [departmentWhere(scope)]) as Prisma.ContentItemWhereInput | undefined;
+  const involvement: Prisma.ContentItemWhereInput[] = [{ authorId: me }, { editorId: me }, { approverId: me }];
+  if (workflowStatuses.length) involvement.push({ status: { in: workflowStatuses as Prisma.EnumContentStatusFilter['in'] } });
+  return combine(scope, involvement, [departmentWhere(scope)]) as Prisma.ContentItemWhereInput | undefined;
 }
 
 /** One record against the rule (pure; load the unit path with the record). */

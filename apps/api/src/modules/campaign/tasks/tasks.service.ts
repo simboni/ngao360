@@ -509,6 +509,26 @@ export class TasksService {
     });
   }
 
+  /**
+   * Everyone who owned the task (current owner and every earlier owner from the
+   * ASSIGNED history) or submitted it for review. None of them may
+   * review it.
+   */
+  private async pastWorkers(tx: TenantTx, cur: { id: string; ownerId: string }): Promise<Set<string>> {
+    const out = new Set<string>([cur.ownerId]);
+    const events = await tx.taskEvent.findMany({ where: { taskId: cur.id, type: { in: ['ASSIGNED', 'STATUS_CHANGED'] } }, select: { type: true, actorId: true, data: true, toStatus: true } });
+    for (const e of events) {
+      if (e.type === 'ASSIGNED') {
+        const d = (e.data ?? {}) as { from?: string | null; to?: string | null };
+        if (d.from) out.add(d.from);
+        if (d.to) out.add(d.to);
+      } else if (e.toStatus === 'SUBMITTED_FOR_REVIEW') {
+        out.add(e.actorId);
+      }
+    }
+    return out;
+  }
+
   assign(auth: AuthContext, id: string, body: AssignTask): Promise<TaskDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const scope = await loadCampaignScope(tx, auth, 'tasks.view');
@@ -521,6 +541,22 @@ export class TasksService {
       const ownerId = body.ownerId ?? cur.ownerId;
       const reviewerId = body.reviewerId !== undefined ? body.reviewerId : cur.reviewerId;
       if (reviewerId && reviewerId === ownerId) throw AppException.validation('The reviewer must be someone other than the owner', [{ path: ['reviewerId'], message: 'Same as owner' }]);
+      // The review step cannot be removed or redirected by the people it checks.
+      const reviewerChanged = reviewerId !== cur.reviewerId;
+      if (cur.status === 'SUBMITTED_FOR_REVIEW' && (ownerId !== cur.ownerId || reviewerChanged)) {
+        if (!all) throw AppException.conflict('A task awaiting review keeps its owner and reviewer until the reviewer decides', { reason: 'REVIEW_PENDING' });
+        if (!body.note) throw AppException.validation('Give a reason for changing a task that is awaiting review', [{ path: ['note'], message: 'Required' }]);
+      }
+      if (cur.reviewerId && reviewerChanged) {
+        if (!all) throw AppException.forbidden('Only a task manager can change or remove the reviewer once one is named', { required: ['tasks.manage_all'] });
+        if (!body.note) throw AppException.validation('Give a reason for changing or removing the reviewer', [{ path: ['note'], message: 'Required' }]);
+      }
+      if (reviewerId && (reviewerChanged || ownerId !== cur.ownerId)) {
+        const workers = await this.pastWorkers(tx, cur);
+        if (workers.has(reviewerId)) {
+          throw AppException.separationOfDuties('The reviewer must be someone who has not owned or worked on this task');
+        }
+      }
       await assertActiveUsers(tx, [body.ownerId, body.reviewerId], 'ownerId');
       if (body.collaboratorIds) await assertActiveUsers(tx, body.collaboratorIds, 'collaboratorIds');
       const r = await tx.task.updateMany({ where: { id, version: body.expectedVersion }, data: { ownerId, reviewerId, version: { increment: 1 } } });
@@ -632,6 +668,7 @@ export class TasksService {
       const cur = await this.load(tx, scope, id);
       const me = auth.userId;
       if (cur.ownerId === me) throw AppException.separationOfDuties('The owner cannot review their own task');
+      if ((await this.pastWorkers(tx, cur)).has(me)) throw AppException.separationOfDuties('You owned or worked on this task; someone else must review it');
       const all = auth.permissions.has('tasks.manage_all');
       if (cur.reviewerId !== me && !(all && cur.reviewerId !== me)) throw AppException.forbidden('Only the named reviewer (or a task manager) can review this task');
       if (cur.status !== 'SUBMITTED_FOR_REVIEW') throw AppException.invalidTransition(cur.status, body.decision === 'APPROVE' ? 'COMPLETED' : 'IN_PROGRESS');

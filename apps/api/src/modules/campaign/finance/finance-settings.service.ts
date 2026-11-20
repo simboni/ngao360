@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { identifierFingerprint, type Prisma, type TenantTx } from '@ngao360/db';
 import {
   AUDIT_ACTIONS,
@@ -19,6 +19,7 @@ import {
   type SaveFinancePayee,
   type SupersedeFinanceLimitSetting,
   type VerifyFinanceLimitSetting,
+  ERROR_CODES,
 } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
@@ -129,7 +130,7 @@ export class FinanceSettingsService {
     });
   }
 
-  private limitData(auth: AuthContext, kind: LimitRow['kind'], b: Omit<CreateFinanceLimitSetting, 'kind'>, now: Date) {
+  private limitData(auth: AuthContext, kind: LimitRow['kind'], b: Omit<CreateFinanceLimitSetting, 'kind'>) {
     return {
       tenantId: auth.tenantId,
       kind,
@@ -145,22 +146,33 @@ export class FinanceSettingsService {
       effectiveFrom: d(b.effectiveFrom)!,
       effectiveTo: d(b.effectiveTo),
       legalSourceNote: b.legalSourceNote,
-      verified: b.verified,
-      verifiedById: b.verified ? auth.userId : null,
-      verifiedAt: b.verified ? now : null,
+      // A new setting always starts unverified: a second person confirms it (verifyLimit).
+      verified: false,
+      verifiedById: null,
+      verifiedAt: null,
       enforcement: b.enforcement,
       createdById: auth.userId,
     };
   }
 
+  /** Settings are verified by someone other than the person who entered them. */
+  private refuseSelfVerification(b: { verified?: boolean }) {
+    if (b.verified) {
+      throw AppException.validation('A new setting starts unverified; another person with finance.settings.manage confirms it after legal review', [
+        { path: ['verified'], message: 'Verified by a second person' },
+      ]);
+    }
+  }
+
   createLimit(auth: AuthContext, body: CreateFinanceLimitSetting): Promise<FinanceLimitSetting> {
     return this.prisma.tenantTx(async (tx) => {
+      this.refuseSelfVerification(body);
       if (body.electionCycleId && !(await tx.electionCycle.findUnique({ where: { id: body.electionCycleId } }))) {
         throw AppException.validation('Unknown election cycle', [{ path: ['electionCycleId'], message: 'Unknown' }]);
       }
       const clash = await this.overlapping(tx, { kind: body.kind, electionCycleId: body.electionCycleId ?? null, officeType: body.officeType ?? null, from: d(body.effectiveFrom)!, to: d(body.effectiveTo) });
       if (clash) throw AppException.conflict('An active setting of this kind already covers these dates; supersede it instead', { existingId: clash.id });
-      const row = await tx.financeLimitSetting.create({ data: this.limitData(auth, body.kind, body, new Date()), include: LIMIT_INCLUDE });
+      const row = await tx.financeLimitSetting.create({ data: this.limitData(auth, body.kind, body), include: LIMIT_INCLUDE });
       await this.audit.record(
         { tenantId: auth.tenantId, action: AUDIT_ACTIONS.FINANCE_LIMIT_SETTING_CREATED, entityType: CAMPAIGN_ENTITY.FINANCE_LIMIT_SETTING, entityId: row.id, after: this.limit(row) },
         tx,
@@ -171,6 +183,7 @@ export class FinanceSettingsService {
 
   supersedeLimit(auth: AuthContext, id: string, body: SupersedeFinanceLimitSetting): Promise<FinanceLimitSetting> {
     return this.prisma.tenantTx(async (tx) => {
+      this.refuseSelfVerification(body);
       const old = await tx.financeLimitSetting.findUnique({ where: { id }, include: LIMIT_INCLUDE });
       if (!old) throw AppException.notFound('Limit setting not found');
       if (old.supersededBy) throw AppException.conflict('This setting was already superseded', { supersededById: old.supersededBy.id });
@@ -189,7 +202,7 @@ export class FinanceSettingsService {
       if (clash) throw AppException.conflict('Another active setting already covers these dates', { existingId: clash.id });
       const closeOn = new Date(from.getTime() - DAY);
       await tx.financeLimitSetting.update({ where: { id: old.id }, data: { effectiveTo: old.effectiveTo && old.effectiveTo < closeOn ? old.effectiveTo : closeOn } });
-      const row = await tx.financeLimitSetting.create({ data: { ...this.limitData(auth, old.kind, fields, new Date()), supersedesId: old.id }, include: LIMIT_INCLUDE });
+      const row = await tx.financeLimitSetting.create({ data: { ...this.limitData(auth, old.kind, fields), supersedesId: old.id }, include: LIMIT_INCLUDE });
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -210,9 +223,17 @@ export class FinanceSettingsService {
     return this.prisma.tenantTx(async (tx) => {
       const old = await tx.financeLimitSetting.findUnique({ where: { id }, include: LIMIT_INCLUDE });
       if (!old) throw AppException.notFound('Limit setting not found');
+      if (body.verified && old.createdById === auth.userId) {
+        throw AppException.separationOfDuties('You entered this setting; another person must confirm it');
+      }
+      if (body.verified === old.verified) throw AppException.conflict(old.verified ? 'This setting is already verified' : 'This setting is already unverified', { verified: old.verified });
+      const now = new Date();
+      // Who changed the flag is kept either way: that person may not approve an
+      // entry the setting governs while it does not block (finance-compliance settingsChangedBy).
+      const changed = { verificationChangedById: auth.userId, verificationChangedAt: now };
       const row = await tx.financeLimitSetting.update({
         where: { id },
-        data: body.verified ? { verified: true, verifiedById: auth.userId, verifiedAt: new Date() } : { verified: false, verifiedById: null, verifiedAt: null },
+        data: body.verified ? { verified: true, verifiedById: auth.userId, verifiedAt: now, ...changed } : { verified: false, verifiedById: null, verifiedAt: null, ...changed },
         include: LIMIT_INCLUDE,
       });
       await this.audit.record(
@@ -221,8 +242,8 @@ export class FinanceSettingsService {
           action: AUDIT_ACTIONS.FINANCE_LIMIT_SETTING_VERIFIED,
           entityType: CAMPAIGN_ENTITY.FINANCE_LIMIT_SETTING,
           entityId: id,
-          before: { verified: old.verified, verifiedById: old.verifiedById },
-          after: { verified: row.verified, verifiedById: row.verifiedById, enforcement: row.enforcement },
+          before: { verified: old.verified, verifiedById: old.verifiedById, enforcement: old.enforcement },
+          after: { verified: row.verified, verifiedById: row.verifiedById, verificationChangedById: auth.userId, enforcement: row.enforcement, createdById: row.createdById },
           reason: body.reason,
         },
         tx,
@@ -359,8 +380,22 @@ export class FinanceSettingsService {
 
   savePayee(auth: AuthContext, body: SaveFinancePayee, id?: string): Promise<FinancePayee> {
     return this.prisma.tenantTx(async (tx) => {
+      const has = (k: Parameters<typeof auth.permissions.has>[0]) => auth.permissions.has(k);
+      if (!id && !has('finance.request')) throw AppException.forbidden(undefined, { required: ['finance.request'] });
       const pin = body.taxPin ? body.taxPin.trim() : null;
       const hash = pin ? this.fingerprint(auth.tenantId, pin) : null;
+      const cur = id ? await tx.financePayee.findUnique({ where: { id } }) : null;
+      if (id && !cur) throw AppException.notFound('Payee not found');
+      if (cur) {
+        // Counterparty identity is frozen once a posted entry names it (also a DB trigger);
+        // other changes to a payee in use need finance.settings.manage.
+        const inUse = (await tx.financeTransaction.count({ where: { payeeId: cur.id, status: { in: ['APPROVED', 'PAID', 'REVERSED'] } } })) > 0;
+        if (inUse && !has('finance.settings.manage')) throw AppException.forbidden('This payee is named on posted ledger entries; changing it needs finance.settings.manage', { required: ['finance.settings.manage'] });
+        const identityChanged = body.name !== cur.name || body.kind !== cur.kind || (body.taxPin !== undefined && hash !== cur.taxPinHash);
+        if (inUse && identityChanged) {
+          throw new AppException(ERROR_CODES.IMMUTABLE_RECORD, HttpStatus.CONFLICT, 'This payee is named on posted ledger entries: its name, kind and tax PIN cannot change. Add a new payee instead', { reason: 'COUNTERPARTY_IN_USE' });
+        }
+      }
       if (hash) {
         const dup = await tx.financePayee.findFirst({ where: { taxPinHash: hash, ...(id ? { id: { not: id } } : {}) }, select: { id: true } });
         if (dup) throw AppException.conflict('A payee with this tax PIN already exists', { existingId: dup.id });
@@ -375,13 +410,19 @@ export class FinanceSettingsService {
       };
       let row;
       if (id) {
-        if (!(await tx.financePayee.findUnique({ where: { id } }))) throw AppException.notFound('Payee not found');
         row = await tx.financePayee.update({ where: { id }, data });
       } else {
         row = await tx.financePayee.create({ data: { ...(data as Prisma.FinancePayeeUncheckedCreateInput), tenantId: auth.tenantId, createdById: auth.userId } });
       }
       await this.audit.record(
-        { tenantId: auth.tenantId, action: AUDIT_ACTIONS.FINANCE_PAYEE_SAVED, entityType: CAMPAIGN_ENTITY.FINANCE_PAYEE, entityId: row.id, after: { name: row.name, kind: row.kind, active: row.active, hasTaxPin: !!row.taxPinHash, hasPhone: !!row.phoneMasked } },
+        {
+          tenantId: auth.tenantId,
+          action: AUDIT_ACTIONS.FINANCE_PAYEE_SAVED,
+          entityType: CAMPAIGN_ENTITY.FINANCE_PAYEE,
+          entityId: row.id,
+          before: cur ? { name: cur.name, kind: cur.kind, active: cur.active, taxPinMasked: cur.taxPinMasked, hasPhone: !!cur.phoneMasked } : null,
+          after: { name: row.name, kind: row.kind, active: row.active, taxPinMasked: row.taxPinMasked, hasPhone: !!row.phoneMasked },
+        },
         tx,
       );
       return toPayee(row);
@@ -412,6 +453,8 @@ export class FinanceSettingsService {
 
   saveSource(auth: AuthContext, body: SaveContributionSource, id?: string): Promise<ContributionSource> {
     return this.prisma.tenantTx(async (tx) => {
+      const has = (k: Parameters<typeof auth.permissions.has>[0]) => auth.permissions.has(k);
+      if (!id && !has('finance.request')) throw AppException.forbidden(undefined, { required: ['finance.request'] });
       const ident = body.identifier ? body.identifier.trim() : null;
       const hash = ident ? this.fingerprint(auth.tenantId, ident) : null;
       if (hash) {
@@ -420,11 +463,35 @@ export class FinanceSettingsService {
       }
       const cur = id ? await tx.contributionSource.findUnique({ where: { id } }) : null;
       if (id && !cur) throw AppException.notFound('Contribution source not found');
+      const declarationChanged = body.declared !== (cur?.declared ?? false);
+      if (declarationChanged) {
+        // The declaration is recorded by a finance approver, never self-certified by the person recording contributions.
+        if (!has('finance.approve')) throw AppException.forbidden('Only a finance approver records a contributor declaration', { required: ['finance.approve'] });
+        if (cur && (await tx.financeTransaction.count({ where: { contributionSourceId: cur.id, requestedById: auth.userId, status: { in: ['DRAFT', 'REQUESTED'] } } })) > 0) {
+          throw AppException.separationOfDuties('You have open requests from this contributor; another approver records the declaration');
+        }
+      }
+      if (cur) {
+        const inUse = (await tx.financeTransaction.count({ where: { contributionSourceId: cur.id, status: { in: ['APPROVED', 'PAID', 'REVERSED'] } } })) > 0;
+        const identityChanged = body.displayName !== cur.displayName || body.kind !== cur.kind || (body.identifier !== undefined && hash !== cur.identifierHash);
+        if (inUse && !declarationChanged && !has('finance.settings.manage') && !has('finance.approve')) {
+          throw AppException.forbidden('This contributor is named on posted ledger entries; changing it needs finance.settings.manage', { required: ['finance.settings.manage'] });
+        }
+        if (inUse && (identityChanged || (cur.declared && !body.declared))) {
+          throw new AppException(ERROR_CODES.IMMUTABLE_RECORD, HttpStatus.CONFLICT, 'This contributor is named on posted ledger entries: the name, kind, identifier and declaration cannot change. Add a new source instead', {
+            reason: 'COUNTERPARTY_IN_USE',
+          });
+        }
+        if (!declarationChanged && !identityChanged && !has('finance.request') && !has('finance.settings.manage')) {
+          throw AppException.forbidden(undefined, { required: ['finance.request'] });
+        }
+      }
       const data = {
         displayName: body.displayName,
         kind: body.kind,
         declared: body.declared,
         declaredAt: body.declared ? (cur?.declared ? cur.declaredAt : new Date()) : null,
+        declaredById: body.declared ? (cur?.declared ? cur.declaredById : auth.userId) : null,
         notes: body.notes ?? null,
         ...(body.identifier !== undefined
           ? { identifierMasked: ident ? maskTail(ident, 3, body.kind === 'INDIVIDUAL' ? 'ID ' : 'Reg. ') : null, identifierHash: hash }
@@ -439,8 +506,8 @@ export class FinanceSettingsService {
           action: AUDIT_ACTIONS.FINANCE_CONTRIBUTION_SOURCE_SAVED,
           entityType: CAMPAIGN_ENTITY.CONTRIBUTION_SOURCE,
           entityId: row.id,
-          before: cur ? { displayName: cur.displayName, kind: cur.kind, declared: cur.declared, hasIdentifier: !!cur.identifierHash } : null,
-          after: { displayName: row.displayName, kind: row.kind, declared: row.declared, hasIdentifier: !!row.identifierHash },
+          before: cur ? { displayName: cur.displayName, kind: cur.kind, declared: cur.declared, declaredById: cur.declaredById, identifierMasked: cur.identifierMasked } : null,
+          after: { displayName: row.displayName, kind: row.kind, declared: row.declared, declaredById: row.declaredById, identifierMasked: row.identifierMasked },
         },
         tx,
       );

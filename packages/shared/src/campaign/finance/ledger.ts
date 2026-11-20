@@ -403,7 +403,10 @@ export function financeApprovalBlockers(input: {
   contributionSourceId: string | null;
   counterAccountId: string | null;
   externalReference: string | null;
+  /** Supporting documents whose file is not flagged as infected. */
   documentCount: number;
+  /** Attached documents flagged as infected by the malware scan. */
+  infectedDocumentCount?: number;
 }): string[] {
   const out: string[] = [];
   if (!input.categoryId) out.push('CATEGORY_MISSING');
@@ -412,6 +415,7 @@ export function financeApprovalBlockers(input: {
   if (input.type === 'TRANSFER' && !input.counterAccountId) out.push('COUNTER_ACCOUNT_MISSING');
   if (!input.externalReference) out.push('REFERENCE_MISSING');
   if (input.documentCount < 1) out.push('SUPPORTING_DOCUMENT_MISSING');
+  if ((input.infectedDocumentCount ?? 0) > 0) out.push('SUPPORTING_DOCUMENT_INFECTED');
   return out;
 }
 
@@ -422,5 +426,6 @@ export const FINANCE_APPROVAL_BLOCKER_LABELS: Record<string, string> = {
   COUNTER_ACCOUNT_MISSING: 'Choose the account the money moves to',
   REFERENCE_MISSING: 'Add the receipt, invoice or payment reference',
   SUPPORTING_DOCUMENT_MISSING: 'Attach at least one supporting document',
+  SUPPORTING_DOCUMENT_INFECTED: 'A supporting document failed the malware scan; replace it',
 };
 

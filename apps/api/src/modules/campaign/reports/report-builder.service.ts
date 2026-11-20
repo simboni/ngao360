@@ -50,6 +50,13 @@ export interface ReportResult {
   appliedScope: string;
   filtersDescription: string;
   truncated: boolean;
+  /**
+   * The row cap was hit before an in-memory filter ran: rows, counts and
+   * totals may be missing matches. Previews say so; exports are refused.
+   */
+  incomplete: boolean;
+  /** Money totals left out because the rows mix currencies (never added together). */
+  mixedCurrencies: boolean;
 }
 
 /**
@@ -121,9 +128,19 @@ export class ReportBuilderService {
       const dir = def.sort.order === 'desc' ? -1 : 1;
       rows = [...rows].sort((a, b) => compare(a[k] ?? null, b[k] ?? null) * dir);
     }
+    // Money in different currencies is never added up: totals and group sums of
+    // money fields are left out (null) unless the rows share one currency or the
+    // grouping separates currencies.
+    const currencies = new Set(rows.map((r) => r.currency).filter((c): c is string => typeof c === 'string' && c.length > 0));
+    const mixedCurrencies = currencies.size > 1;
+    const isMoney = (k: string) => fieldMap.get(k)?.type === 'money_minor';
     const summable = def.fields.filter((k) => fieldMap.get(k)?.summable);
     const totals: Record<string, number> = {};
-    for (const k of summable) totals[k] = rows.reduce((s, r) => s + (typeof r[k] === 'number' ? (r[k] as number) : 0), 0);
+    for (const k of summable) {
+      if (mixedCurrencies && isMoney(k)) continue;
+      totals[k] = rows.reduce((s, r) => s + (typeof r[k] === 'number' ? (r[k] as number) : 0), 0);
+    }
+    const groupMoneyMixed = mixedCurrencies && !def.groupBy.includes('currency');
     const classification = reportClassification(ds, def.fields);
     const colFor = (k: string) => {
       const f = fieldMap.get(k)!;
@@ -145,6 +162,17 @@ export class ReportBuilderService {
         g.count = (g.count as number) + 1;
         for (const s of summable) g[s] = (g[s] as number) + (typeof r[s] === 'number' ? (r[s] as number) : 0);
       }
+      if (groupMoneyMixed) {
+        // Per-group currency check: a group whose rows mix currencies gets no money sum.
+        const groupCurrencies = new Map<string, Set<string>>();
+        for (const r of rows) {
+          const key = canonicalJson(def.groupBy.map((g) => r[g] ?? null));
+          const set = groupCurrencies.get(key) ?? new Set<string>();
+          if (typeof r.currency === 'string') set.add(r.currency);
+          groupCurrencies.set(key, set);
+        }
+        for (const [key, g] of groups) if ((groupCurrencies.get(key)?.size ?? 0) > 1) for (const s of summable) if (isMoney(s)) g[s] = null;
+      }
       out = [...groups.values()].sort((a, b) => {
         for (const g of def.groupBy) {
           const c = compare(a[g] ?? null, b[g] ?? null);
@@ -158,6 +186,8 @@ export class ReportBuilderService {
       out = rows.map((r) => Object.fromEntries(def.fields.map((k) => [k, r[k] ?? null])) as ReportRow);
       columns = def.fields.map(colFor);
     }
+    const pushed = new Set(loaded.pushedFilters);
+    const incomplete = loaded.truncated && def.filters.some((_, i) => !pushed.has(i));
     return {
       ds,
       columns,
@@ -166,8 +196,10 @@ export class ReportBuilderService {
       totals,
       classification,
       appliedScope: loaded.appliedScope + (def.departmentId ? '; one department' : ''),
-      filtersDescription: describeFilters(def, fieldMap),
+      filtersDescription: describeFilters(def, fieldMap) + (mixedCurrencies ? '; money totals omitted (rows in several currencies)' : ''),
       truncated: loaded.truncated,
+      incomplete,
+      mixedCurrencies,
     };
   }
 
@@ -194,7 +226,7 @@ export class ReportBuilderService {
           rowCount: r.rowCount,
           totals: r.totals,
           classification: r.classification,
-          appliedScope: r.appliedScope + (r.truncated ? ` (first ${r.ds.maxRows} rows only)` : ''),
+          appliedScope: r.appliedScope + truncationNote(r),
           filtersDescription: r.filtersDescription,
           disclaimer: r.ds.disclaimer ?? null,
           generatedAt: new Date().toISOString(),
@@ -346,6 +378,8 @@ export class ReportBuilderService {
           title = t.name;
         } else {
           def = body.definition!;
+          // Same builder rule as preview: reports.view alone exports only standard or shared definitions.
+          await this.assertMayPreview(tx, auth, def);
           title = STANDARD_REPORTS.find((s) => canonicalJson(ReportDefinitionSchema.parse(s.definition)) === canonicalJson(def))?.title ?? `${getDataset(def.datasetKey)?.label ?? def.datasetKey} report`;
         }
         // The definition always runs with the caller's permissions and scope.
@@ -359,13 +393,19 @@ export class ReportBuilderService {
           if (!body.reason) throw AppException.validation('Give a reason for this sensitive export', [{ path: ['reason'], message: 'Required' }]);
         }
         const r = await this.run(tx, auth, def);
+        if (r.incomplete) {
+          throw AppException.conflict(`More than ${ds.maxRows} rows matched before your filters were applied, so this export would be incomplete. Narrow the date range or area and try again`, {
+            reason: 'RESULTS_INCOMPLETE',
+            maxRows: ds.maxRows,
+          });
+        }
         const generatedAt = new Date();
         const header = {
           title,
           generatedAt,
           generatedBy: auth.displayName,
           filtersDescription: r.filtersDescription,
-          appliedScope: r.appliedScope + (r.truncated ? ` (first ${ds.maxRows} rows only)` : ''),
+          appliedScope: r.appliedScope + truncationNote(r),
           classification: r.classification,
           disclaimer: ds.disclaimer ?? null,
           extraLines: [`Rows: ${r.rowCount}`, ...(Object.keys(r.totals).length ? [`Totals: ${Object.entries(r.totals).map(([k, v]) => `${k} ${v}`).join('; ')}`] : [])],
@@ -435,6 +475,18 @@ export class ReportBuilderService {
     return this.prisma.tenantTx(async (tx) => {
       const e = await tx.reportExport.findUnique({ where: { id }, include: { file: true } });
       if (!e || !e.file || (e.generatedById !== auth.userId && !auth.permissions.has('audit.export'))) throw AppException.notFound('Export not found');
+      // Downloading the file again is a new export of its contents: the caller must
+      // still be allowed to read the dataset and its fields (module on), hold the
+      // export permissions, and re-authenticate for a sensitive export (blueprint
+      // 10.2 step 7). audit.export alone shows the export log, never the data.
+      const ds = getDataset(e.datasetKey);
+      if (!ds) throw AppException.notFound('Export not found');
+      if (ds.module && !(await this.modules.isEnabled(tx, ds.module))) throw AppException.forbidden('This dataset belongs to a module that is switched off');
+      const req = exportRequirements(ds, e.fields);
+      const fieldPerms = e.fields.map((k) => ds.fields.find((f) => f.key === k)?.requiresPermission).filter((p): p is NonNullable<typeof p> => !!p);
+      const missing = [...new Set([ds.permission, ...fieldPerms, ...req.permissions])].filter((p) => !auth.permissions.has(p));
+      if (missing.length) throw AppException.forbidden('Downloading this export needs the same permissions as creating it', { required: missing });
+      if (e.sensitive || req.reauth) assertRecentReauth(auth);
       const { url, expiresAt } = await this.storage.signedUrl(e.file, 'attachment');
       await this.audit.record(
         {
@@ -442,13 +494,18 @@ export class ReportBuilderService {
           action: AUDIT_ACTIONS.FILE_SOURCE_ACCESSED,
           entityType: CAMPAIGN_ENTITY.REPORT_EXPORT,
           entityId: e.id,
-          after: { fileId: e.file.id, sha256: e.file.sha256, datasetKey: e.datasetKey, disposition: 'attachment' },
+          after: { fileId: e.file.id, sha256: e.file.sha256, datasetKey: e.datasetKey, disposition: 'attachment', sensitive: e.sensitive, redownload: true },
         },
         tx,
       );
       return { url, expiresAt: expiresAt.toISOString(), sha256: e.file.sha256 };
     });
   }
+}
+
+function truncationNote(r: ReportResult): string {
+  if (r.incomplete) return ` (results incomplete: more than ${r.ds.maxRows} rows matched before filtering; narrow the date range)`;
+  return r.truncated ? ` (first ${r.ds.maxRows} rows only)` : '';
 }
 
 export function toExport(e: Prisma.ReportExportGetPayload<{ include: { generatedBy: { select: { id: true; displayName: true } } } }>): ReportExport {

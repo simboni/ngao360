@@ -27,6 +27,7 @@ describeDb('Finance ledger (integration)', () => {
       approverNoReauth: { perms: ['finance.view', 'finance.approve'], reauth: false },
       payer: { perms: ['finance.view', 'finance.pay'] },
       settings: { perms: ['finance.view', 'finance.settings.manage'] },
+      settings2: { perms: ['finance.view', 'finance.settings.manage'] },
       exporter: { perms: ['finance.view', 'finance.export', 'reports.export', 'reports.export_sensitive'] },
       exporterNoReauth: { perms: ['finance.view', 'finance.export', 'reports.export', 'reports.export_sensitive'], reauth: false },
       viewerOnly: { perms: ['finance.view', 'reports.export'] },
@@ -38,7 +39,9 @@ describeDb('Finance ledger (integration)', () => {
     incomeCat = (await s.post('/finance/categories').send({ code: 'INC.DON', name: 'Donations', kind: 'INCOME' }).expect(201)).body.id;
     expenseCat = (await s.post('/finance/categories').send({ code: 'EXP.VEN', name: 'Venues', kind: 'EXPENSE' }).expect(201)).body.id;
     payeeId = (await f.http('officer').post('/finance/payees').send({ name: 'Synthetic Sound Hire Ltd', kind: 'SUPPLIER', taxPin: 'P051234567X' }).expect(201)).body.id;
-    sourceId = (await f.http('officer').post('/finance/contribution-sources').send({ displayName: 'Synthetic Donor A', kind: 'INDIVIDUAL', identifier: '12345678', declared: true }).expect(201)).body.id;
+    sourceId = (await f.http('officer').post('/finance/contribution-sources').send({ displayName: 'Synthetic Donor A', kind: 'INDIVIDUAL', identifier: '12345678' }).expect(201)).body.id;
+    // The declaration is recorded by a finance approver, never by the person recording contributions.
+    await f.http('approver').patch(`/finance/contribution-sources/${sourceId}`).send({ displayName: 'Synthetic Donor A', kind: 'INDIVIDUAL', declared: true }).expect(200);
   });
   afterAll(async () => f?.close());
 
@@ -169,13 +172,15 @@ describeDb('Finance ledger (integration)', () => {
     expect(warn.body.details.findings.length).toBeGreaterThan(0);
 
     // Once verified, the BLOCK setting refuses the approval.
-    await s.post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed by synthetic legal review' }).expect(200);
+    // The person who entered the setting cannot verify it; a second person does.
+    expect((await s.post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed by synthetic legal review' }).expect(403)).body.code).toBe('SEPARATION_OF_DUTIES');
+    await f.http('settings2').post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed by synthetic legal review' }).expect(200);
     const block = await act('approver', c.id, { action: 'APPROVE', acknowledgeWarnings: true, expectedVersion: d.version }).expect(409);
     expect(block.body.code).toBe('LIMIT_EXCEEDED');
     expect(block.body.details.findings[0]).toMatchObject({ flag: 'SINGLE_SOURCE_CAP_EXCEEDED', level: 'BLOCK', settingVerified: true });
 
     // Back to unverified: warning only, approved with acknowledgement, flags frozen.
-    await s.post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: false, reason: 'Instrument contested (synthetic)' }).expect(200);
+    await f.http('settings2').post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: false, reason: 'Instrument contested (synthetic)' }).expect(200);
     d = (await act('approver', c.id, { action: 'APPROVE', acknowledgeWarnings: true, expectedVersion: d.version }).expect(200)).body;
     expect(d.status).toBe('APPROVED');
     expect(d.timeline.some((x: { type: string }) => x.type === 'COMPLIANCE_EVALUATED')).toBe(true);

@@ -109,6 +109,9 @@ export const COMPLIANCE_FLAGS = [
   'REPORTING_DEADLINE_PASSED',
   'UNDECLARED_SOURCE',
   'UNVERIFIED_SETTING',
+  'SOURCE_IDENTITY_UNVERIFIED',
+  'POSSIBLE_DUPLICATE_SOURCE',
+  'CURRENCY_MISMATCH',
 ] as const;
 export type ComplianceFlag = (typeof COMPLIANCE_FLAGS)[number];
 export const ComplianceFlagSchema = z.enum(COMPLIANCE_FLAGS);
@@ -121,6 +124,9 @@ export const COMPLIANCE_FLAG_LABELS: Record<ComplianceFlag, string> = {
   REPORTING_DEADLINE_PASSED: 'Reporting deadline passed',
   UNDECLARED_SOURCE: 'Contributor declaration not on file',
   UNVERIFIED_SETTING: UNVERIFIED_LIMIT_LABEL,
+  SOURCE_IDENTITY_UNVERIFIED: 'Contributor identity not on file',
+  POSSIBLE_DUPLICATE_SOURCE: 'Possible duplicate contributor',
+  CURRENCY_MISMATCH: 'Currency differs from the limit setting',
 };
 
 export const ComplianceFindingSchema = z.object({
@@ -191,6 +197,8 @@ export function evaluateContribution(input: {
   periodContributionsMinor: number;
   spendingLimitMinor: number | null;
   sourceDeclared: boolean;
+  /** False when the contributor has no ID / registration number on file (the cap cannot be tied to one person). */
+  sourceIdentified?: boolean;
   settings: readonly LimitSettingInput[];
   date: string;
   electionCycleId: string | null;
@@ -198,6 +206,9 @@ export function evaluateContribution(input: {
 }): ComplianceFinding[] {
   const out: ComplianceFinding[] = [];
   if (!input.sourceDeclared) out.push(finding('UNDECLARED_SOURCE', null, 'The contributor declaration is not on file'));
+  if (input.sourceIdentified === false) {
+    out.push(finding('SOURCE_IDENTITY_UNVERIFIED', null, 'No ID or registration number is on file for this contributor, so the single-source cap cannot be checked reliably'));
+  }
   for (const s of activeLimitSettings(input.settings, 'SINGLE_SOURCE_CAP_PCT', input.date, input.electionCycleId)) {
     if (s.valueBasisPoints == null) continue;
     const sourceAfter = BigInt(input.sourceTotalMinor) + BigInt(input.amountMinor);

@@ -217,6 +217,10 @@ export class BreachesService {
     return this.prisma.tenantTx(async (tx) => {
       const cur = await this.load(tx, id);
       const manage = auth.permissions.has('security.breach.manage');
+      // A recorder without security.breach.view may add notes only to breaches they reported;
+      // other records are not revealed (404, and no record detail in any error).
+      const mayView = manage || auth.permissions.has('security.breach.view') || cur.reportedById === auth.userId;
+      if (!mayView) throw AppException.notFound('Breach record not found');
       if (!manage && body.type !== 'NOTE') throw AppException.forbidden('Only breach managers can move the record through its steps');
       checkVersion(cur, body.expectedVersion, this.detail(auth, cur));
       if (body.evidenceFileId) await assertOwnFiles(tx, auth.userId, [body.evidenceFileId], 'BREACH_EVIDENCE', 'evidenceFileId');

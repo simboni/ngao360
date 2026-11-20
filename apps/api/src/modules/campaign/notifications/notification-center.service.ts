@@ -336,6 +336,14 @@ export class NotificationCenterService implements OnModuleDestroy {
       const n = await tx.notification.findFirst({ where: { id, ...(await this.baseWhere(tx, auth)) } });
       if (!n) throw AppException.notFound('Notification not found');
       if (!n.requiresAck) throw AppException.conflict('This notification does not need an acknowledgement');
+      if (body.action === 'ESCALATED') {
+        // Escalation is idempotent per notification copy (also a DB trigger): repeated clicks or
+        // concurrent requests never fan out new mandatory alerts.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`notif-esc:${n.id}`}))`;
+        if (await tx.notificationAcknowledgement.findFirst({ where: { notificationId: n.id, action: 'ESCALATED' }, select: { id: true } })) {
+          throw AppException.conflict('This alert was already escalated', { reason: 'ALREADY_ESCALATED' });
+        }
+      }
       await tx.notificationAcknowledgement.create({
         data: { tenantId: auth.tenantId, notificationId: n.id, userId: auth.userId, action: body.action, note: body.note ?? null },
       });
@@ -345,8 +353,20 @@ export class NotificationCenterService implements OnModuleDestroy {
         updated = await tx.notification.update({ where: { id: n.id }, data: { acknowledgedAt: now, readAt: n.readAt ?? now } });
       }
       if (body.action === 'ESCALATED') {
-        const managers = await usersWithPermission(tx, 'security.breach.manage', { exclude: [auth.userId] });
-        await this.notify(tx, {
+        const all = await usersWithPermission(tx, 'security.breach.manage', { exclude: [auth.userId] });
+        // Skip people who already hold an open (unacknowledged) critical alert for the same record.
+        const open = n.entityId
+          ? new Set(
+              (
+                await tx.notification.findMany({
+                  where: { userId: { in: all }, type: 'security.critical_alert', entityId: n.entityId, acknowledgedAt: null },
+                  select: { userId: true },
+                })
+              ).map((r) => r.userId),
+            )
+          : new Set<string>();
+        const managers = all.filter((u) => !open.has(u));
+        if (managers.length) await this.notify(tx, {
           tenantId: auth.tenantId,
           userIds: managers,
           module: 'security',

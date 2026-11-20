@@ -34,6 +34,8 @@ const SOD_CHECK_CONSTRAINTS = [
   'tasks_reviewer_not_owner_check',
   'event_after_action_reviewer_check',
   'content_items_approver_not_author_check',
+  'content_items_approver_not_editor_check',
+  'finance_limit_settings_second_verifier_check',
   'finance_budget_lines_approver_check',
   'finance_transactions_approver_check',
   'finance_transactions_payer_check',
@@ -100,6 +102,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const sod = SOD_CHECK_CONSTRAINTS.find((c) => msg.includes(c));
     if (sod) {
       return { statusCode: 403, error: 'FORBIDDEN', code: ERROR_CODES.SEPARATION_OF_DUTIES, message: 'The same person cannot perform both steps on this record' };
+    }
+    const conflictReason = (['DOCUMENT_IN_USE', 'FILE_INFECTED', 'ALREADY_ESCALATED'] as const).find((r) => msg.includes(`${r}:`));
+    if (conflictReason) {
+      const text = { DOCUMENT_IN_USE: 'This document already supports another ledger entry', FILE_INFECTED: 'This file failed the malware scan', ALREADY_ESCALATED: 'This alert was already escalated' }[conflictReason];
+      return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.CONFLICT, message: text, details: { reason: conflictReason } };
     }
     if (msg.includes('IMMUTABLE_RECORD')) {
       return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.IMMUTABLE_RECORD, message: 'This record is immutable and cannot be changed or deleted' };

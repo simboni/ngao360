@@ -8,6 +8,8 @@ import {
   type CampaignEventDetail,
   type CampaignEventStatus,
   CHECK_IN_METHOD_LABELS,
+  CONTENT_AUDIENCE_LABELS,
+  CONTENT_TYPE_LABELS,
   type EventAfterActionReport,
   type EventAgendaItem,
   type EventAttendance,
@@ -27,6 +29,7 @@ import {
   Eye,
   FileText,
   MapPin,
+  Megaphone,
   Pencil,
   Plus,
   RotateCcw,
@@ -41,6 +44,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Facts, formatBytes, isoToLocalInput, ViewTabs } from '@/components/office/correspondence/office-common';
 import {
   AfterActionBadge,
+  ContentStatusBadge,
   describeCampaignError,
   EventStatusBadge,
   geoLabel,
@@ -78,7 +82,7 @@ import {
 import { type AgendaRow, agendaEnd, agendaPayload, attendanceOpen, compareBudget, EVENT_MOVE_LABELS, eventStatusOptions, formatCoordinates, LOGISTICS_MOVE_LABELS, logisticsOptions, venueCoordinates } from './event-model';
 import { eventsApi } from './events-api';
 
-type Tab = 'overview' | 'agenda' | 'tasks' | 'people' | 'logistics' | 'budget' | 'attendance' | 'documents' | 'report';
+type Tab = 'overview' | 'agenda' | 'tasks' | 'people' | 'logistics' | 'budget' | 'attendance' | 'documents' | 'communications' | 'report';
 
 /** S09 Event detail (API §25). */
 export function EventDetail({ id }: { id: string }) {
@@ -112,6 +116,7 @@ export function EventDetail({ id }: { id: string }) {
     { key: 'budget', label: 'Budget' },
     { key: 'attendance', label: 'Attendance', count: ev.attendanceCount },
     { key: 'documents', label: 'Documents', count: ev.documents.length },
+    { key: 'communications', label: 'Communications', count: ev.communications.length },
     { key: 'report', label: 'After-action report' },
   ];
 
@@ -162,6 +167,7 @@ export function EventDetail({ id }: { id: string }) {
       {tab === 'budget' ? <BudgetPanel ev={ev} /> : null}
       {tab === 'attendance' ? <AttendancePanel ev={ev} onChanged={refresh} /> : null}
       {tab === 'documents' ? <DocumentsPanel ev={ev} onChanged={refresh} /> : null}
+      {tab === 'communications' ? <CommunicationsPanel ev={ev} /> : null}
       {tab === 'report' ? <ReportPanel ev={ev} onChanged={refresh} /> : null}
 
       <EventFormDialog open={editing} onClose={() => setEditing(false)} event={ev} onSaved={setData} />
@@ -831,6 +837,38 @@ function AttendancePanel({ ev, onChanged }: { ev: CampaignEventDetail; onChanged
 }
 
 /* --------------------------------- Documents -------------------------------- */
+
+/** Approved communications linked to the event (blueprint 5.3); the list follows the viewer's content scope. */
+function CommunicationsPanel({ ev }: { ev: CampaignEventDetail }) {
+  return (
+    <Card>
+      <CardHeader title="Approved communications" />
+      <CardBody>
+        {ev.communications.length === 0 ? (
+          <EmptyState icon={Megaphone} title="No approved communications" description="Approved, published or archived content linked to this event appears here." />
+        ) : (
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {ev.communications.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <Link className="font-medium text-deep-blue underline" href={`/comms/${c.id}`}>
+                    {c.title}
+                  </Link>
+                  <p className="text-meta text-slate">
+                    {c.reference} · {CONTENT_TYPE_LABELS[c.type]} · {CONTENT_AUDIENCE_LABELS[c.audience]}
+                    {c.publishedAt ? ` · published ${formatDateTime(c.publishedAt)}` : ''}
+                    {c.correctionCount ? ` · ${c.correctionCount} correction(s)` : ''}
+                  </p>
+                </div>
+                <ContentStatusBadge status={c.status} size="sm" />
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
 
 function DocumentsPanel({ ev, onChanged }: { ev: CampaignEventDetail; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);

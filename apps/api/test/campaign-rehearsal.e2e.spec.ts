@@ -59,7 +59,7 @@ const MFA_KEY = Buffer.alloc(32, 13).toString('base64');
 const JWT_SECRET = 'campaign-rehearsal-access-secret-campaign-rehearsal-01';
 const SOURCE_NOTE = 'Synthetic rehearsal value: configure to the applicable law before use';
 
-type Persona = 'manager' | 'lead' | 'ops' | 'editor' | 'commsApprover' | 'finance' | 'approver' | 'payer';
+type Persona = 'manager' | 'lead' | 'ops' | 'editor' | 'commsApprover' | 'finance' | 'approver' | 'approver2' | 'payer';
 const PERSONAS: Record<Persona, SystemRoleKey> = {
   manager: 'CAMPAIGN_MANAGER',
   lead: 'DEPARTMENT_LEAD',
@@ -68,6 +68,8 @@ const PERSONAS: Record<Persona, SystemRoleKey> = {
   commsApprover: 'COMMUNICATIONS_APPROVER',
   finance: 'FINANCE_OFFICER',
   approver: 'FINANCE_APPROVER',
+  // A second finance approver: limit settings are verified by someone other than the person who entered them.
+  approver2: 'FINANCE_APPROVER',
   payer: 'FINANCE_OFFICER',
 };
 
@@ -459,8 +461,11 @@ d('Campaign and organisation rehearsal (synthetic)', () => {
     expect(cap).toMatchObject({ verified: false, enforcement: 'BLOCK', legalSourceNote: SOURCE_NOTE });
 
     const f = http('finance');
-    const source = (await f.post('/finance/contribution-sources').send({ displayName: 'Synthetic Donor Barasa', kind: 'INDIVIDUAL', identifier: '23456789', declared: true }).expect(201)).body;
+    const source = (await f.post('/finance/contribution-sources').send({ displayName: 'Synthetic Donor Barasa', kind: 'INDIVIDUAL', identifier: '23456789' }).expect(201)).body;
     expect(JSON.stringify(source)).not.toContain('23456789');
+    // The finance officer cannot self-certify the declaration; the approver records it.
+    await f.patch(`/finance/contribution-sources/${source.id}`).send({ displayName: 'Synthetic Donor Barasa', kind: 'INDIVIDUAL', declared: true }).expect(403);
+    await a.patch(`/finance/contribution-sources/${source.id}`).send({ displayName: 'Synthetic Donor Barasa', kind: 'INDIVIDUAL', declared: true }).expect(200);
     const c0 = (
       await f
         .post('/finance/transactions')
@@ -476,7 +481,10 @@ d('Campaign and organisation rehearsal (synthetic)', () => {
     expect((await finance('approver', c.id, { action: 'APPROVE', expectedVersion: c.version }).expect(409)).body.details.findings.length).toBeGreaterThan(0);
 
     // Once a person verifies the BLOCK setting, the approval is refused.
-    await a.post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed against the synthetic legal brief' }).expect(200);
+    // The approver who entered it cannot verify it; a second approver does.
+    expect((await a.post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed against the synthetic legal brief' }).expect(403)).body.code).toBe('SEPARATION_OF_DUTIES');
+    await reauth('approver2');
+    await http('approver2').post(`/finance/settings/limits/${cap.id}/verify`).send({ verified: true, reason: 'Confirmed against the synthetic legal brief' }).expect(200);
     const block = await finance('approver', c.id, { action: 'APPROVE', acknowledgeWarnings: true, expectedVersion: c.version }).expect(409);
     expect(block.body.code).toBe('LIMIT_EXCEEDED');
     expect(block.body.details.findings[0]).toMatchObject({ flag: 'SINGLE_SOURCE_CAP_EXCEEDED', level: 'BLOCK', settingVerified: true, legalSourceNote: SOURCE_NOTE });

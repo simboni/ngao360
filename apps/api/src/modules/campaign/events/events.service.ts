@@ -47,6 +47,8 @@ import {
   campaignFile,
   campaignRecordInScope,
   campaignReferenceYear,
+  commsWorkflowStatuses,
+  contentScopeWhere,
   eventScopeWhere,
   FILE_INCLUDE,
   geoRef,
@@ -195,6 +197,18 @@ export class EventsService {
       });
       tasks = rows.map((t) => this.tasks.summary(t));
     }
+    // Approved communications linked to the event (blueprint 5.3), inside the caller's content scope.
+    let communications: CampaignEventDetail['communications'] = [];
+    if (p('comms.content.view')) {
+      const cscope = await loadCampaignScope(tx, auth, 'comms.content.view');
+      const rows = await tx.contentItem.findMany({
+        where: { AND: [{ eventId: e.id, status: { in: ['APPROVED', 'PUBLISHED', 'ARCHIVED'] } }, contentScopeWhere(cscope, commsWorkflowStatuses(auth)) ?? {}] },
+        select: { id: true, reference: true, type: true, title: true, status: true, audience: true, publishedAt: true, correctionCount: true },
+        orderBy: [{ publishedAt: 'desc' }, { reference: 'asc' }],
+        take: 100,
+      });
+      communications = rows.map((c) => ({ ...c, publishedAt: iso(c.publishedAt) }));
+    }
     return {
       ...this.summary(auth, e),
       purpose: e.purpose,
@@ -206,6 +220,7 @@ export class EventsService {
       logistics: e.logisticsItems.map(toLogistics),
       tasks,
       documents: e.documents.map(toDocument),
+      communications,
       afterAction: this.afterAction(e),
       cancellationReason: e.cancellationReason,
       createdBy: e.createdBy,

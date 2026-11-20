@@ -24,6 +24,7 @@ import {
   assertRecentReauth,
   campaignReferenceYear,
   type CampaignScope,
+  commsWorkflowStatuses,
   contentScopeWhere,
   eventScopeWhere,
   immutable,
@@ -79,13 +80,14 @@ export class CommsService {
     };
   }
 
-  private allowed(auth: AuthContext, c: { status: ContentStatus; authorId: string }): ContentDetail['allowedActions'] {
+  private allowed(auth: AuthContext, c: { status: ContentStatus; authorId: string; editorId?: string | null; editedBy?: Set<string> }): ContentDetail['allowedActions'] {
     const p = (k: Parameters<typeof auth.permissions.has>[0]) => auth.permissions.has(k);
     const author = c.authorId === auth.userId;
     const out: ContentDetail['allowedActions'] = [];
     if (c.status === 'DRAFT' && author && p('comms.content.draft')) out.push('EDIT', 'SUBMIT');
     if (c.status === 'EDITORIAL_REVIEW' && !author && p('comms.content.edit')) out.push('EDIT', 'EDITORIAL_APPROVE', 'RETURN');
-    if (c.status === 'AWAITING_APPROVAL' && !author && p('comms.content.approve')) out.push('APPROVE', 'RETURN');
+    const edited = c.editorId === auth.userId || !!c.editedBy?.has(auth.userId);
+    if (c.status === 'AWAITING_APPROVAL' && !author && p('comms.content.approve')) out.push(...(edited ? (['RETURN'] as const) : (['APPROVE', 'RETURN'] as const)));
     if (c.status === 'APPROVED' && p('comms.content.publish')) out.push('PUBLISH');
     if (c.status === 'APPROVED' && (p('comms.content.edit') || p('comms.content.approve'))) out.push('RETURN');
     if (c.status === 'PUBLISHED' && p('comms.content.publish')) out.push('ARCHIVE');
@@ -117,22 +119,34 @@ export class CommsService {
         createdAt: r.createdAt.toISOString(),
       })),
       createdAt: c.createdAt.toISOString(),
-      allowedActions: this.allowed(auth, c),
+      allowedActions: this.allowed(auth, { ...c, editedBy: this.editorsSinceSubmit(c) }),
     };
   }
 
-  /** Load one item inside the caller's department scope (404 outside). */
-  private async load(tx: TenantTx, scope: CampaignScope, id: string): Promise<DetailRow> {
+  /** Load one item inside the caller's scope (404 outside). */
+  private async load(tx: TenantTx, scope: CampaignScope, id: string, auth?: AuthContext): Promise<DetailRow> {
     const c = await tx.contentItem.findUnique({ where: { id }, include: DETAIL_INCLUDE });
-    // Content has no geography: involvement OR department (contentScopeWhere).
-    if (!c || !this.inDepartmentScope(scope, c)) throw AppException.notFound('Content not found');
+    // Content has no geography: involvement OR department OR the caller's workflow stage (contentScopeWhere).
+    if (!c || !this.inScope(scope, c, auth ? commsWorkflowStatuses(auth) : [])) throw AppException.notFound('Content not found');
     return c;
   }
 
-  private inDepartmentScope(scope: CampaignScope, c: { departmentId: string | null; authorId: string; editorId: string | null; approverId: string | null }): boolean {
+  private inScope(scope: CampaignScope, c: { status: string; departmentId: string | null; authorId: string; editorId: string | null; approverId: string | null }, workflow: readonly string[]): boolean {
     if (!scope.held) return false;
     if ([c.authorId, c.editorId, c.approverId].includes(scope.userId)) return true;
+    if (workflow.includes(c.status)) return true;
     return scope.allDepartments || (!!c.departmentId && scope.departmentIds.includes(c.departmentId));
+  }
+
+  /** Last editorial-review round: users who rewrote the text since the item was last submitted. */
+  private editorsSinceSubmit(c: DetailRow): Set<string> {
+    const out = new Set<string>();
+    for (let i = c.revisions.length - 1; i >= 0; i--) {
+      const r = c.revisions[i]!;
+      if (r.kind === 'SUBMITTED_FOR_REVIEW') break;
+      if (r.kind === 'EDITED') out.add(r.actorId);
+    }
+    return out;
   }
 
   private revision(tx: TenantTx, auth: AuthContext, c: { id: string; title: string; body: string }, kind: ContentRevisionKind, revision: number, from: ContentStatus | null, to: ContentStatus | null, note?: string | null) {
@@ -157,7 +171,7 @@ export class CommsService {
       }
       const where: Prisma.ContentItemWhereInput = {
         AND: [
-          contentScopeWhere(scope) ?? {},
+          contentScopeWhere(scope, commsWorkflowStatuses(auth)) ?? {},
           view,
           q.status ? { status: { in: Array.isArray(q.status) ? q.status : [q.status] } } : {},
           q.type ? { type: q.type } : {},
@@ -175,7 +189,7 @@ export class CommsService {
   }
 
   get(auth: AuthContext, id: string): Promise<ContentDetail> {
-    return this.prisma.tenantTx(async (tx) => this.detail(auth, await this.load(tx, await loadCampaignScope(tx, auth, 'comms.content.view'), id)));
+    return this.prisma.tenantTx(async (tx) => this.detail(auth, await this.load(tx, await loadCampaignScope(tx, auth, 'comms.content.view'), id, auth)));
   }
 
   private async checkLinks(tx: TenantTx, auth: AuthContext, scope: CampaignScope, b: { departmentId?: string | null; eventId?: string | null }) {
@@ -216,14 +230,14 @@ export class CommsService {
         { tenantId: auth.tenantId, action: AUDIT_ACTIONS.CONTENT_CREATED, entityType: CAMPAIGN_ENTITY.CONTENT, entityId: c.id, after: { reference, type: c.type, audience: c.audience, departmentId: c.departmentId, bodySha256: sha256Hex(c.body) } },
         tx,
       );
-      return this.detail(auth, await this.load(tx, scope, c.id));
+      return this.detail(auth, await this.load(tx, scope, c.id, auth));
     });
   }
 
   update(auth: AuthContext, id: string, body: UpdateContent): Promise<ContentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const scope = await loadCampaignScope(tx, auth, 'comms.content.view');
-      const cur = await this.load(tx, scope, id);
+      const cur = await this.load(tx, scope, id, auth);
       const author = cur.authorId === auth.userId;
       if (cur.status === 'DRAFT') {
         if (!author || !auth.permissions.has('comms.content.draft')) throw AppException.forbidden('Only the author edits a draft');
@@ -234,7 +248,11 @@ export class CommsService {
         throw immutable('Content can only be edited in draft or editorial review; published content changes only by a correction');
       }
       if (cur.version !== body.expectedVersion) throw staleVersion(cur.version, this.detail(auth, cur));
-      await this.checkLinks(tx, auth, scope, body);
+      // Only changed links are checked (an editor from another department keeps the item's department).
+      await this.checkLinks(tx, auth, scope, {
+        departmentId: body.departmentId !== undefined && body.departmentId !== cur.departmentId ? body.departmentId : undefined,
+        eventId: body.eventId !== undefined && body.eventId !== cur.eventId ? body.eventId : undefined,
+      });
       const textChanged = (body.title !== undefined && body.title !== cur.title) || (body.body !== undefined && body.body !== cur.body);
       const nextRevision = textChanged ? cur.revision + 1 : cur.revision;
       const data: Prisma.ContentItemUncheckedUpdateManyInput = {
@@ -265,14 +283,14 @@ export class CommsService {
         },
         tx,
       );
-      return this.detail(auth, await this.load(tx, scope, id));
+      return this.detail(auth, await this.load(tx, scope, id, auth));
     });
   }
 
   transition(auth: AuthContext, id: string, body: ContentTransition): Promise<ContentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const scope = await loadCampaignScope(tx, auth, 'comms.content.view');
-      const cur = await this.load(tx, scope, id);
+      const cur = await this.load(tx, scope, id, auth);
       const config = await this.modules.campaignConfig(tx);
       const p = (k: Parameters<typeof auth.permissions.has>[0]) => auth.permissions.has(k);
       const author = cur.authorId === auth.userId;
@@ -306,6 +324,10 @@ export class CommsService {
         case 'APPROVE':
           need('comms.content.approve');
           if (author) throw AppException.separationOfDuties('The author cannot approve their own content');
+          // The approver is a second person to the published text: not the editorial reviewer, nor anyone who rewrote it in review.
+          if (cur.editorId === auth.userId || this.editorsSinceSubmit(cur).has(auth.userId)) {
+            throw AppException.separationOfDuties('You edited or reviewed this text; another approver must authorise it');
+          }
           assertRecentReauth(auth);
           to = 'APPROVED';
           kind = 'APPROVED';
@@ -359,14 +381,14 @@ export class CommsService {
       } else if (to === 'PUBLISHED') {
         await this.notifications.notify(tx, { ...base, userIds: [cur.authorId].filter((u) => u !== auth.userId), type: 'content.published', title: `Published: ${cur.reference}`, body: `${cur.reference} was recorded as published.` });
       }
-      return this.detail(auth, await this.load(tx, scope, id));
+      return this.detail(auth, await this.load(tx, scope, id, auth));
     });
   }
 
   correct(auth: AuthContext, id: string, body: CorrectContent): Promise<ContentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const scope = await loadCampaignScope(tx, auth, 'comms.content.view');
-      const cur = await this.load(tx, scope, id);
+      const cur = await this.load(tx, scope, id, auth);
       if (cur.authorId === auth.userId) throw AppException.separationOfDuties('The author cannot record a correction of their own content');
       if (cur.status !== 'PUBLISHED') throw AppException.invalidTransition(cur.status, 'CORRECTED');
       if (cur.version !== body.expectedVersion) throw staleVersion(cur.version, this.detail(auth, cur));
@@ -390,7 +412,7 @@ export class CommsService {
         },
         tx,
       );
-      return this.detail(auth, await this.load(tx, scope, id));
+      return this.detail(auth, await this.load(tx, scope, id, auth));
     });
   }
 }

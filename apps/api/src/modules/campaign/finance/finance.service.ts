@@ -56,7 +56,7 @@ import {
 } from '../common';
 import { NotificationCenterService } from '../notifications/notification-center.service';
 import { ReportBuilderService } from '../reports/report-builder.service';
-import { currentFindings, evaluateEntry, flagsOf, POSTED_NET } from './finance-compliance';
+import { currentFindings, evaluateEntry, flagsOf, loadLimitSettings, POSTED_NET, settingsChangedBy } from './finance-compliance';
 
 const USER = { select: { id: true, displayName: true } } as const;
 const SUMMARY_INCLUDE = {
@@ -69,7 +69,7 @@ const SUMMARY_INCLUDE = {
   requestedBy: USER,
   approvedBy: USER,
   paidBy: USER,
-  reversedBy: { select: { id: true } },
+  reversals: { select: { id: true, status: true } },
   _count: { select: { documents: true } },
 } satisfies Prisma.FinanceTransactionInclude;
 const DETAIL_INCLUDE = {
@@ -81,6 +81,11 @@ const DETAIL_INCLUDE = {
 } satisfies Prisma.FinanceTransactionInclude;
 type SummaryRow = Prisma.FinanceTransactionGetPayload<{ include: typeof SUMMARY_INCLUDE }>;
 type DetailRow = Prisma.FinanceTransactionGetPayload<{ include: typeof DETAIL_INCLUDE }>;
+
+/** The live reversal of an entry: a REJECTED or CANCELLED reversal no longer counts. */
+export function liveReversal(t: { reversals: ReadonlyArray<{ id: string; status: string }> }): { id: string; status: string } | null {
+  return t.reversals.find((r) => r.status !== 'REJECTED' && r.status !== 'CANCELLED') ?? null;
+}
 
 const CATEGORY_KIND: Record<string, 'INCOME' | 'EXPENSE' | 'TRANSFER'> = { CONTRIBUTION: 'INCOME', EXPENSE: 'EXPENSE', REFUND: 'EXPENSE', TRANSFER: 'TRANSFER' };
 
@@ -156,7 +161,7 @@ export class FinanceService {
       documentCount: t._count.documents,
       complianceFlags: t.complianceFlags as FinanceTransactionSummary['complianceFlags'],
       reversesId: t.reversesId,
-      reversedById: t.reversedBy?.id ?? null,
+      reversedById: liveReversal(t)?.id ?? null,
       version: t.version,
     };
   }
@@ -169,7 +174,8 @@ export class FinanceService {
       contributionSourceId: t.contributionSourceId,
       counterAccountId: t.counterAccountId,
       externalReference: t.externalReference,
-      documentCount: t._count.documents,
+      documentCount: t.documents.filter((d) => d.file.malwareScanStatus !== 'INFECTED').length,
+      infectedDocumentCount: t.documents.filter((d) => d.file.malwareScanStatus === 'INFECTED').length,
     });
   }
 
@@ -187,7 +193,7 @@ export class FinanceService {
       allowed.push('PAY');
     }
     if ((t.status === 'DRAFT' || t.status === 'REQUESTED') && (isRequester || p('finance.approve'))) allowed.push('CANCEL');
-    if ((t.status === 'APPROVED' || t.status === 'PAID') && p('finance.reverse') && !t.reversedBy && t.type !== 'REVERSAL') allowed.push('REVERSE');
+    if ((t.status === 'APPROVED' || t.status === 'PAID') && p('finance.reverse') && !liveReversal(t) && t.type !== 'REVERSAL') allowed.push('REVERSE');
     return {
       ...this.summary(t),
       counterAccount: t.counterAccount,
@@ -462,6 +468,19 @@ export class FinanceService {
       if (!cur) throw AppException.notFound('Ledger entry not found');
       if (cur.status === 'CANCELLED' || cur.status === 'REJECTED') throw new AppException(ERROR_CODES.IMMUTABLE_RECORD, HttpStatus.CONFLICT, 'This entry is closed');
       await assertOwnFiles(tx, auth.userId, [body.fileId], 'FINANCE_DOCUMENT', 'fileId');
+      const file = await tx.storedFile.findUniqueOrThrow({ where: { id: body.fileId }, select: { malwareScanStatus: true } });
+      if (file.malwareScanStatus === 'INFECTED') throw AppException.validation('This file failed the malware scan', [{ path: ['fileId'], message: 'Infected file' }]);
+      // One receipt or invoice backs one live entry (no double claims); a reversal may cite the document of the entry it reverses.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fin-doc:${auth.tenantId}:${body.fileId}`}))`;
+      const reuse = await tx.financeTransactionDocument.findFirst({
+        where: {
+          fileId: body.fileId,
+          transactionId: { not: id },
+          transaction: { status: { notIn: ['REJECTED', 'CANCELLED'] }, ...(cur.reversesId ? { id: { not: cur.reversesId } } : {}), OR: [{ reversesId: null }, { reversesId: { not: id } }] },
+        },
+        select: { transaction: { select: { id: true, reference: true } } },
+      });
+      if (reuse) throw AppException.conflict('This document already supports another ledger entry', { reason: 'DOCUMENT_IN_USE', transactionId: reuse.transaction.id, reference: reuse.transaction.reference });
       const doc = await tx.financeTransactionDocument.create({
         data: { tenantId: auth.tenantId, transactionId: id, fileId: body.fileId, kind: body.kind, note: body.note ?? null, addedById: auth.userId },
         include: { file: FILE_INCLUDE, addedBy: USER },
@@ -517,7 +536,18 @@ export class FinanceService {
           if (v) throw sod('You requested this entry; someone else must approve it');
           const blockers = this.blockers(cur);
           if (blockers.length) throw new AppException(ERROR_CODES.APPROVAL_INCOMPLETE, HttpStatus.CONFLICT, 'This entry is not ready for approval', { blockers });
-          findings = await evaluateEntry(tx, cur, config);
+          // Serialise limit checks per tenant and election cycle so two concurrent approvals
+          // cannot both pass a cap or a spending limit (each sees the other once committed).
+          const cycleId = cur.electionCycleId ?? config.finance.defaultElectionCycleId;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fin-limit:${auth.tenantId}:${cycleId ?? 'none'}`}))`;
+          const settings = await loadLimitSettings(tx);
+          const relaxed = settingsChangedBy(settings, cur, cycleId, me);
+          if (relaxed.length) {
+            throw AppException.separationOfDuties('You changed a limit setting that governs this entry (verification or a superseding version); another approver must decide', {
+              settingIds: relaxed.map((x) => x.id),
+            });
+          }
+          findings = await evaluateEntry(tx, cur, config, settings);
           if (complianceBlocks(findings)) {
             throw new AppException(ERROR_CODES.LIMIT_EXCEEDED, HttpStatus.CONFLICT, 'A verified limit setting blocks this approval', { findings });
           }
@@ -624,7 +654,8 @@ export class FinanceService {
       const orig = await this.load(tx, id);
       if (orig.status !== 'APPROVED' && orig.status !== 'PAID') throw AppException.conflict('Only approved or paid entries can be reversed', { status: orig.status });
       if (orig.type === 'REVERSAL') throw AppException.conflict('A reversing entry cannot itself be reversed');
-      if (orig.reversedBy) throw AppException.conflict('This entry already has a reversing entry', { reversalId: orig.reversedBy.id });
+      const existing = liveReversal(orig);
+      if (existing) throw AppException.conflict('This entry already has a reversing entry', { reversalId: existing.id });
       if (orig.version !== body.expectedVersion) throw staleVersion(orig.version, null);
       const config = await this.modules.campaignConfig(tx);
       const reference = await nextReference(tx, auth.tenantId, 'FIN', campaignReferenceYear(config));
@@ -686,7 +717,9 @@ export class FinanceService {
     return this.prisma.tenantTx(
       async (tx) => {
         const reauthAt = assertRecentReauth(auth);
-        const dateRange = body.from || body.to ? { ...(body.from ? { from: `${body.from}T00:00:00.000Z` } : {}), ...(body.to ? { to: `${body.to}T23:59:59.999Z` } : {}) } : undefined;
+        // Calendar days in Africa/Nairobi (the date-only loaders map instants back to that day).
+        const eat = (day: string, time: string) => new Date(`${day}T${time}+03:00`).toISOString();
+        const dateRange = body.from || body.to ? { ...(body.from ? { from: eat(body.from, '00:00:00.000') } : {}), ...(body.to ? { to: eat(body.to, '23:59:59.999') } : {}) } : undefined;
         const defs: Record<FinanceExportRequest['register'], { title: string; def: ReportDefinition }> = {
           LEDGER: {
             title: 'Finance ledger',
@@ -707,6 +740,10 @@ export class FinanceService {
         };
         const { title, def } = defs[body.register];
         const r = await this.reports.run(tx, auth, def);
+        if (r.truncated || r.incomplete) {
+          // A register must be complete: never hand out a silently cut-off file.
+          throw AppException.conflict(`This register has more than ${r.ds.maxRows} rows; narrow the date range and export it in parts`, { reason: 'EXPORT_TOO_LARGE', maxRows: r.ds.maxRows });
+        }
         const unverified = r.rows.some((row) => Array.isArray(row.complianceFlags) && row.complianceFlags.includes('UNVERIFIED_SETTING'));
         const generatedAt = new Date();
         const header = {

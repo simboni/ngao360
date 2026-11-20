@@ -309,3 +309,19 @@ describe('query flags and shared request shapes (integration pass)', () => {
     expect(page.summary.total).toBe(0);
   });
 });
+
+describe('review fixes: contributor identity and infected documents', async () => {
+  const { evaluateContribution, financeApprovalBlockers, COMPLIANCE_FLAG_LABELS, COMPLIANCE_FLAGS } = await import('./finance');
+  it('a contributor without an ID or registration number is flagged', () => {
+    const f = evaluateContribution({ amountMinor: 100, sourceTotalMinor: 0, periodContributionsMinor: 0, spendingLimitMinor: null, sourceDeclared: true, sourceIdentified: false, settings: [], date: '2027-01-01', electionCycleId: null, nearBasisPoints: 8000 });
+    expect(f.map((x) => x.flag)).toEqual(['SOURCE_IDENTITY_UNVERIFIED']);
+    expect(f[0]!.level).toBe('WARN');
+  });
+  it('an infected supporting document blocks approval and does not count', () => {
+    const b = financeApprovalBlockers({ type: 'EXPENSE', categoryId: 'c', payeeId: 'p', contributionSourceId: null, counterAccountId: null, externalReference: 'INV-1', documentCount: 0, infectedDocumentCount: 1 });
+    expect(b).toEqual(['SUPPORTING_DOCUMENT_MISSING', 'SUPPORTING_DOCUMENT_INFECTED']);
+  });
+  it('every compliance flag has a label', () => {
+    for (const flag of COMPLIANCE_FLAGS) expect(COMPLIANCE_FLAG_LABELS[flag]).toBeTruthy();
+  });
+});

@@ -10,7 +10,24 @@
  * the caller's selected (permitted) fields.
  */
 import type { Prisma, TenantTx } from '@ngao360/db';
-import { type DatasetDefinition, type ReportDefinition } from '@ngao360/shared';
+import {
+  BREACH_SEVERITIES,
+  BREACH_STATUSES,
+  CAMPAIGN_EVENT_STATUSES,
+  CAMPAIGN_EVENT_TYPES,
+  CONTENT_AUDIENCES,
+  CONTENT_STATUSES,
+  CONTENT_TYPES,
+  type DatasetDefinition,
+  FINANCE_TRANSACTION_STATUSES,
+  FINANCE_TRANSACTION_TYPES,
+  INCIDENT_CATEGORIES,
+  INCIDENT_SEVERITIES,
+  INCIDENT_STATUSES,
+  type ReportDefinition,
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+} from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { type PermissionScope, pathToUnitIds, scopeAllows, scopeFromGrants } from '../../../rbac/scope';
@@ -32,6 +49,47 @@ export interface LoadedRows {
   appliedScope: string;
   /** More rows matched than the dataset's maxRows. */
   truncated: boolean;
+  /** Indexes of def.filters already applied in the database query (the rest run in memory). */
+  pushedFilters: number[];
+}
+
+/** Non-null enum columns per dataset field that `eq` / `in` filters can run on in the query. */
+type PushMap = Record<string, { column: string; values: readonly string[] }>;
+
+const PUSHDOWN: Record<string, PushMap> = {
+  'campaign.tasks': { status: { column: 'status', values: TASK_STATUSES }, priority: { column: 'priority', values: TASK_PRIORITIES } },
+  'campaign.events': { status: { column: 'status', values: CAMPAIGN_EVENT_STATUSES }, type: { column: 'type', values: CAMPAIGN_EVENT_TYPES } },
+  'campaign.content': { status: { column: 'status', values: CONTENT_STATUSES }, type: { column: 'type', values: CONTENT_TYPES }, audience: { column: 'audience', values: CONTENT_AUDIENCES } },
+  'finance.transactions': { type: { column: 'type', values: FINANCE_TRANSACTION_TYPES }, status: { column: 'status', values: FINANCE_TRANSACTION_STATUSES } },
+  'finance.contributions': { status: { column: 'status', values: FINANCE_TRANSACTION_STATUSES } },
+  'field.incidents': { category: { column: 'category', values: INCIDENT_CATEGORIES }, severity: { column: 'severity', values: INCIDENT_SEVERITIES }, status: { column: 'status', values: INCIDENT_STATUSES } },
+  'security.breaches': { status: { column: 'status', values: BREACH_STATUSES }, severity: { column: 'severity', values: BREACH_SEVERITIES } },
+};
+
+/**
+ * Field filters that can run in the database (`eq` / `in` on enum columns),
+ * so the row cap applies AFTER them: a filtered report is complete whenever
+ * the filtered set fits under maxRows. Values outside the enum match nothing,
+ * exactly as the in-memory filter would.
+ */
+export function pushdownFilters(ds: DatasetDefinition, def: ReportDefinition): { where: object[]; pushed: number[] } {
+  const map = PUSHDOWN[ds.key] ?? {};
+  const where: object[] = [];
+  const pushed: number[] = [];
+  def.filters.forEach((f, i) => {
+    const m = map[f.field];
+    if (!m) return;
+    if (f.op === 'eq' && f.value !== undefined && !Array.isArray(f.value)) {
+      const v = String(f.value);
+      where.push(m.values.includes(v) ? { [m.column]: v } : { id: { in: [] } });
+      pushed.push(i);
+    } else if (f.op === 'in' && Array.isArray(f.value)) {
+      const vs = f.value.map(String).filter((v) => m.values.includes(v));
+      where.push(vs.length ? { [m.column]: { in: vs } } : { id: { in: [] } });
+      pushed.push(i);
+    }
+  });
+  return { where, pushed };
 }
 
 const OPEN_TASK = new Set(['DRAFT', 'READY', 'IN_PROGRESS', 'BLOCKED', 'SUBMITTED_FOR_REVIEW']);
@@ -108,7 +166,10 @@ function campaignScopeLabel(scope: CampaignScope, geoLabel: string): string {
 
 /* --------------------------------------------------------------------------- */
 
-type Loader = (tx: TenantTx, auth: AuthContext, ds: DatasetDefinition, def: ReportDefinition) => Promise<LoadedRows>;
+type Loader = (tx: TenantTx, auth: AuthContext, ds: DatasetDefinition, def: ReportDefinition) => Promise<Omit<LoadedRows, 'pushedFilters'>>;
+
+/** Loaders that apply pushdownFilters() in their query. */
+const PUSHDOWN_LOADERS = new Set(Object.keys(PUSHDOWN));
 
 const loadTasks: Loader = async (tx, auth, ds, def) => {
   const scope = await loadCampaignScope(tx, auth, ds.permission);
@@ -116,6 +177,7 @@ const loadTasks: Loader = async (tx, auth, ds, def) => {
   const where: Prisma.TaskWhereInput = {
     AND: [
       taskScopeWhere(scope) ?? {},
+      ...(pushdownFilters(ds, def).where as Prisma.TaskWhereInput[]),
       range ? { dueAt: range } : {},
       def.departmentId ? { departmentId: def.departmentId } : {},
       def.geographicUnitId ? { geographicUnit: { path: { contains: `/${def.geographicUnitId}/` } } } : {},
@@ -155,6 +217,7 @@ const loadEvents: Loader = async (tx, auth, ds, def) => {
     where: {
       AND: [
         eventScopeWhere(scope) ?? {},
+        ...(pushdownFilters(ds, def).where as Prisma.CampaignEventWhereInput[]),
         range ? { startsAt: range } : {},
         def.departmentId ? { departmentId: def.departmentId } : {},
         def.geographicUnitId ? { geographicUnit: { path: { contains: `/${def.geographicUnitId}/` } } } : {},
@@ -195,7 +258,14 @@ const loadContent: Loader = async (tx, auth, ds, def) => {
   const scope = await loadCampaignScope(tx, auth, ds.permission);
   const range = dateRange(def);
   const rows = await tx.contentItem.findMany({
-    where: { AND: [contentScopeWhere(scope) ?? {}, range ? { publishedAt: range } : {}, def.departmentId ? { departmentId: def.departmentId } : {}] },
+    where: {
+      AND: [
+        contentScopeWhere(scope) ?? {},
+        ...(pushdownFilters(ds, def).where as Prisma.ContentItemWhereInput[]),
+        range ? { publishedAt: range } : {},
+        def.departmentId ? { departmentId: def.departmentId } : {},
+      ],
+    },
     include: { author: { select: { displayName: true } }, approver: { select: { displayName: true } } },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: ds.maxRows + 1,
@@ -217,10 +287,22 @@ const loadContent: Loader = async (tx, auth, ds, def) => {
   };
 };
 
-function dateOnlyRange(def: ReportDefinition): { gte?: Date; lte?: Date } | undefined {
+const NAIROBI_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+/** Calendar day (YYYY-MM-DD) of an instant in Africa/Nairobi, the tenant's operating time zone. */
+export function nairobiDate(d: Date): string {
+  return NAIROBI_DAY.format(d);
+}
+
+/**
+ * For date-only columns (transaction dates, budget periods): the instants of
+ * the range mapped to their Africa/Nairobi calendar day, so "from 1 Nov
+ * 00:00 EAT" (31 Oct 21:00 UTC) starts on 1 Nov, not 31 Oct.
+ */
+export function dateOnlyRange(def: ReportDefinition): { gte?: Date; lte?: Date } | undefined {
   const r = dateRange(def);
   if (!r) return undefined;
-  return { ...(r.gte ? { gte: new Date(`${r.gte.toISOString().slice(0, 10)}T00:00:00Z`) } : {}), ...(r.lte ? { lte: new Date(`${r.lte.toISOString().slice(0, 10)}T00:00:00Z`) } : {}) };
+  return { ...(r.gte ? { gte: new Date(`${nairobiDate(r.gte)}T00:00:00Z`) } : {}), ...(r.lte ? { lte: new Date(`${nairobiDate(r.lte)}T00:00:00Z`) } : {}) };
 }
 
 const TX_INCLUDE = {
@@ -241,6 +323,7 @@ const loadTransactions = (contributionsOnly: boolean): Loader => async (tx, _aut
     where: {
       AND: [
         contributionsOnly ? { type: 'CONTRIBUTION' } : {},
+        ...(pushdownFilters(ds, def).where as Prisma.FinanceTransactionWhereInput[]),
         range ? { transactionDate: range } : {},
         def.departmentId ? { departmentId: def.departmentId } : {},
         def.electionCycleId ? { electionCycleId: def.electionCycleId } : {},
@@ -264,6 +347,8 @@ const loadTransactions = (contributionsOnly: boolean): Loader => async (tx, _aut
             identifierMasked: t.contributionSource?.identifierMasked ?? null,
             declared: t.contributionSource?.declared ?? false,
             amountMinor: minorToNumber(t.amountMinor),
+            // Internal (not a selectable field): keeps money totals per currency.
+            currency: t.currency,
             complianceFlags: t.complianceFlags,
           }
         : {
@@ -334,6 +419,7 @@ const loadBudget: Loader = async (tx, _auth, ds, def) => {
         eventReference: l.event?.reference ?? null,
         periodStart: isoDate(l.periodStart),
         budgetMinor: minorToNumber(l.amountMinor),
+        currency: l.currency,
         actualMinor: minorToNumber(s.actual),
         committedMinor: minorToNumber(s.committed),
         varianceMinor: minorToNumber(l.amountMinor - s.actual),
@@ -350,6 +436,7 @@ const loadIncidents: Loader = async (tx, auth, ds, def) => {
     where: {
       AND: [
         unitColumnsWhere(scope, cols, 'electionCycleId') ?? {},
+        ...(pushdownFilters(ds, def).where as Prisma.IncidentWhereInput[]),
         range ? { reportedAt: range } : {},
         def.electionCycleId ? { electionCycleId: def.electionCycleId } : {},
         def.geographicUnitId ? { OR: cols.map((c) => ({ [c]: def.geographicUnitId })) } : {},
@@ -480,7 +567,11 @@ const loadAudit: Loader = async (tx, _auth, ds, def) => {
 
 const loadBreaches: Loader = async (tx, _auth, ds, def) => {
   const range = dateRange(def);
-  const rows = await tx.breachRecord.findMany({ where: range ? { detectedAt: range } : {}, orderBy: [{ detectedAt: 'asc' }], take: ds.maxRows + 1 });
+  const rows = await tx.breachRecord.findMany({
+    where: { AND: [...(pushdownFilters(ds, def).where as Prisma.BreachRecordWhereInput[]), range ? { detectedAt: range } : {}] },
+    orderBy: [{ detectedAt: 'asc' }],
+    take: ds.maxRows + 1,
+  });
   return {
     truncated: rows.length > ds.maxRows,
     appliedScope: 'Organisation-wide (breach register)',
@@ -513,7 +604,8 @@ const LOADERS: Record<string, Loader> = {
 export async function loadDatasetRows(tx: TenantTx, auth: AuthContext, ds: DatasetDefinition, def: ReportDefinition): Promise<LoadedRows> {
   const loader = LOADERS[ds.key];
   if (!loader) throw AppException.validation('Unknown dataset', [{ path: ['datasetKey'], message: 'Unknown' }]);
-  const loaded = await loader(tx, auth, ds, def);
+  const raw = await loader(tx, auth, ds, def);
+  const loaded = { ...raw, pushedFilters: PUSHDOWN_LOADERS.has(ds.key) ? pushdownFilters(ds, def).pushed : [] };
   const narrowing: string[] = [];
   if (def.geographicUnitId) narrowing.push(`area ${await unitLabel(tx, def.geographicUnitId)}`);
   return { ...loaded, appliedScope: narrowing.length ? `${loaded.appliedScope}; narrowed to ${narrowing.join(', ')}` : loaded.appliedScope };

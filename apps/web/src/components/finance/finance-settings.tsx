@@ -51,7 +51,7 @@ import { UnverifiedBadge, VerifiedBadge } from './finance-ui';
 const isCancelled = (err: unknown) => err instanceof Error && err.message === 'Confirmation cancelled';
 
 export function FinanceSettings() {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const canManage = can('finance.settings.manage');
   const [showSuperseded, setShowSuperseded] = useState(true);
   const [kind, setKind] = useState<FinanceLimitKind | ''>('');
@@ -172,10 +172,14 @@ export function FinanceSettings() {
                             <Button size="sm" variant="secondary" onClick={() => setSuperseding(s)}>
                               New version
                             </Button>
-                            <Button size="sm" variant="secondary" onClick={() => setVerifying(s)}>
-                              {s.verified ? <ShieldQuestion className="h-4 w-4" aria-hidden /> : <ShieldCheck className="h-4 w-4" aria-hidden />}
-                              {s.verified ? 'Mark unverified' : 'Verify'}
-                            </Button>
+                            {s.verified || s.createdBy.id !== me?.user.id ? (
+                              <Button size="sm" variant="secondary" onClick={() => setVerifying(s)}>
+                                {s.verified ? <ShieldQuestion className="h-4 w-4" aria-hidden /> : <ShieldCheck className="h-4 w-4" aria-hidden />}
+                                {s.verified ? 'Mark unverified' : 'Verify'}
+                              </Button>
+                            ) : (
+                              <span className="self-center text-meta text-slate">You entered this setting: another person verifies it.</span>
+                            )}
                           </div>
                         ) : null}
                       </div>
@@ -444,12 +448,9 @@ function LimitFormDialog({ existing, cycles, onClose, onSaved }: { existing?: Fi
         >
           <textarea id="lf-source" className={textareaClass} value={f.legalSourceNote} maxLength={2000} onChange={(e) => set('legalSourceNote', e.target.value)} />
         </FormField>
-        <label className="mb-4 flex items-start gap-2 text-body text-ink">
-          <input type="checkbox" className="mt-1" checked={f.verified} onChange={(e) => set('verified', e.target.checked)} />
-          <span>
-            Legal review has confirmed this value and that the instrument is in force. <span className="text-slate">Leave unticked if in doubt: the setting will show as “{UNVERIFIED_LIMIT_LABEL}”.</span>
-          </span>
-        </label>
+        <p className="mb-4 text-body text-slate">
+          The setting starts as “{UNVERIFIED_LIMIT_LABEL}”. Once legal review confirms the value and that the instrument is in force, another person with finance settings rights verifies it.
+        </p>
         {existing ? (
           <FormField id="lf-reason" label="Reason for the new version" required error={errors.reason}>
             <textarea id="lf-reason" className={textareaClass} value={f.reason} maxLength={2000} onChange={(e) => set('reason', e.target.value)} />
