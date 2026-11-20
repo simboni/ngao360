@@ -37,7 +37,7 @@ import {
   UpdateCaseDto,
   UpdateCaseReferralDto,
 } from '../office.dto';
-import type { PossibleDuplicate } from './case-support';
+import type { PossibleDuplicate } from '@ngao360/shared';
 import { CasesService } from './cases.service';
 
 const CASE: GeoTarget = { kind: OFFICE_GEO_KIND.CASE, from: 'params', key: 'id' };

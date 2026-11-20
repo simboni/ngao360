@@ -7,6 +7,7 @@ import {
   CASE_STATUS_PUBLIC_STAGE,
   CURRENT_PORTAL_PRIVACY_NOTICE_VERSION,
   ERROR_CODES,
+  CITIZEN_FEEDBACK_LABELS,
   MAX_PUBLIC_PHOTO_BYTES,
   PUBLIC_CASE_STAGE_LABELS,
   PUBLIC_PHOTO_MIME_TYPES,
@@ -34,7 +35,7 @@ import {
   trackingCodeMatches,
 } from '../common';
 import { OFFICE_REFERENCE_PREFIX } from '../office.constants';
-import { CASE_ENTITY, CITIZEN_FEEDBACK_LABELS, PUBLIC_TEXT, publicEventMessage } from './case-support';
+import { CASE_ENTITY, PUBLIC_TEXT, publicEventMessage } from './case-support';
 import { CasesService } from './cases.service';
 
 /** The resolved portal tenant (PublicPortalService.resolve). */

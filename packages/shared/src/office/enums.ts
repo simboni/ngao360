@@ -393,6 +393,12 @@ export const CaseEventActorTypeSchema = z.enum(CASE_EVENT_ACTOR_TYPES);
 export const CITIZEN_FEEDBACK_RESPONSES = ['CONFIRM_RESOLVED', 'DISPUTE', 'ADDITIONAL_INFORMATION'] as const;
 export type CitizenFeedbackResponse = (typeof CITIZEN_FEEDBACK_RESPONSES)[number];
 export const CitizenFeedbackResponseSchema = z.enum(CITIZEN_FEEDBACK_RESPONSES);
+/** Requester-facing wording for a feedback response (portal tracking page and the public timeline). */
+export const CITIZEN_FEEDBACK_LABELS: Record<CitizenFeedbackResponse, string> = {
+  CONFIRM_RESOLVED: 'You confirmed that the issue is resolved',
+  DISPUTE: 'You said that the issue is not resolved',
+  ADDITIONAL_INFORMATION: 'You sent additional information',
+};
 
 export const REFERRAL_STATUSES = ['SENT', 'ACKNOWLEDGED', 'RESPONDED', 'NO_RESPONSE', 'CLOSED'] as const;
 export type ReferralStatus = (typeof REFERRAL_STATUSES)[number];

@@ -347,6 +347,23 @@ levels needs it too.
 | GET | `/office/correspondence/:id/attachments/:attachmentId/url` | `office.correspondence.view` | params | `SignedUrlResponse` | Inline view; `?download=1` for download. Audit: `FILE_SOURCE_ACCESSED` every call. |
 | GET | `/office/correspondence/:id/history` | `office.correspondence.view` | `IdParam` | `AuditEvent[]` | Audit events for the item and its attachments, oldest first. |
 
+## 9a. Office form support (`apps/api/src/modules/office/workspace`)
+
+Small reads the Office screens need whether or not the public portal is on. Schemas in
+`packages/shared/src/office/workspace.ts`.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/geography` | any of `office.cases.view`, `office.cases.create`, `office.projects.view`, `office.correspondence.view`, `office.appointments.view`, `office.meetings.view` | — | `OfficeGeography` | The county in `portalCountyUnitId` (first county when unset), its constituencies and wards. Used by filters and forms. |
+| GET | `/office/privacy-notice` | any of `office.cases.create`, `office.cases.view`, `office.appointments.manage`, `office.appointments.view` | — | `OfficePrivacyNotices` | `{ portal, appointment }` built from the tenant's controller name, contact and retention settings; read to walk-in and phone requesters. |
+| GET | `/office/cases/:id/assignable-officers` | `office.cases.manage` **(geo)** | `IdParam` | `UserRef[]` | Active users holding `office.cases.manage` over the case location. `assign` still re-checks. |
+| GET | `/office/cases/:id/possible-duplicates` | `office.cases.view` **(geo)** | `IdParam` | `PossibleDuplicate[]` | Triage hint (blueprint 9.2): same category and ward (or constituency), submitted within 30 days, description similarity ≥ 0.25, scope-filtered. A hint only; an officer closes a duplicate explicitly. |
+
+Implicit rules (from the Office API build, docs/CHANGE_REQUESTS.md): `assign` is refused in SUBMITTED
+and CLOSED (triage first); adding timeline events, evidence, milestones or referral updates does not bump
+the parent record's `version`; new project evidence starts `PENDING_VERIFICATION`; the user who last
+recorded a milestone's status cannot verify it; `POST /public/:slug/track` also runs the abuse check.
+
 ## 10. Appointments and meetings (`apps/api/src/modules/office/appointments`)
 
 Web: `/office/appointments` (diary with appointments and meetings tabs).

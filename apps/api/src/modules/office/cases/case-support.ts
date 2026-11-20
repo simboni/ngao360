@@ -6,7 +6,6 @@ import type {
   CaseReferral,
   CaseStatus,
   CaseSummary,
-  CitizenFeedbackResponse,
   ReferralStatus,
 } from '@ngao360/shared';
 import { OFFICE_FILE_SELECT, OFFICE_UNIT_SELECT, USER_REF, isoDate, toOfficeFile, toOfficeLocation } from '../common';
@@ -26,12 +25,6 @@ export const REFERRAL_STATUS_TRANSITIONS: Record<ReferralStatus, readonly Referr
   RESPONDED: ['CLOSED'],
   NO_RESPONSE: ['CLOSED'],
   CLOSED: [],
-};
-
-export const CITIZEN_FEEDBACK_LABELS: Record<CitizenFeedbackResponse, string> = {
-  CONFIRM_RESOLVED: 'You confirmed that the issue is resolved',
-  DISPUTE: 'You said that the issue is not resolved',
-  ADDITIONAL_INFORMATION: 'You sent additional information',
 };
 
 /** Requester-visible default texts (no staff names). */
@@ -224,15 +217,4 @@ export function rankPossibleDuplicates<T extends DuplicateCandidate>(
     .filter((r) => r.sameArea && r.score >= DUPLICATE_MIN_SIMILARITY)
     .sort((a, b) => b.score - a.score || b.candidate.submittedAt.getTime() - a.candidate.submittedAt.getTime())
     .slice(0, limit);
-}
-
-/** Response item of GET /office/cases/:id/possible-duplicates (see docs/CHANGE_REQUESTS.md, Office). */
-export interface PossibleDuplicate {
-  id: string;
-  reference: string;
-  publicReference: string;
-  title: string;
-  status: CaseStatus;
-  submittedAt: string;
-  similarity: number;
 }

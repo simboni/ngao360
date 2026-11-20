@@ -8,3 +8,4 @@ export * from './appointments';
 export * from './cases';
 export * from './projects';
 export * from './public';
+export * from './workspace';

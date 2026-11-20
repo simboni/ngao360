@@ -4,6 +4,7 @@ import { OFFICE_ROLE_KEYS, SYSTEM_ROLES } from '../roles';
 import { effectiveModules } from '../modules';
 import {
   CASE_STATUSES,
+  CITIZEN_FEEDBACK_LABELS,
   CASE_STATUS_PUBLIC_STAGE,
   CASE_STATUS_TRANSITIONS,
   PROJECT_STAGE_KIND,
@@ -20,6 +21,7 @@ import { OfficeModuleConfigSchema } from './common';
 import { CURRENT_PORTAL_PRIVACY_NOTICE_VERSION, portalPrivacyNotice } from './privacy';
 import { PUBLIC_REFERENCE_PATTERN, formatPublicReference, formatTrackingCode } from './references';
 import { UpdateProjectPublicationSchema } from './projects';
+import { OfficeGeographySchema, OfficePrivacyNoticesSchema, PossibleDuplicateSchema } from './workspace';
 
 const officeRoles = SYSTEM_ROLES.filter((r) => OFFICE_ROLE_KEYS.includes(r.key));
 
@@ -184,5 +186,28 @@ describe('staff DTOs', () => {
   it('contact preference needs the matching detail', () => {
     expect(CaseContactInputSchema.safeParse({ preference: 'EMAIL' }).success).toBe(false);
     expect(CaseContactInputSchema.safeParse({ preference: 'NONE' }).success).toBe(true);
+  });
+});
+
+describe('office form-support schemas (§9a)', () => {
+  const id = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+  it('accepts a geography and privacy notices response', () => {
+    expect(
+      OfficeGeographySchema.safeParse({
+        county: { id, name: 'Bungoma' },
+        constituencies: [{ id, name: 'Kanduyi' }],
+        wards: [{ id, name: 'Township', constituencyId: id }],
+      }).success,
+    ).toBe(true);
+    const notice = portalPrivacyNotice({ controllerName: 'Office', dataProtectionContact: 'dpo@example.org', caseRetentionMonths: 24, contactRetentionMonths: 12 });
+    expect(OfficePrivacyNoticesSchema.safeParse({ portal: notice, appointment: notice }).success).toBe(true);
+  });
+  it('bounds the duplicate similarity score', () => {
+    const base = { id, reference: 'CASE-2026-000001', publicReference: 'BGM-ABCD-EFGH', title: 't', status: 'SUBMITTED', submittedAt: '2026-11-01T08:00:00Z' };
+    expect(PossibleDuplicateSchema.safeParse({ ...base, similarity: 0.4 }).success).toBe(true);
+    expect(PossibleDuplicateSchema.safeParse({ ...base, similarity: 1.4 }).success).toBe(false);
+  });
+  it('labels every citizen feedback response', () => {
+    expect(Object.keys(CITIZEN_FEEDBACK_LABELS).sort()).toEqual(['ADDITIONAL_INFORMATION', 'CONFIRM_RESOLVED', 'DISPUTE']);
   });
 });

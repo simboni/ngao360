@@ -1,12 +1,12 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import type { UserRef } from '@ngao360/shared';
+import type { OfficeGeography, OfficePrivacyNotices, UserRef } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { CurrentAuth } from '../../../common/decorators/auth.decorators';
 import { RequirePermission } from '../../../rbac/require-permission.decorator';
 import { RequireModule } from '../../../tenant-modules/require-module.decorator';
 import { OFFICE_GEO_KIND } from '../office.constants';
 import { OfficeIdParamDto } from '../office.dto';
-import { type OfficeGeography, type OfficePrivacyNotices, OfficeWorkspaceService } from './office-workspace.service';
+import { OfficeWorkspaceService } from './office-workspace.service';
 
 const ANY_OFFICE_VIEW = [
   'office.cases.view',
@@ -18,8 +18,7 @@ const ANY_OFFICE_VIEW = [
 ] as const;
 
 /**
- * Office form support (proposed contract additions, docs/CHANGE_REQUESTS.md
- * Office API section): works with the public portal switched off.
+ * Office form support (API contract §9a): works with the public portal switched off.
  */
 @RequireModule('office')
 @Controller('office')

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
-  type PrivacyNotice,
+  type OfficeGeography,
+  type OfficePrivacyNotices,
   type UserRef,
   appointmentPrivacyNotice,
   portalPrivacyNotice,
@@ -13,22 +14,9 @@ import { scopeAllows, scopeFromGrants } from '../../../rbac/scope';
 import { TenantModulesService } from '../../../tenant-modules/tenant-modules.service';
 import { officeGeoLocation } from '../common';
 
-/** Office geography for forms and filters (the county the office serves). */
-export interface OfficeGeography {
-  county: { id: string; name: string } | null;
-  constituencies: Array<{ id: string; name: string }>;
-  wards: Array<{ id: string; name: string; constituencyId: string }>;
-}
-
-/** Current privacy notices with the tenant's controller, contact and retention settings. */
-export interface OfficePrivacyNotices {
-  portal: PrivacyNotice;
-  appointment: PrivacyNotice;
-}
-
 /**
  * Small read endpoints the Office screens need regardless of the public portal
- * (proposed in docs/CHANGE_REQUESTS.md, Office): geography, privacy notices and
+ * (API contract §9a): geography, privacy notices and
  * officers a case can be assigned to.
  */
 @Injectable()
