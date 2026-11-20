@@ -320,3 +320,60 @@ The S18–S22 screens live in `apps/web/src/app/(app)/tally/**` and `apps/web/sr
    `@ngao360/shared`: `lib/api-client.ts` imports `CSRF_HEADER` from the package barrel, whose zod
    schemas are module-level and hard to tree-shake. A `@ngao360/shared/constants` subpath export
    (no zod) would probably reduce the first load on slow mobile connections; measure before and after.
+
+## Office API (from the Office API agent)
+
+All Office and public-portal endpoints in API_CONTRACT §9–13 are implemented in
+`apps/api/src/modules/office/**`, with integration suites in `apps/api/test/office-*.spec.ts`. The items
+below are additions or decisions that need a contract or shared-schema update; none changes an existing
+request or response shape.
+
+1. **Endpoints added beyond §9–13 (implemented; please add rows to the contract and zod schemas to
+   `packages/shared/src/office/`).** Response types are declared locally in the API for now.
+   - `GET /office/cases/:id/possible-duplicates` (`office.cases.view` **(geo)**) →
+     `PossibleDuplicate[]` = `{ id, reference, publicReference, title, status, submittedAt, similarity }`.
+     The triage hint from blueprint 9.2: same category and same ward (or constituency when no ward is
+     known), submitted within 30 days, description similarity ≥ 0.25, scope-filtered. Portal
+     submissions with a hint also get an INTERNAL `NOTE` event with `actorType: SYSTEM` naming the
+     internal references; it never reaches the tracking page.
+   - `GET /office/geography` (any `office.*.view` or `office.cases.create`) → `{ county, constituencies,
+     wards }` for `portalCountyUnitId` (first county when unset). Answers item 3 of the cases web
+     agent's section, so walk-in recording works with the portal off.
+   - `GET /office/privacy-notice` (`office.cases.create`, `office.cases.view`, `office.appointments.*`)
+     → `{ portal: PrivacyNotice, appointment: PrivacyNotice }` built from the tenant configuration.
+   - `GET /office/cases/:id/assignable-officers` (`office.cases.manage` **(geo)**) → `UserRef[]` of
+     active users holding `office.cases.manage` over the case location (item 2 of the cases web
+     agent's section). `POST .../assign` still re-checks.
+2. **Acknowledgement queue job.** A portal submission with consented contact queues
+   `{ kind: 'office.case.acknowledgement', tenantId, caseId, channel }` on `NOTIFICATION_QUEUE`
+   (job name `office.case.acknowledgement`). The job carries ids only; no processor exists yet (admin
+   module owns notifications). The processor must read the contact itself, skip erased contacts and
+   send no case content beyond the public reference.
+3. **Review-date SLA.** When an officer sets no `nextReviewDate`, entering ASSIGNED / IN_PROGRESS /
+   REFERRED (or creating a case with an assignee) sets one by priority: URGENT 1 day, HIGH 3, MEDIUM 7,
+   LOW 14 (`REVIEW_SLA_DAYS`); a referral's `followUpDate` takes precedence. Make the table a tenant
+   setting in `OfficeModuleConfig` if offices need different SLAs.
+4. **Rules the contract leaves implicit (implemented; please document).**
+   - `assign` is refused (409 `INVALID_TRANSITION`) in SUBMITTED and CLOSED: triage first.
+   - Timeline events, evidence, milestones and referral updates do not bump the parent record's
+     `version`, so adding a note never invalidates a pending transition.
+   - New project evidence starts as `PENDING_VERIFICATION`.
+   - Milestone verification is refused (403 `SEPARATION_OF_DUTIES`) for the user who last recorded the
+     milestone's status (from the audit stream), mirroring expenditure verification.
+   - Turning `contractAmountIsPublic` off while `contractAmount` is a published field is refused (400).
+   - `POST /public/:tenantSlug/track` also runs the abuse check (honeypot; captcha when configured),
+     because tracking is the endpoint a code-guessing bot would hit. The web form already sends the
+     abuse fields from `PublicTrackRequestSchema`.
+   - Public `filePath` values are API paths (`/api/public/:slug/projects/:id/evidence/:evidenceId/file`)
+     so the web can link them directly.
+   - Correspondence `view=unassigned` leaves out FILED and ARCHIVED items; reassigning a FILED or
+     ARCHIVED item is refused (409 `IMMUTABLE_RECORD`).
+   - Every Office audit snapshot replaces contact values with `hasPhone` / `hasEmail`; appointment
+     updates also drop the requester name (`requesterNameChanged: true`); note, minutes, agenda and
+     participant text is never copied into audit events.
+5. **Shared labels.** `CITIZEN_FEEDBACK_LABELS` (requester-facing text for feedback responses) lives in
+   `apps/api/src/modules/office/cases/case-support.ts`; move it to `packages/shared/src/office/enums.ts`
+   next to `CitizenFeedbackResponseSchema` so the tracking page can reuse it.
+6. **Known gaps (unchanged by this work).** The public rate limiter keeps counters in memory per API
+   instance (move to Redis before scaling out); no captcha verifier is bound; contact retention is
+   recorded (`retentionUntil`) but no scheduled job erases expired contacts yet.

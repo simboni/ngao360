@@ -254,6 +254,22 @@ describeDb('Office citizen cases (integration)', () => {
     await f.http('tallyOnly').get('/office/cases').expect(403);
   });
 
+  it('offers form support without the public portal: geography, privacy notices and assignable officers', async () => {
+    const geo = await f.http('viewer').get('/office/geography').expect(200);
+    expect(geo.body.county.id).toBe(f.units.county);
+    expect(geo.body.wards.map((w: { id: string }) => w.id).sort()).toEqual([f.units.w1, f.units.w2, f.units.w3].sort());
+    const notices = await f.http('officerA').get('/office/privacy-notice').expect(200);
+    expect(notices.body.portal.version).toBe(CURRENT_PORTAL_PRIVACY_NOTICE_VERSION);
+    expect(notices.body.appointment.version).toEqual(expect.any(String));
+    const officers = await f.http('officerA').get(`/office/cases/${caseId}/assignable-officers`).expect(200);
+    const officerIds = officers.body.map((u: { id: string }) => u.id);
+    expect(officerIds).toEqual(expect.arrayContaining([f.users.officerA, f.users.officerB, f.users.noNotes]));
+    expect(officerIds).not.toContain(f.users.scopedW2);
+    expect(officerIds).not.toContain(f.users.viewer);
+    await f.http('viewer').get(`/office/cases/${caseId}/assignable-officers`).expect(403);
+    await f.http('tallyOnly').get('/office/geography').expect(403);
+  });
+
   it('history lists the audit trail of the case, oldest first', async () => {
     const h = await f.http('viewer').get(`/office/cases/${caseId}/history`).expect(200);
     const actions = h.body.map((e: { action: string }) => e.action);
