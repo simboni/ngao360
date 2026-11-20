@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { CaseList } from '@/components/office/cases/case-list';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Citizen cases' };
 
-/** Citizen case list (S25 entry point). API §11. Owner: cases agent (components/office/cases). */
+/** Citizen case list (S25 entry point). API §11. */
 export default function CasesPage() {
   return (
-    <ModulePlaceholder
-      title="Citizen cases"
-      screen="Case list"
-      description="Service requests and issue reports from the public portal and walk-ins, by stage, ward, assignee and review date."
-      breadcrumbs={[{ label: 'Office' }, { label: 'Citizen cases' }]}
-      anyOf={['office.cases.view']}
-    />
+    <RequirePagePermission anyOf={['office.cases.view']}>
+      <Suspense>
+        <CaseList />
+      </Suspense>
+    </RequirePagePermission>
   );
 }

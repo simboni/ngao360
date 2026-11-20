@@ -281,3 +281,42 @@ The S18–S22 screens live in `apps/web/src/app/(app)/tally/**` and `apps/web/sr
    `img-src blob:` and `frame-src blob:` (and `connect-src` for the S3/MinIO host when the S3 driver
    is used; that bucket also needs CORS for `GET` from the web origin, otherwise the viewer falls
    back to the signed URL without the browser-side hash check).
+
+## Office: citizen cases and public portal UI (from the cases web agent)
+
+1. **Run the new web tests in `pnpm test`.** The Office case screens and the public portal have
+   their own suites, which the current `@ngao360/web` `test` script does not pick up (it globs
+   `components/tally/__tests__` only). Proposed script:
+   `tsx --tsconfig src/components/tally/__tests__/tsconfig.json --test src/components/tally/__tests__/*.test.ts src/components/tally/__tests__/*.test.tsx && tsx --tsconfig src/components/public/__tests__/tsconfig.json --test src/components/public/__tests__/*.test.tsx && tsx --tsconfig src/components/office/cases/__tests__/tsconfig.json --test src/components/office/cases/__tests__/*.test.tsx`.
+
+2. **Assignee lookup for cases.** `POST /office/cases/:id/assign` takes a user id, but case officers
+   cannot list users (`/admin/users` needs `users.view`, which only the Office administrator holds).
+   The assign dialog therefore offers the caller, anyone already assigned, and (for `users.view`
+   holders) active Case officers and Office administrators; the API still checks the assignee's
+   permission and scope. Proposed: `GET /office/cases/:id/assignable-officers`
+   (`office.cases.manage`, geo) returning `UserRef[]` of active users holding `office.cases.manage`
+   over the case location.
+
+3. **Office geography lookup.** Office roles do not hold `reference.view`, so the case list filter,
+   the "Record a case" form and the edit dialog read constituencies and wards (and the current
+   privacy notice) from `GET /public/:tenantSlug/portal`. That only works while the public portal
+   is on. Proposed: `GET /office/geography` (any `office.*.view`) returning the county's
+   constituencies and wards, and `GET /office/privacy-notice` returning `portalPrivacyNotice()` with
+   the tenant's configuration, so walk-in recording works with the portal switched off.
+
+4. **Kiswahili strings.** `components/public/i18n.ts` holds the complete English table and a partial
+   `sw` table that falls back to English key by key. The privacy notice text itself comes from the
+   API (`portalPrivacyNotice`) and is English only; a Kiswahili notice needs a `locale` argument on
+   that function and on `GET /public/:tenantSlug/portal`, reviewed by a fluent speaker.
+
+5. **Captcha widget.** The portal ships no captcha script (no third-party hosts). When an office sets
+   `captchaProvider`, register a widget with `registerCaptchaWidget()` in
+   `components/public/captcha.tsx` and add the provider's host to a future CSP; until then the
+   forms explain that the check is unavailable and do not submit, matching the API, which fails
+   closed.
+
+6. **Public portal bundle size.** `next build` reports 175–181 kB first-load JavaScript for the public
+   pages (about the same as `/login`; 102 kB is the framework baseline). Much of the rest is likely
+   `@ngao360/shared`: `lib/api-client.ts` imports `CSRF_HEADER` from the package barrel, whose zod
+   schemas are module-level and hard to tree-shake. A `@ngao360/shared/constants` subpath export
+   (no zod) would probably reduce the first load on slow mobile connections; measure before and after.

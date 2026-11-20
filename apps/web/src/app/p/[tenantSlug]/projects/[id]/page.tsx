@@ -1,13 +1,14 @@
-import { PublicPlaceholder } from '@/components/office/public/public-shell';
+import { PortalGate } from '@/components/public/portal-ui';
+import { ProjectDetailView } from '@/components/public/project-detail';
 
 export const metadata = { title: 'Project' };
 
-/** Public project view. API §13.4. Owner: projects agent. */
-export default function PublicProjectPage() {
+/** Public project view. API §13.4: approved public fields only. */
+export default async function PublicProjectPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   return (
-    <PublicPlaceholder
-      title="Project"
-      description="Approved public fields only. A commitment is not an approved project, and a photograph alone is not proof of completion."
-    />
+    <PortalGate>
+      <ProjectDetailView id={id} />
+    </PortalGate>
   );
 }

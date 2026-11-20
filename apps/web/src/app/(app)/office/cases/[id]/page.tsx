@@ -1,4 +1,6 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { CaseWorkspace } from '@/components/office/cases/case-workspace';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Case workspace' };
 
@@ -6,12 +8,10 @@ export const metadata = { title: 'Case workspace' };
 export default async function CaseWorkspacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Case workspace"
-      screen="S25 Case workspace"
-      description={`Case ${id}: timeline, public updates, internal notes, assignee, referral, review date, evidence, close and reopen.`}
-      breadcrumbs={[{ label: 'Office' }, { label: 'Citizen cases', href: '/office/cases' }, { label: 'Case' }]}
-      anyOf={['office.cases.view']}
-    />
+    <RequirePagePermission anyOf={['office.cases.view']}>
+      <ReauthProvider>
+        <CaseWorkspace id={id} />
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }

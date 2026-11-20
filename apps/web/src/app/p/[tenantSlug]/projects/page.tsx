@@ -1,13 +1,16 @@
-import { PublicPlaceholder } from '@/components/office/public/public-shell';
+import { Suspense } from 'react';
+import { PortalGate } from '@/components/public/portal-ui';
+import { ProjectList } from '@/components/public/project-list';
 
 export const metadata = { title: 'Development projects' };
 
-/** Public project list. API §13.4. Owner: projects agent. */
+/** Public project list. API §13.4. */
 export default function PublicProjectsPage() {
   return (
-    <PublicPlaceholder
-      title="Development projects"
-      description="Published projects with the responsible institution, the source of the commitment and whether completion has been independently verified."
-    />
+    <PortalGate>
+      <Suspense>
+        <ProjectList />
+      </Suspense>
+    </PortalGate>
   );
 }

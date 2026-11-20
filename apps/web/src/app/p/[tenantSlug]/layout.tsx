@@ -1,8 +1,14 @@
+import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { PublicShell } from '@/components/office/public/public-shell';
+import { PortalShell } from '@/components/public/portal-shell';
 
-/** Public portal route group: outside the authenticated (app) shell. */
+export const metadata: Metadata = {
+  title: { default: 'Public service portal', template: '%s · Public service portal' },
+  robots: { index: false, follow: false },
+};
+
+/** Public portal route group: outside the authenticated (app) shell. API §13. */
 export default async function PublicPortalLayout({ children, params }: { children: ReactNode; params: Promise<{ tenantSlug: string }> }) {
   const { tenantSlug } = await params;
-  return <PublicShell tenantSlug={tenantSlug}>{children}</PublicShell>;
+  return <PortalShell slug={tenantSlug}>{children}</PortalShell>;
 }
