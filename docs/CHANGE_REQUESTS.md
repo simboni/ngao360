@@ -375,8 +375,8 @@ request or response shape.
    `apps/api/src/modules/office/cases/case-support.ts`; move it to `packages/shared/src/office/enums.ts`
    next to `CitizenFeedbackResponseSchema` so the tracking page can reuse it.
 6. **Known gaps (unchanged by this work).** The public rate limiter keeps counters in memory per API
-   instance (move to Redis before scaling out); no captcha verifier is bound; contact retention is
-   recorded (`retentionUntil`) but no scheduled job erases expired contacts yet.
+   instance (move to Redis before scaling out); no captcha verifier is bound. (Contact retention:
+   done in the review-fix pass, see below.)
 
 ## Office: correspondence, appointments and projects UI (from the office web agent)
 
@@ -451,7 +451,22 @@ Applied in the integration pass on `feat/office-governor`:
 
 Still open (unchanged): Kiswahili privacy notice (cases item 4), captcha widget and verifier (cases
 item 5, Office API item 6), public bundle size (cases item 6), acknowledgement processor (Office API
-item 2), review-date SLA as a tenant setting (Office API item 3), Redis-backed public limiter and
-contact-retention job (Office API item 6), assignee endpoint for correspondence, appointments and
+item 2), review-date SLA as a tenant setting (Office API item 3), Redis-backed public limiter (Office API item 6; the contact-retention job is done), assignee endpoint for correspondence, appointments and
 projects (office web item 3), coordinates and a map (office web item 4), per-milestone verify flag
 (office web item 7).
+
+## Office review fixes (contract changes, applied)
+
+Applied directly to `docs/API_CONTRACT.md` §9–13 in the review-fix pass (see `docs/STATUS.md`):
+
+1. New permission `office.cases.confidential` (high risk; Office administrator). Restricted cases
+   answer 404 without it.
+2. New endpoint `POST /office/cases/:id/redact` (`office.cases.close`, re-auth) and the retention
+   job; `CaseDetail.redactedAt`; `CaseAction` `redact`; audit action `office.case.redacted`.
+3. `CLOSED` is reachable from ASSIGNED, IN_PROGRESS, REFERRED and REOPENED for closure reasons other
+   than `RESOLVED` (`caseClosureAllowed`).
+4. Projects: `approvalAuthority` required from APPROVED on; `completionEvidenceIds` stored; editing a
+   published field withdraws publication; the public evidence file endpoint returns a cleaned photo
+   (200) or, for a PDF with a clean scan only, a 302 to a download.
+5. Portal privacy notice `office-portal-2026-11-v2`; portal HEIC photos are refused.
+
