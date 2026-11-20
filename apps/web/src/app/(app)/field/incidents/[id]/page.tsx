@@ -1,4 +1,6 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { IncidentDetail } from '@/components/field/incidents/incident-detail';
+import { TallyActionProvider } from '@/components/tally/action-provider';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Incident' };
 
@@ -6,12 +8,10 @@ export const metadata = { title: 'Incident' };
 export default async function IncidentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Incident"
-      screen="Incident detail"
-      description={`Incident ${id}: the original factual report, severity and triage, assignee, escalation, append-only events (notes, corrections, referrals, evidence holds), resolution and closure by a second reviewer.`}
-      breadcrumbs={[{ label: 'Field operations' }, { label: 'Incidents', href: '/field/incidents' }, { label: 'Incident' }]}
-      anyOf={['field.incidents.view']}
-    />
+    <RequirePagePermission anyOf={['field.incidents.view']}>
+      <TallyActionProvider>
+        <IncidentDetail id={id} />
+      </TallyActionProvider>
+    </RequirePagePermission>
   );
 }

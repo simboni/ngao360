@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { WarRoom } from '@/components/field/warroom/war-room';
+import { TallyActionProvider } from '@/components/tally/action-provider';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'War Room' };
 
-/** S16 War Room. API §21. */
+/** S16 War Room. API §21. The unofficial / internal banner is rendered by the layout. */
 export default function WarRoomPage() {
   return (
-    <ModulePlaceholder
-      title="War Room"
-      screen="S16 War Room"
-      description="Live station panel (blueprint 7.2 statuses), agent operations, incident queue, form intake, tally verification state and system health. Unofficial, internal figures with completeness on every panel."
-      breadcrumbs={[{ label: 'Election day' }, { label: 'War Room' }]}
-      anyOf={['warroom.view']}
-    />
+    <RequirePagePermission anyOf={['warroom.view']}>
+      <TallyActionProvider>
+        <WarRoom />
+      </TallyActionProvider>
+    </RequirePagePermission>
   );
 }

@@ -1,16 +1,13 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { IncidentList } from '@/components/field/incidents/incident-list';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Incidents' };
 
 /** Incident desk. API §20. */
 export default function IncidentsPage() {
   return (
-    <ModulePlaceholder
-      title="Incidents"
-      screen="Incident desk"
-      description="Incident queue by severity, age, category, status and assignee. Incidents are factual records: the original report never changes and corrections are added as events."
-      breadcrumbs={[{ label: 'Field operations' }, { label: 'Incidents' }]}
-      anyOf={['field.incidents.view']}
-    />
+    <RequirePagePermission anyOf={['field.incidents.view']}>
+      <IncidentList />
+    </RequirePagePermission>
   );
 }
