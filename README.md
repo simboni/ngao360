@@ -17,8 +17,8 @@ NGAO360 **is not**: an election management body, a voter register, a KIEMS repla
 
 What this build covers (see [docs/DECISIONS.md](docs/DECISIONS.md)):
 
-- **Platform:** platform foundation, NGAO TALLY MVP and NGAO360 Office (roadmap stages 1, 4 and 5).
-- **Rehearsals:** County Governor tally (Forms 37A, 37B and 37C) and a County Governor's office (citizen request to closure, project to verified public view).
+- **Platform:** platform foundation, NGAO TALLY MVP, NGAO360 Office and field and election operations (roadmap stages 1, 3, 4 and 5).
+- **Rehearsals:** County Governor tally (Forms 37A, 37B and 37C), a County Governor's office (citizen request to closure, project to verified public view) and election day in the field (deployment to War Room).
 - **Demo data:** all synthetic. Fictional candidates, a synthetic Bungoma registry of 153 stations, invented figures. Only the 47 county codes and names are real public reference data.
 
 ## Quick start
@@ -40,11 +40,14 @@ pnpm typecheck && pnpm lint && pnpm build
 pnpm test                         # unit + DB integration tests (integration runs when TEST_* URLs are set)
 pnpm smoke:web                    # Playwright smoke against the running app; writes docs/screenshots/
 pnpm smoke:office                 # Office smoke: public portal, case workspace, project register; docs/screenshots/office-*.png
+pnpm smoke:field                  # Field smoke: War Room, planner, masked agent profile, /m and the offline queue; docs/screenshots/field-*.png
 ```
 
 To run the Governor rehearsal on its own: `pnpm test:rehearsal`. It runs the whole flow through the API: upload, capture, a separation-of-duties refusal, verification, an arithmetic discrepancy, the snapshot, an export, a 37B cross-stage variance case and the audit trail.
 
 The Office rehearsal is `pnpm test:rehearsal:office`: a citizen submits a request on the public portal without an account, the office administrator triages and assigns it, the case officer refers it to the responsible institution and proposes a resolution, the citizen tracks it and sees only public updates, and a second person closes it. A project is recorded with its responsible institution, evidence is verified by someone other than the uploader, a photograph alone is refused as proof of completion, and the public page shows only the fields the public-information editor approved.
+
+The election-day rehearsal is `pnpm test:rehearsal:field`: the planner deploys agents and leaves a coverage gap, readiness checklists are completed for some stations, an agent checks in and sends the opening-of-polls report through the offline sync endpoint twice (the duplicate is recognised and applied once), the agent reports a high-severity incident, the incident desk triages, escalates and resolves it and a second person closes it, and the War Room shows station statuses, coverage, incidents and tally intake, labelled unofficial / internal, with stations that sent nothing counted as missing, never as zero. It ends by checking that an agent cannot report for a station they are not deployed to.
 
 ## Demo accounts (synthetic)
 
@@ -72,7 +75,21 @@ Organisation code **`demo`**. The password for every account is `SEED_DEMO_PASSW
 | `commander@demo.example.org` | War Room commander | Organisation | TOTP |
 | `observer@demo.example.org` | War Room observer | Organisation | none |
 
-The `demo` tenant also has the `field` module on with synthetic field data: 120 agents, about 100 deployments with deliberate gaps (uncovered stations), readiness checklists in mixed states, two active report templates, 30 field reports, 25 incidents across severities and statuses and War Room station statuses. The field screens are route stubs until the field modules are built (docs/STATUS.md).
+The `demo` tenant also has the `field` module on with synthetic field data: 120 agents, about 100 deployments with deliberate gaps (uncovered stations), readiness checklists in mixed states, two active report templates, 30 field reports, 25 incidents across severities and statuses and War Room station statuses.
+
+### Field and election operations (synthetic, tenant `demo`)
+
+| Where | Who | What |
+| --- | --- | --- |
+| `/field/agents`, `/field/agents/[id]` (S13) | `planner@`, `field@` | Agent registry and profile. Phone, ID, M-Pesa number and next of kin are masked; `field@` may reveal them (reason + password, audited, hidden again after 60 s). |
+| `/field/deployment` (S14) | `planner@` | Every approved-registry station with coverage, "Not assigned" gaps and conflicts; assign by selection, drag or in bulk; roster export with masked phones. |
+| `/field/readiness` (S15) | `field@`, `field.north@` | Checklists per station; stations without one count as "not started", never ready. |
+| `/field/incidents[/id]` | `incidents@` | Incident desk: triage, assign, escalate, resolve; the original report is locked and corrections are added beside it; closure by a second person. |
+| `/warroom` (S16) | `commander@` (TOTP), `observer@` | Six panels, each labelled unofficial / internal with completeness; missing stations shown as missing, never zero; tally figures "not available" without tally access. |
+| `/dashboard` | holders of field or War Room permissions | Field operations card (readiness, gaps, open incidents, War Room stations reporting) and the agent-coverage KPI. |
+| `/m` (S11, S17) | `agent1@`, `agent2@` | Mobile field app: my station, check-in, opening/closing report, incident report and an encrypted offline queue that uploads with idempotency keys and shows conflicts for a decision. |
+
+Offline queue: items are sealed with AES-GCM under a non-extractable per-user key in IndexedDB; they protect against copying the browser's files, not against someone using the unlocked phone (a PIN-wrapped key is the next step). Uploads run while a tab is open. See docs/ARCHITECTURE.md §14 and docs/STATUS.md.
 
 Other tenants: `platform` (`operator@platform.example.org`, platform operator) and `other` (`owner@other.example.org`, used to test cross-tenant isolation).
 

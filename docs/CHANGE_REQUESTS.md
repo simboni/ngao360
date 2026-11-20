@@ -589,3 +589,30 @@ Known gaps (documented, not blocking):
   removed from the queue before it uploads).
 - Server-side EXIF stripping is still open (§16.4 gap); the phone now re-encodes photos (EXIF/GPS
   removed, long edge 1600 px) before queueing, so PWA uploads no longer carry it.
+
+## Field: integration status (after the three field agents)
+
+Applied in the integration pass (contract updated in `docs/API_CONTRACT.md` §7, §17, §19.2, §20):
+
+| Request | Status |
+| --- | --- |
+| Web 1: mount `<FieldDashboardCard />` on the dashboard | **Applied.** Below the KPI row of the command centre; it also shows "Stations reporting (War Room)" (reported of expected, missing named as "no update yet (not zero)") with the unofficial / internal label for `warroom.view` holders when field and tally are on. The dashboard's `agent_coverage` KPI is now AVAILABLE with the field module and `field.deployment.view`. |
+| Web 2: incident assignee lookup | **Applied.** `GET /field/incidents/:id/assignable-users` (`field.incidents.assign`, geo) → `UserRef[]` of active users holding `field.incidents.triage` over the location; the assign and escalate dialogs use it (open-incident assignees remain the fallback for callers without assign). The `/admin/users` fallback was removed. |
+| Web 3: agent activity filters | Open. Still by station code. |
+| Web 4: `agentId` on coverage slots | **Applied.** The planner's double-booking precheck matches by agent id and is blocking, like the server. |
+| Web 5: War Room timeline feed | Open. |
+| Web 6: `initialSeverity` on incidents | **Applied.** On `IncidentSummarySchema`; shown on the original-report card. |
+| Web 7: `GET /field/cycle` | Open. |
+| API 1: bulk-deployment schemas in shared | **Applied.** `BulkCreateDeploymentSchema` / `BulkDeploymentResultSchema` in `packages/shared/src/field/deployment.ts`; endpoint in the contract (§17). |
+| API 2–7, 10: interpretations | Recorded in the contract where they change behaviour (coverage over-coverage, reassignment). |
+| API 8: registry index | **Applied.** Migration `20261123000000_field_integration`: `polling_stations (tenant_id, registry_version_id, status)` plus `ANALYZE`. The hash-join workaround stays. |
+| API 9: evidence upload claims | Open (documented gap). |
+| Mobile 1: `geolocation=(self)` | **Applied** in `next.config.mjs`. |
+| Mobile 2: desktop sign-out clears the queue | **Applied.** `auth-context` `logout` calls `clearOfflineDataForSignOut()`; the top-bar sign-out first counts unsent items of the last field user on the device (`unsentCountForLastSession()`, states only, no decryption) and asks for confirmation. |
+| Mobile 3: unused placeholders | **Applied.** `components/field/mobile/mobile-shell.tsx` and `mobile-placeholder.tsx` deleted. |
+| Mobile 4–6 | Not applied (optional). |
+
+Found and fixed during integration (not requested):
+
+- **Agents could report outside their deployment.** Report and incident intake checked only the grant scope, so an agent with a ward grant could report for any station in the ward. A caller linked to an agent record now reports only at stations where they hold an ASSIGNED / CONFIRMED / CHECKED_IN / CHECKED_OUT deployment in the cycle (403 `OUT_OF_SCOPE`, also through sync). Callers without an agent record keep scope-only rules.
+- **False offline conflicts in the seeded demo.** The seed wrote AGT / FRP / INC references without moving `reference_sequences`, so the first API-created incident hit a unique violation on the reference, which the services reported as `IDEMPOTENCY_KEY_REUSED` ("already sent with different content"); the phone then asked the agent to decide on a conflict that did not exist. The seed now moves the counters past seeded references (on every run), and only a violation of the client idempotency key index maps to `IDEMPOTENCY_KEY_REUSED`; other violations are server errors (sync: REJECTED `INTERNAL`, retried with the same key).

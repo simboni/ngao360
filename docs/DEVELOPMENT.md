@@ -131,9 +131,12 @@ The test layers:
 | Governor rehearsal | `apps/api/test/governor-rehearsal.e2e.spec.ts` | the demo seed in a fresh synthetic tenant, with real sign-in and TOTP, and the 37A/37B flow from start to finish |
 | Station lineage | `apps/api/test/registry-lineage.integration.spec.ts` | a station-scoped grant survives a newly approved registry version, duplicates are found across versions, dashboard station counts stay correct |
 | Field foundation | `apps/api/test/field-foundation.integration.spec.ts`, `apps/api/src/modules/field/__tests__`, `packages/shared/src/field/field.test.ts`, `apps/web/src/components/field/__tests__` | RLS on every field table, no deletes, append-only histories, immutable incident reports and field reports, deployment slot rules, closure separation, idempotency ledger, scope by station code, War Room module gating, roles and SoD, contracts and navigation |
+| Field operations | `apps/api/test/field-operations.integration.spec.ts`, `sync.integration.spec.ts`, `warroom.integration.spec.ts` (shared fixture `test/field-fixtures.ts`) | agents (masking, audited reveal with re-auth), deployment conflicts and coverage, readiness roll-ups, versioned report templates, the incident 7.3 workflow with corrections as new events, War Room counts with missing stations (including a 55,000-station registry), offline sync replay / conflict / stale handling, cross-tenant isolation |
+| Election-day rehearsal | `apps/api/test/election-day-rehearsal.e2e.spec.ts` (`pnpm test:rehearsal:field`) | planner deploys with a coverage gap → readiness completed for some stations → check-in → opening report through `/field/sync` twice (one record) → high-severity incident → triage, escalate, resolve, second-person close → War Room statuses, coverage, incidents and tally intake (unofficial label, missing never zero) → dashboard agent coverage → an agent cannot report for a station they are not deployed to |
 | Office integration | `apps/api/test/office-*.integration.spec.ts` | case stage machine and second-person closure, public tracking leakage, rate limits, cross-tenant isolation of every Office table, `MODULE_DISABLED`, project verification rules, correspondence and appointments |
 | Office rehearsal | `apps/api/test/office-governor-rehearsal.e2e.spec.ts` | system roles with real sign-in, TOTP and re-auth: portal request → triage → assign → referral → resolution → citizen tracking (public events only) → closure by a second person; project → evidence verified by another user → verified completion → publication showing only approved fields |
 | Browser smoke (Playwright) | `scripts/smoke/web-smoke.cjs` | clerk inbox and capture image, supervisor results banner; writes `docs/screenshots/` |
+| Field browser smoke (Playwright) | `scripts/smoke/field-smoke.cjs` | War Room (commander, TOTP) and the dashboard field card, deployment planner, agent registry and a masked agent profile, `/m` home and incident form at a 390×844 phone viewport, an incident saved offline shown waiting in the queue and uploaded once on reconnect; writes `docs/screenshots/field-*.png` |
 | Office browser smoke (Playwright) | `scripts/smoke/office-smoke.cjs` | public portal submit and track (phone viewport), public project pages, Office overview, case list and workspace, project register and detail; writes `docs/screenshots/office-*.png` |
 
 Integration suites create their own synthetic tenants with random slugs in `ngao360_test` and do not delete them. Recreate the test database whenever you want a clean one.
@@ -143,16 +146,27 @@ Integration suites create their own synthetic tenants with random slugs in `ngao
 Start the API and web app against a database seeded with `SEED_DEMO_MFA=preenrolled`. Then run:
 
 ```bash
-pnpm build
+pnpm build                    # without .env loaded: its NODE_ENV=development breaks next build prerendering
 set -a; . ./.env; set +a
 (cd apps/api && node dist/main.js) &
-(cd apps/web && npx next start -p 3000) &
+(cd apps/web && NODE_ENV=production npx next start -p 3000) &
 pnpm smoke:web
 ```
 
 The smoke test needs Playwright with Chromium; `require('playwright')` must resolve (for a global install, set `NODE_PATH` to its `node_modules`). Each run uploads one synthetic 37A as the demo clerk, so a second run against the same database shows a "possible duplicate", which is the intended behaviour.
 
 The Office smoke (`pnpm smoke:office`) uses the same running stack and the `bungoma-governor` seed. It signs in only as accounts without MFA (`caseofficer@`, `projects@`) and submits one synthetic portal request per run. The public submit limit is 5 per IP per 10 minutes, so restart the API if you run it more often.
+
+The field smoke (`pnpm smoke:field`) uses the same stack and the `demo` seed. It signs in as `commander@` (development TOTP, so the seed must be `SEED_DEMO_MFA=preenrolled`), `planner@` and `agent1@`, and adds one synthetic incident per run. The TOTP code is single-use per 30-second step: wait a minute between two runs. Re-running `pnpm db:seed` is safe; it also moves the tenant's AGT / FRP / INC reference counters past the seeded records so API-created references never collide with them.
+
+### Field operations notes
+
+- Module keys: `field` (agents, deployment, readiness, reports, incidents, `/m`) and the War Room under `field` + `tally`. Both are switched per tenant through `PUT /workspace/modules/:key`.
+- Agent personal data (ID number, phone, M-Pesa number, next of kin) lives in `agent_sensitive`; lists and profiles carry masked values only. Revealing needs `field.agents.reveal_sensitive`, re-authentication and a reason, and is audited with field names only.
+- Offline writes carry a client idempotency key (`POST /field/sync` or the direct endpoints). A replay returns the original result (`Idempotent-Replay: true` on direct endpoints, `replayed: true` per sync item); a reused key with other content or a server-side change is a CONFLICT with the server's record, never a silent overwrite.
+- A polling agent (user linked to an agent record) can report only at stations they are deployed to; coordinators and desk officers are limited by their grant scope.
+- War Room figures are cached per tenant, cycle and scope for `FIELD_WARROOM_CACHE_SECONDS` (default 15; the integration suites set 0). Roll-ups run with hash joins inside their transaction because RLS hides row counts from the planner; migration `20261123000000_field_integration` adds a `(tenant_id, registry_version_id, status)` station index.
+- Geolocation: `next.config.mjs` sends `Permissions-Policy: geolocation=(self)` so the optional one-off check-in / incident location can be read when the organisation turns it on (`checkInLocationEnabled`).
 
 ## 5. Working with the schema
 
