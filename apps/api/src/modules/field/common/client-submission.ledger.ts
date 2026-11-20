@@ -122,6 +122,30 @@ export class ClientSubmissionLedger {
   }
 
   /**
+   * Record a REJECTED / CONFLICT outcome after a failed apply (own transaction). Takes the
+   * same advisory lock as `check()`, and never touches a row another request ACCEPTED in the
+   * meantime (two in-flight sends of one key: the direct POST and a queue replay, or two
+   * tabs): that row is returned instead, so the caller reports the item as accepted.
+   */
+  async recordFailure(
+    tx: TenantTx,
+    auth: AuthContext,
+    item: LedgerItem,
+    payloadHash: string,
+    result: { outcome: 'REJECTED' | 'CONFLICT'; errorCode: string },
+  ): Promise<LedgerRecord | null> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${auth.tenantId}:${auth.userId}:${item.idempotencyKey}`}, 0))`;
+    const existing = await tx.clientSubmission.findUnique({
+      where: { tenantId_userId_idempotencyKey: { tenantId: auth.tenantId, userId: auth.userId, idempotencyKey: item.idempotencyKey } },
+      select: SELECT,
+    });
+    if (existing?.outcome === 'ACCEPTED' && existing.payloadHash === payloadHash && existing.kind === item.kind) return existing;
+    if (existing?.outcome === 'ACCEPTED') return null;
+    await this.record(tx, auth, item, payloadHash, result);
+    return null;
+  }
+
+  /**
    * Accepted-path wrapper used by direct endpoints and the sync service:
    * NEW/RETRY → `apply()` then record ACCEPTED (same transaction);
    * REPLAY → `load(resultId)` and `replayed: true` (nothing applied);

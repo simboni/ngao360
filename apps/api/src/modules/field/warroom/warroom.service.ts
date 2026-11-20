@@ -63,7 +63,12 @@ interface RawStation {
   ss_updated_at: Date | null;
 }
 
-export interface StationState {
+/**
+ * Per-station components, independent of who is looking (cached once per
+ * tenant, cycle and registry). The status a caller sees is computed per caller
+ * by `viewOf`, because tally-derived states need tally.view over the station.
+ */
+export interface StationComponents {
   code: string;
   cols: { electionCycleId: string; pollingStationCode: string; countyId: string; constituencyId: string; wardId: string; pollingCentreId: string | null };
   deploymentStatus: DeploymentStatus | null;
@@ -71,21 +76,71 @@ export interface StationState {
   lastFieldReportAt: Date | null;
   openIncidents: number;
   highestOpenSeverity: IncidentSeverity | null;
+  /** Tally intake state of the station's forms (never shown without tally.view over the station). */
   formStatus: FormStatus;
   manual: 'FLAGGED' | 'CLOSED' | null;
   manualNote: string | null;
-  derived: OperationalStatus;
-  status: OperationalStatus;
-  /** Any field or tally update (check-in, field report or form received): the station has reported. */
-  hasUpdate: boolean;
+  pollsClosed: boolean;
   updatedAt: Date | null;
 }
 
+/** A station as one caller sees it. */
+export interface StationState extends StationComponents {
+  /** False when the caller lacks tally.view over the station: forms are ignored and `formStatus` is withheld. */
+  tallyVisible: boolean;
+  derived: OperationalStatus;
+  status: OperationalStatus;
+  /** Any field update, or (with tally visibility) a form received: the station has reported. */
+  hasUpdate: boolean;
+}
+
+type DeploymentTotals = { assigned: number; confirmed: number; checkedIn: number; trainedAgents: number };
+
 interface Snapshot {
   at: Date;
-  stations: StationState[];
-  deployments: { assigned: number; confirmed: number; checkedIn: number; trainedAgents: number };
+  stations: StationComponents[];
 }
+
+/** Status of a station as a caller sees it: tally-derived states only with tally visibility. */
+export function viewOf(c: StationComponents, tallyVisible: boolean): StationState {
+  const formStatus: FormStatus = tallyVisible ? c.formStatus : 'NONE';
+  const derived = deriveStationStatus({
+    manual: null,
+    deploymentStatus: c.deploymentStatus,
+    hasFieldUpdate: !!c.lastFieldReportAt,
+    formStatus,
+    openSevereIncident: c.highestOpenSeverity === 'HIGH' || c.highestOpenSeverity === 'CRITICAL',
+    pollsClosed: c.pollsClosed,
+  });
+  return {
+    ...c,
+    tallyVisible,
+    derived,
+    status: c.manual ?? derived,
+    hasUpdate: !!c.lastCheckInAt || !!c.lastFieldReportAt || formStatus !== 'NONE',
+  };
+}
+
+/** In-memory twin of `scopeSql` (scope flattened for the cycle). */
+export function stationInScope(scope: PermissionScope, c: StationComponents['cols']): boolean {
+  if (scope.orgWide) return true;
+  if (scope.stationKeys.includes(`${c.electionCycleId}:${c.pollingStationCode}`)) return true;
+  return [c.countyId, c.constituencyId, c.wardId, c.pollingCentreId].some((u) => !!u && scope.unitIds.includes(u));
+}
+
+function inUnit(unitId: string | null | undefined, c: StationComponents['cols']): boolean {
+  if (!unitId) return true;
+  return c.countyId === unitId || c.constituencyId === unitId || c.wardId === unitId || c.pollingCentreId === unitId;
+}
+
+function inArea(area: { countyId?: string; constituencyId?: string; wardId?: string }, c: StationComponents['cols']): boolean {
+  return (!area.countyId || c.countyId === area.countyId) && (!area.constituencyId || c.constituencyId === area.constituencyId) && (!area.wardId || c.wardId === area.wardId);
+}
+
+/** Operational statuses that can only come from tally intake. */
+export const TALLY_STATES: OperationalStatus[] = ['FORM_RECEIVED', 'VERIFICATION_PENDING', 'VERIFIED_FOR_PARALLEL_TALLY'];
+const SNAPSHOT_CACHE_MAX = 8;
+const TOTALS_CACHE_MAX = 500;
 
 /**
  * S16 War Room (blueprint 7). Station status (7.2 taxonomy) is derived at read
@@ -99,7 +154,10 @@ interface Snapshot {
 @Injectable()
 export class WarRoomService {
   private readonly logger = new Logger(WarRoomService.name);
+  /** One org-wide snapshot per tenant, cycle and registry (bounded, expired entries evicted on write). */
   private readonly cache = new Map<string, Snapshot>();
+  /** Deployment totals per scope and area (small objects; bounded, expired entries evicted on write). */
+  private readonly totalsCache = new Map<string, { at: Date; totals: DeploymentTotals }>();
   private readonly ttlMs: number;
 
   constructor(
@@ -129,7 +187,7 @@ export class WarRoomService {
       ${filter.code ? Prisma.sql`AND ps.code = ${filter.code}` : Prisma.empty}`;
   }
 
-  private async readStations(tx: TenantTx, cycle: { id: string; electionDate: Date }, where: Prisma.Sql): Promise<StationState[]> {
+  async readStations(tx: TenantTx, cycle: { id: string; electionDate: Date }, where: Prisma.Sql): Promise<StationComponents[]> {
     const c = cycle.id;
     const raw = await tx.$queryRaw<RawStation[]>`
       WITH st AS (
@@ -186,147 +244,115 @@ export class WarRoomService {
       const formStatus: FormStatus = r.form_flagged ? 'FLAGGED' : r.form_verified ? 'VERIFIED' : r.form_pending ? 'VERIFICATION_PENDING' : r.form_received ? 'RECEIVED' : 'NONE';
       const depRank = Number(r.dep_rank ?? 0);
       const sevRank = Number(r.max_open_sev ?? 0);
-      const deploymentStatus = DEPLOYMENT_BY_RANK[depRank] ?? null;
-      const input = {
-        manual: null,
-        deploymentStatus,
-        hasFieldUpdate: !!r.last_report,
-        formStatus,
-        openSevereIncident: sevRank >= 3,
-        pollsClosed: closed,
-      };
-      const derived = deriveStationStatus(input);
-      const manual = r.manual_status;
       return {
         code: r.code,
         cols: { electionCycleId: c, pollingStationCode: r.code, countyId: r.county_id, constituencyId: r.constituency_id, wardId: r.ward_id, pollingCentreId: r.polling_centre_id },
-        deploymentStatus,
+        deploymentStatus: DEPLOYMENT_BY_RANK[depRank] ?? null,
         lastCheckInAt: r.last_check_in,
         lastFieldReportAt: r.last_report,
         openIncidents: Number(r.open_incidents ?? 0),
         highestOpenSeverity: SEVERITY_BY_RANK[sevRank] ?? null,
         formStatus,
-        manual,
+        manual: r.manual_status,
         manualNote: r.manual_note,
-        derived,
-        status: manual ?? derived,
-        hasUpdate: !!r.last_check_in || !!r.last_report || formStatus !== 'NONE',
+        pollsClosed: closed,
         updatedAt: r.ss_updated_at,
       };
     });
   }
 
-  private async readDeploymentTotals(tx: TenantTx, cycleId: string, where: Prisma.Sql): Promise<Snapshot['deployments']> {
+  /**
+   * Deployment slot totals. One definition for the figures and the panel's completeness:
+   * a CHECKED_OUT slot is still assigned and confirmed, and its agent has checked in.
+   */
+  private async readDeploymentTotals(tx: TenantTx, cycleId: string, where: Prisma.Sql): Promise<DeploymentTotals> {
     const [row] = await tx.$queryRaw<Array<{ assigned: bigint; confirmed: bigint; checked_in: bigint; trained: bigint }>>`
       SELECT
-        count(*) FILTER (WHERE d.status IN ('ASSIGNED','CONFIRMED','CHECKED_IN')) AS assigned,
-        count(*) FILTER (WHERE d.status IN ('CONFIRMED','CHECKED_IN')) AS confirmed,
-        count(*) FILTER (WHERE d.status = 'CHECKED_IN') AS checked_in,
-        count(DISTINCT d.agent_id) FILTER (WHERE d.status IN ('ASSIGNED','CONFIRMED','CHECKED_IN') AND EXISTS (
+        count(*) FILTER (WHERE d.status IN ('ASSIGNED','CONFIRMED','CHECKED_IN','CHECKED_OUT')) AS assigned,
+        count(*) FILTER (WHERE d.status IN ('CONFIRMED','CHECKED_IN','CHECKED_OUT')) AS confirmed,
+        count(*) FILTER (WHERE d.status IN ('CHECKED_IN','CHECKED_OUT')) AS checked_in,
+        count(DISTINCT d.agent_id) FILTER (WHERE d.status IN ('ASSIGNED','CONFIRMED','CHECKED_IN','CHECKED_OUT') AND EXISTS (
           SELECT 1 FROM agent_trainings t WHERE t.agent_id = d.agent_id AND t.status = 'COMPLETED' AND (t.election_cycle_id IS NULL OR t.election_cycle_id = ${cycleId}::uuid))) AS trained
       FROM deployments d
       WHERE d.election_cycle_id = ${cycleId}::uuid AND d.polling_station_code IN (SELECT ps.code FROM polling_stations ps WHERE ${where})`;
     return { assigned: Number(row!.assigned), confirmed: Number(row!.confirmed), checkedIn: Number(row!.checked_in), trainedAgents: Number(row!.trained) };
   }
 
-  /** Station states for a scope and filter, from the short-lived cache when fresh. */
-  private async snapshot(
-    tx: TenantTx,
-    auth: AuthContext,
-    cycle: { id: string; electionDate: Date },
-    registryId: string,
-    scope: PermissionScope,
-    filter: { unitId?: string | null; area?: { countyId?: string; constituencyId?: string; wardId?: string } },
-  ): Promise<Snapshot> {
-    const key = [auth.tenantId, cycle.id, registryId, this.scopeKey(scope), filter.unitId ?? '', filter.area?.countyId ?? '', filter.area?.constituencyId ?? '', filter.area?.wardId ?? ''].join('|');
+  private static evictExpired<V extends { at: Date }>(map: Map<string, V>, ttlMs: number, max: number): void {
+    const now = Date.now();
+    for (const [k, v] of map) if (now - v.at.getTime() >= ttlMs) map.delete(k);
+    while (map.size >= max) map.delete(map.keys().next().value as string);
+  }
+
+  /**
+   * Components of every expected station of the cycle's approved registry, from the
+   * short-lived cache when fresh. One snapshot per tenant, cycle and registry is shared
+   * by every caller; scope and area filters are applied in memory (`stationInScope`).
+   */
+  private async snapshot(tx: TenantTx, auth: AuthContext, cycle: { id: string; electionDate: Date }, registryId: string): Promise<Snapshot> {
+    const key = [auth.tenantId, cycle.id, registryId].join('|');
     const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at.getTime() < this.ttlMs) return hit;
-    const where = this.stationWhere(registryId, scope, cycle.id, filter);
+    if (hit && Date.now() - hit.at.getTime() < this.ttlMs) {
+      // LRU: move to the end.
+      this.cache.delete(key);
+      this.cache.set(key, hit);
+      return hit;
+    }
     const at = new Date();
-    const { stations, deployments } = await withHashJoins(tx, async () => ({
-      stations: await this.readStations(tx, cycle, where),
-      deployments: await this.readDeploymentTotals(tx, cycle.id, where),
-    }));
-    const snap = { at, stations, deployments };
+    const stations = await withHashJoins(tx, () => this.readStations(tx, cycle, expectedStationSql(registryId)));
+    const snap = { at, stations };
     if (this.ttlMs > 0) {
-      if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value as string);
+      WarRoomService.evictExpired(this.cache, this.ttlMs, SNAPSHOT_CACHE_MAX);
       this.cache.set(key, snap);
     }
     return snap;
   }
 
+  /** Deployment totals for a scope and area (cached briefly; tiny entries). */
+  private async deploymentTotals(tx: TenantTx, auth: AuthContext, cycleId: string, registryId: string, scope: PermissionScope, unitId: string | null | undefined): Promise<DeploymentTotals> {
+    const key = [auth.tenantId, cycleId, registryId, this.scopeKey(scope), unitId ?? ''].join('|');
+    const hit = this.totalsCache.get(key);
+    if (hit && Date.now() - hit.at.getTime() < this.ttlMs) return hit.totals;
+    const at = new Date();
+    const totals = await withHashJoins(tx, () => this.readDeploymentTotals(tx, cycleId, this.stationWhere(registryId, scope, cycleId, { unitId })));
+    if (this.ttlMs > 0) {
+      WarRoomService.evictExpired(this.totalsCache, this.ttlMs, TOTALS_CACHE_MAX);
+      this.totalsCache.set(key, { at, totals });
+    }
+    return totals;
+  }
+
+  /** Tally scope of the caller for the cycle, or null without tally.view. */
+  private tallyScope(auth: AuthContext, cycleId: string): PermissionScope | null {
+    return auth.permissions.has('tally.view') ? this.permissions.scopeFor(auth, 'tally.view', cycleId) : null;
+  }
+
+  /** The caller's view of the stations in `scope` (and area): status computed per caller. */
+  private views(
+    stations: StationComponents[],
+    scope: PermissionScope,
+    tally: PermissionScope | null,
+    filter: { unitId?: string | null; area?: { countyId?: string; constituencyId?: string; wardId?: string } },
+  ): StationState[] {
+    const out: StationState[] = [];
+    for (const c of stations) {
+      if (!stationInScope(scope, c.cols) || !inUnit(filter.unitId, c.cols) || !inArea(filter.area ?? {}, c.cols)) continue;
+      out.push(viewOf(c, !!tally && stationInScope(tally, c.cols)));
+    }
+    return out;
+  }
+
   private invalidate(tenantId: string): void {
     for (const k of this.cache.keys()) if (k.startsWith(`${tenantId}|`)) this.cache.delete(k);
+    for (const k of this.totalsCache.keys()) if (k.startsWith(`${tenantId}|`)) this.totalsCache.delete(k);
   }
 
   private reportedCompleteness(stations: StationState[]): Completeness {
     return completeness(stations.length, stations.filter((s) => s.hasUpdate).length);
   }
 
-  /**
-   * Record observed derived-status changes for the stations a read returned:
-   * station_statuses.derived_status plus an append-only DERIVED event. Runs in
-   * its own transaction and never fails the read.
-   */
-  private async recordDerived(auth: AuthContext, states: StationState[]): Promise<void> {
-    if (states.length === 0) return;
-    try {
-      await this.prisma.withTenant(auth.tenantId, async (tx) => {
-        const cycleId = states[0]!.cols.electionCycleId;
-        const stored = await tx.stationStatus.findMany({
-          where: { electionCycleId: cycleId, pollingStationCode: { in: states.map((s) => s.code) } },
-          select: { id: true, pollingStationCode: true, derivedStatus: true, manualStatus: true },
-        });
-        const byCode = new Map(stored.map((s) => [s.pollingStationCode, s]));
-        for (const s of states) {
-          const row = byCode.get(s.code);
-          const components = {
-            deploymentStatus: s.deploymentStatus,
-            hasFieldUpdate: !!s.lastFieldReportAt,
-            formStatus: s.formStatus,
-            openIncidents: s.openIncidents,
-            highestOpenSeverity: s.highestOpenSeverity,
-          };
-          if (!row) {
-            if (s.derived === 'NOT_ASSIGNED') continue;
-            const created = await tx.stationStatus.upsert({
-              where: { tenantId_electionCycleId_pollingStationCode: { tenantId: auth.tenantId, electionCycleId: cycleId, pollingStationCode: s.code } },
-              create: {
-                tenantId: auth.tenantId,
-                electionCycleId: cycleId,
-                pollingStationCode: s.code,
-                countyId: s.cols.countyId,
-                constituencyId: s.cols.constituencyId,
-                wardId: s.cols.wardId,
-                pollingCentreId: s.cols.pollingCentreId,
-                status: s.derived,
-                source: 'DERIVED',
-                derivedStatus: s.derived,
-                components,
-              },
-              update: {},
-              select: { id: true },
-            });
-            await tx.stationStatusEvent.create({ data: { tenantId: auth.tenantId, stationStatusId: created.id, fromStatus: 'NOT_ASSIGNED', toStatus: s.derived, source: 'DERIVED' } });
-          } else if (row.derivedStatus !== s.derived) {
-            const updated = await tx.stationStatus.updateMany({
-              where: { id: row.id, derivedStatus: row.derivedStatus },
-              data: { derivedStatus: s.derived, status: row.manualStatus ?? s.derived, components, computedAt: new Date() },
-            });
-            if (updated.count > 0) {
-              await tx.stationStatusEvent.create({ data: { tenantId: auth.tenantId, stationStatusId: row.id, fromStatus: row.derivedStatus, toStatus: s.derived, source: 'DERIVED' } });
-            }
-          }
-        }
-      });
-    } catch (e) {
-      this.logger.warn(`Could not record derived station status: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
   private async toRows(tx: TenantTx, auth: AuthContext, states: StationState[], asOf: Date): Promise<StationStatusRow[]> {
     const locations = await loadFieldLocations(tx, states.map((s) => s.cols));
-    const tallyVisible = auth.permissions.has('tally.view');
     return states.map((s, i) => ({
       location: locations[i]!,
       status: s.status,
@@ -336,7 +362,7 @@ export class WarRoomService {
       lastFieldReportAt: s.lastFieldReportAt ? s.lastFieldReportAt.toISOString() : null,
       openIncidents: s.openIncidents,
       highestOpenSeverity: s.highestOpenSeverity,
-      formStatus: tallyVisible ? s.formStatus : null,
+      formStatus: s.tallyVisible ? s.formStatus : null,
       manualNote: s.manualNote,
       updatedAt: (s.updatedAt ?? asOf).toISOString(),
     }));
@@ -349,14 +375,16 @@ export class WarRoomService {
       const cycle = await resolveFieldCycle(tx, await this.modules.fieldConfig(tx), q.electionCycleId);
       const registry = await this.approvedRegistry(tx, cycle.id);
       const scope = this.permissions.scopeFor(auth, 'warroom.view', cycle.id);
-      const snap = registry
-        ? await this.snapshot(tx, auth, cycle, registry.id, scope, { unitId: q.geographicUnitId })
-        : { at: new Date(), stations: [], deployments: { assigned: 0, confirmed: 0, checkedIn: 0, trainedAgents: 0 } };
-      const stations = snap.stations;
+      const tally = this.tallyScope(auth, cycle.id);
+      const snap = registry ? await this.snapshot(tx, auth, cycle, registry.id) : { at: new Date(), stations: [] as StationComponents[] };
+      const deployments = registry ? await this.deploymentTotals(tx, auth, cycle.id, registry.id, scope, q.geographicUnitId) : { assigned: 0, confirmed: 0, checkedIn: 0, trainedAgents: 0 };
+      const stations = this.views(snap.stations, scope, tally, { unitId: q.geographicUnitId });
       const asOf = snap.at.toISOString();
       const expected = stations.length;
       const reported = this.reportedCompleteness(stations);
-      const tallyAvailable = auth.permissions.has('tally.view');
+      const tallyAvailable = !!tally;
+      // Tally panels cover the stations inside both the War Room and the tally.view scope.
+      const tallyStations = stations.filter((s) => s.tallyVisible);
       const panel = <T>(data: T, c: Completeness, available = true) => ({ label: WAR_ROOM_LABEL as typeof WAR_ROOM_LABEL, asOf, completeness: c, available, data });
 
       const statusCounts = new Map<OperationalStatus, number>();
@@ -380,7 +408,7 @@ export class WarRoomService {
       let openDiscrepancies = 0;
       let lastSnapshotAt: Date | null = null;
       if (tallyAvailable && registry) {
-        const where = this.stationWhere(registry.id, scope, cycle.id, { unitId: q.geographicUnitId });
+        const where = Prisma.sql`${this.stationWhere(registry.id, scope, cycle.id, { unitId: q.geographicUnitId })} AND ${scopeSql(tally!, cycle.id, STATION_COLS('ps'))}`;
         const [t] = await withHashJoins(tx, () => tx.$queryRaw<Array<{ capture: bigint; second: bigint; discrepancies: bigint }>>`
           WITH subs AS (
             SELECT rs.id, rs.status FROM result_submissions rs
@@ -406,8 +434,9 @@ export class WarRoomService {
         tx.clientSubmission.count({ where: { lastSeenAt: { gte: since } } }),
         tx.clientSubmission.count({ where: { lastSeenAt: { gte: since }, outcome: 'CONFLICT' } }),
       ]);
-      const formsReceived = count((s) => s.formStatus !== 'NONE');
-      const verified = count((s) => s.formStatus === 'VERIFIED');
+      const formsReceived = tallyStations.filter((s) => s.formStatus !== 'NONE').length;
+      const verified = tallyStations.filter((s) => s.formStatus === 'VERIFIED').length;
+      const tallyExpected = tallyStations.length;
       const tallyZero = { received: 0, awaitingCapture: 0, awaitingSecondReview: 0, verified: 0, flagged: 0 };
 
       return {
@@ -418,11 +447,11 @@ export class WarRoomService {
         asOf,
         agentOperations: panel(
           {
-            assignedSlots: snap.deployments.assigned,
-            confirmed: snap.deployments.confirmed,
-            checkedIn: snap.deployments.checkedIn,
+            assignedSlots: deployments.assigned,
+            confirmed: deployments.confirmed,
+            checkedIn: deployments.checkedIn,
             stationsNotAssigned: count((s) => s.deploymentStatus === null),
-            trainingCompletedAgents: snap.deployments.trainedAgents,
+            trainingCompletedAgents: deployments.trainedAgents,
           },
           completeness(expected, count((s) => s.deploymentStatus === 'CHECKED_IN' || s.deploymentStatus === 'CHECKED_OUT')),
         ),
@@ -442,13 +471,13 @@ export class WarRoomService {
           reported,
         ),
         formIntake: panel(
-          tallyAvailable ? { received: formsReceived, awaitingCapture, awaitingSecondReview, verified, flagged: count((s) => s.formStatus === 'FLAGGED') } : tallyZero,
-          tallyAvailable ? completeness(expected, formsReceived) : completeness(expected, 0),
+          tallyAvailable ? { received: formsReceived, awaitingCapture, awaitingSecondReview, verified, flagged: tallyStations.filter((s) => s.formStatus === 'FLAGGED').length } : tallyZero,
+          tallyAvailable ? completeness(tallyExpected, formsReceived) : completeness(expected, 0),
           tallyAvailable,
         ),
         tallyVerification: panel(
           tallyAvailable ? { verifiedStations: verified, openDiscrepancies, lastSnapshotAt: lastSnapshotAt ? lastSnapshotAt.toISOString() : null } : { verifiedStations: 0, openDiscrepancies: 0, lastSnapshotAt: null },
-          tallyAvailable ? completeness(expected, verified) : completeness(expected, 0),
+          tallyAvailable ? completeness(tallyExpected, verified) : completeness(expected, 0),
           tallyAvailable,
         ),
         systemHealth: panel(
@@ -476,41 +505,32 @@ export class WarRoomService {
   /* --------------------------------- stations -------------------------------- */
 
   stations(auth: AuthContext, q: StationStatusQuery): Promise<StationStatusList> {
-    return this.prisma
-      .tenantTx(async (tx) => {
-        const cycle = await resolveFieldCycle(tx, await this.modules.fieldConfig(tx), q.electionCycleId);
-        const registry = await this.approvedRegistry(tx, cycle.id);
-        const scope = this.permissions.scopeFor(auth, 'warroom.view', cycle.id);
-        const snap = registry
-          ? await this.snapshot(tx, auth, cycle, registry.id, scope, { area: { countyId: q.countyId, constituencyId: q.constituencyId, wardId: q.wardId } })
-          : { at: new Date(), stations: [] as StationState[] };
-        const statuses = asArray(q.status);
-        let list = snap.stations;
-        if (statuses) list = list.filter((s) => statuses.includes(s.status));
-        if (q.attentionOnly) list = list.filter((s) => ATTENTION.includes(s.status) || s.highestOpenSeverity === 'HIGH' || s.highestOpenSeverity === 'CRITICAL');
-        if (q.q) {
-          const needle = q.q.toLowerCase();
-          list = list.filter((s) => s.code.toLowerCase().includes(needle));
-        }
-        const { skip, take } = paging(q);
-        const page = list.slice(skip, skip + take);
-        return {
-          page,
-          result: {
-            label: WAR_ROOM_LABEL,
-            asOf: snap.at.toISOString(),
-            completeness: this.reportedCompleteness(snap.stations),
-            items: await this.toRows(tx, auth, page, snap.at),
-            page: q.page,
-            pageSize: q.pageSize,
-            total: list.length,
-          } satisfies StationStatusList,
-        };
-      })
-      .then(async ({ page, result }) => {
-        await this.recordDerived(auth, page);
-        return result;
-      });
+    return this.prisma.tenantTx(async (tx) => {
+      const cycle = await resolveFieldCycle(tx, await this.modules.fieldConfig(tx), q.electionCycleId);
+      const registry = await this.approvedRegistry(tx, cycle.id);
+      const scope = this.permissions.scopeFor(auth, 'warroom.view', cycle.id);
+      const snap = registry ? await this.snapshot(tx, auth, cycle, registry.id) : { at: new Date(), stations: [] as StationComponents[] };
+      const all = this.views(snap.stations, scope, this.tallyScope(auth, cycle.id), { area: { countyId: q.countyId, constituencyId: q.constituencyId, wardId: q.wardId } });
+      const statuses = asArray(q.status);
+      let list = all;
+      if (statuses) list = list.filter((s) => statuses.includes(s.status));
+      if (q.attentionOnly) list = list.filter((s) => ATTENTION.includes(s.status) || s.highestOpenSeverity === 'HIGH' || s.highestOpenSeverity === 'CRITICAL');
+      if (q.q) {
+        const needle = q.q.toLowerCase();
+        list = list.filter((s) => s.code.toLowerCase().includes(needle));
+      }
+      const { skip, take } = paging(q);
+      const page = list.slice(skip, skip + take);
+      return {
+        label: WAR_ROOM_LABEL,
+        asOf: snap.at.toISOString(),
+        completeness: this.reportedCompleteness(all),
+        items: await this.toRows(tx, auth, page, snap.at),
+        page: q.page,
+        pageSize: q.pageSize,
+        total: list.length,
+      } satisfies StationStatusList;
+    });
   }
 
   /** One station of the approved registry inside the caller's scope for `perm` (404 otherwise). */
@@ -519,18 +539,29 @@ export class WarRoomService {
     const registry = await this.approvedRegistry(tx, cycle.id);
     if (!registry) throw AppException.notFound('Polling station not found');
     const scope = this.permissions.scopeFor(auth, perm, cycle.id);
-    const [state] = await this.readStations(tx, cycle, this.stationWhere(registry.id, scope, cycle.id, { code }));
-    if (!state) throw AppException.notFound('Polling station not found');
-    return { cycle, state };
+    const [components] = await this.readStations(tx, cycle, this.stationWhere(registry.id, scope, cycle.id, { code }));
+    if (!components) throw AppException.notFound('Polling station not found');
+    const tally = this.tallyScope(auth, cycle.id);
+    return { cycle, components, state: viewOf(components, !!tally && stationInScope(tally, components.cols)) };
   }
 
   private async detailInTx(tx: TenantTx, auth: AuthContext, state: StationState): Promise<StationStatusDetail> {
     const now = new Date();
     const [row] = await this.toRows(tx, auth, [state], now);
     const ss = await tx.stationStatus.findFirst({ where: { electionCycleId: state.cols.electionCycleId, pollingStationCode: state.code }, select: { id: true } });
-    const events = ss
+    const all = ss
       ? await tx.stationStatusEvent.findMany({ where: { stationStatusId: ss.id }, include: { actor: USER_REF }, orderBy: { createdAt: 'desc' }, take: 200 })
       : [];
+    // Recorded derived statuses include tally intake; without tally visibility over the
+    // station, derived events touching a tally-derived state (or FLAGGED, which a form
+    // flag can cause) are left out, and so is any event ending in a tally-derived
+    // state. Other manual events stay, without a tally-derived "from" status.
+    const hidden: OperationalStatus[] = [...TALLY_STATES, 'FLAGGED'];
+    const events = state.tallyVisible
+      ? all
+      : all
+          .filter((e) => !TALLY_STATES.includes(e.toStatus) && (e.source !== 'DERIVED' || !(hidden.includes(e.fromStatus as OperationalStatus) || hidden.includes(e.toStatus))))
+          .map((e) => (e.fromStatus && TALLY_STATES.includes(e.fromStatus) ? { ...e, fromStatus: null } : e));
     return {
       ...row!,
       label: WAR_ROOM_LABEL,
@@ -539,22 +570,23 @@ export class WarRoomService {
   }
 
   async station(auth: AuthContext, code: string, cycleId?: string): Promise<StationStatusDetail> {
-    const state = await this.prisma.tenantTx(async (tx) => (await this.stationState(tx, auth, code, cycleId, 'warroom.view')).state);
-    await this.recordDerived(auth, [state]);
-    return this.prisma.tenantTx((tx) => this.detailInTx(tx, auth, state));
+    return this.prisma.tenantTx(async (tx) => this.detailInTx(tx, auth, (await this.stationState(tx, auth, code, cycleId, 'warroom.view')).state));
   }
 
   /** Manual FLAGGED / CLOSED with a reason, or `null` to return to the derived status. Internal only. */
   async setStatus(auth: AuthContext, code: string, dto: SetStationStatus): Promise<StationStatusDetail> {
     const result = await this.prisma.tenantTx(async (tx) => {
-      const { cycle, state } = await this.stationState(tx, auth, code, dto.electionCycleId, 'warroom.command');
+      const { cycle, components, state } = await this.stationState(tx, auth, code, dto.electionCycleId, 'warroom.command');
+      // The stored record keeps the full derived status (tally intake included); the
+      // response shows the caller's view.
+      const full = viewOf(components, true);
       const current = await tx.stationStatus.findFirst({ where: { electionCycleId: cycle.id, pollingStationCode: code } });
-      const before = current?.status ?? state.derived;
-      const next: OperationalStatus = dto.status ?? state.derived;
+      const before = current?.status ?? full.derived;
+      const next: OperationalStatus = dto.status ?? full.derived;
       const data = {
         status: next,
         source: dto.status ? ('MANUAL' as const) : ('DERIVED' as const),
-        derivedStatus: state.derived,
+        derivedStatus: full.derived,
         manualStatus: dto.status,
         manualNote: dto.status ? dto.reason : null,
         manualSetById: dto.status ? auth.userId : null,
@@ -588,7 +620,7 @@ export class WarRoomService {
         },
         tx,
       );
-      const updated: StationState = { ...state, manual: dto.status, manualNote: data.manualNote, status: next, updatedAt: new Date() };
+      const updated: StationState = { ...state, manual: dto.status, manualNote: data.manualNote, status: dto.status ?? state.derived, updatedAt: new Date() };
       return this.detailInTx(tx, auth, updated);
     });
     this.invalidate(auth.tenantId);

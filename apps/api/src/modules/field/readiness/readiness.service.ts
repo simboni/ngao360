@@ -201,6 +201,10 @@ export class ReadinessService {
 
   updateItem(auth: AuthContext, id: string, itemId: string, dto: UpdateReadinessItem): Promise<ReadinessChecklist> {
     return this.prisma.tenantTx(async (tx) => {
+      // Lock the checklist row first: concurrent updates of different items of one checklist
+      // are serialised, so the recomputed checklist status always sees every item's latest status.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM readiness_checklists WHERE id = ${id}::uuid FOR UPDATE`;
+      if (locked.length === 0) throw AppException.notFound('Readiness item not found on this checklist');
       const item = await tx.readinessItem.findUnique({ where: { id: itemId } });
       if (!item || item.checklistId !== id) throw AppException.notFound('Readiness item not found on this checklist');
       if (item.version !== dto.expectedVersion) throw serverChanged(item.version, await this.detailInTx(tx, id));

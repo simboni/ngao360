@@ -6,6 +6,8 @@
 /** GeoScopeService kinds: `@RequirePermission(..., { geo: { kind: FIELD_GEO_KIND.INCIDENT, from: 'params', key: 'id' } })`. */
 export const FIELD_GEO_KIND = {
   AGENT: 'fieldAgent',
+  /** Agent home area only, current field cycle (personal-data reveal and edit). */
+  AGENT_PERSONAL: 'fieldAgentPersonal',
   DEPLOYMENT: 'fieldDeployment',
   READINESS_CHECKLIST: 'fieldReadinessChecklist',
   FIELD_REPORT: 'fieldReport',

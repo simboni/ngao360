@@ -158,6 +158,11 @@ export function IncidentDetail({ id }: { id: string }) {
                     ) : null}
                   </MetaRow>
                 </dl>
+                {i.contentRestricted ? (
+                  <Notice tone="warning" className="mt-3" title="Classified incident">
+                    This incident is classified {SENSITIVITY_LABELS[i.sensitivity].toLowerCase()}. The description, notes, corrections and evidence are limited to authorised incident handlers.
+                  </Notice>
+                ) : null}
                 <h3 className="mb-1 mt-3 text-meta font-semibold uppercase tracking-wide text-slate">What was observed</h3>
                 <p className="whitespace-pre-wrap rounded-lg border border-line bg-cloud px-3 py-2 text-body text-ink">{i.description}</p>
               </div>
@@ -202,7 +207,8 @@ export function IncidentDetail({ id }: { id: string }) {
                 </Button>
               }
             />
-            {showAudit ? <AuditList id={i.id} /> : null}
+            {showAudit && !i.contentRestricted ? <AuditList id={i.id} /> : null}
+            {showAudit && i.contentRestricted ? <p className="px-4 py-3 text-meta text-slate">The audit history of a classified incident is limited to authorised incident handlers.</p> : null}
           </Card>
         </div>
 

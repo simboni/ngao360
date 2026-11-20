@@ -186,6 +186,20 @@ describe('war room and sync', () => {
     expect(deriveStationStatus({ ...base, manual: 'CLOSED', openSevereIncident: true })).toBe('CLOSED');
   });
 
+  it('after close of polls a checked-out station with no form is FORM_EXPECTED (review finding)', () => {
+    const base = { manual: null, deploymentStatus: null, hasFieldUpdate: false, formStatus: 'NONE' as const, openSevereIncident: false, pollsClosed: true };
+    expect(deriveStationStatus({ ...base, deploymentStatus: 'CHECKED_OUT' })).toBe('FORM_EXPECTED');
+    expect(deriveStationStatus({ ...base, deploymentStatus: 'CONFIRMED' })).toBe('FORM_EXPECTED');
+    expect(deriveStationStatus({ ...base, deploymentStatus: 'ASSIGNED' })).toBe('FORM_EXPECTED');
+    expect(deriveStationStatus({ ...base, hasFieldUpdate: true })).toBe('FORM_EXPECTED');
+    // No agent: the coverage gap stays visible as NOT_ASSIGNED.
+    expect(deriveStationStatus(base)).toBe('NOT_ASSIGNED');
+    // A form received ends the expectation.
+    expect(deriveStationStatus({ ...base, deploymentStatus: 'CHECKED_OUT', formStatus: 'RECEIVED' })).toBe('FORM_RECEIVED');
+    // Before close a checked-out station shows as checked in.
+    expect(deriveStationStatus({ ...base, deploymentStatus: 'CHECKED_OUT', pollsClosed: false })).toBe('CHECKED_IN');
+  });
+
   it('canonical payloads ignore key order (idempotent retries hash the same)', () => {
     expect(canonicalPayload({ b: 1, a: { d: [1, 2], c: null } })).toBe(canonicalPayload({ a: { c: null, d: [1, 2] }, b: 1 }));
     expect(canonicalPayload({ a: 1, b: undefined })).toBe('{"a":1}');

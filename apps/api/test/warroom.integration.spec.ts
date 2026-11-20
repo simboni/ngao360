@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { WAR_ROOM_LABEL } from '@ngao360/shared';
+import { StationStatusRecorderService } from '../src/modules/field/warroom/station-status-recorder.service';
 import { createFieldFixture, describeDb, type FieldFixture, OPENING_TEMPLATE, offline } from './field-fixtures';
 
 describeDb('War Room', () => {
@@ -122,11 +123,14 @@ describeDb('War Room', () => {
     expect(attention.body.completeness.expected).toBe(6);
     const paged = await f.http('commander').get('/warroom/stations?pageSize=2&page=3').expect(200);
     expect(paged.body.items).toHaveLength(2);
-    // Observed derived changes are recorded with an append-only DERIVED event.
+    // Derived changes are recorded by the background recorder (not by reads) with an append-only DERIVED event.
+    const recorder = f.app.get(StationStatusRecorderService);
+    await recorder.recordForTenant(f.tenantId);
     const ss = await f.owner.stationStatus.findFirstOrThrow({ where: { tenantId: f.tenantId, pollingStationCode: 'F-001' } });
     expect(ss.derivedStatus).toBe('CHECKED_IN');
     expect(await f.owner.stationStatusEvent.count({ where: { stationStatusId: ss.id, source: 'DERIVED' } })).toBe(1);
     await f.http('commander').get('/warroom/stations?pageSize=50').expect(200);
+    await recorder.recordForTenant(f.tenantId);
     expect(await f.owner.stationStatusEvent.count({ where: { stationStatusId: ss.id, source: 'DERIVED' } })).toBe(1);
   });
 

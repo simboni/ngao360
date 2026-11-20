@@ -182,9 +182,10 @@ export type StationStatusParamQuery = z.infer<typeof StationStatusParamQuerySche
  * precedence: manual CLOSED/FLAGGED, flagged form or open HIGH/CRITICAL
  * incident → FLAGGED; verified form → VERIFIED_FOR_PARALLEL_TALLY; form
  * awaiting review → VERIFICATION_PENDING; form received → FORM_RECEIVED;
- * field update → UPDATE_RECEIVED; check-in → CHECKED_IN (or FORM_EXPECTED once
- * polls have closed); confirmed → CONFIRMED; assigned → ASSIGNED; else
- * NOT_ASSIGNED.
+ * once polls have closed, any deployed station (assigned, confirmed, checked
+ * in or checked out) or one with a field update → FORM_EXPECTED; field update →
+ * UPDATE_RECEIVED; checked in / out → CHECKED_IN; confirmed → CONFIRMED;
+ * assigned → ASSIGNED; else NOT_ASSIGNED.
  */
 export function deriveStationStatus(input: {
   manual: 'FLAGGED' | 'CLOSED' | null;
@@ -199,7 +200,10 @@ export function deriveStationStatus(input: {
   if (input.formStatus === 'VERIFIED') return 'VERIFIED_FOR_PARALLEL_TALLY';
   if (input.formStatus === 'VERIFICATION_PENDING') return 'VERIFICATION_PENDING';
   if (input.formStatus === 'RECEIVED') return 'FORM_RECEIVED';
-  if (input.pollsClosed && (input.deploymentStatus === 'CHECKED_IN' || input.hasFieldUpdate)) return 'FORM_EXPECTED';
+  // After close of polls every station with an agent deployed (checked out is the normal
+  // evening state) or a field update expects a source form until one is recorded. A station
+  // with no agent stays NOT_ASSIGNED, the coverage gap (also an attention state).
+  if (input.pollsClosed && (input.deploymentStatus !== null || input.hasFieldUpdate)) return 'FORM_EXPECTED';
   if (input.hasFieldUpdate) return 'UPDATE_RECEIVED';
   switch (input.deploymentStatus) {
     case 'CHECKED_IN':

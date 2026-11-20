@@ -86,8 +86,9 @@ export function assertOfflineAge(config: FieldModuleConfig, at: string | Date, n
 }
 
 /**
- * Files a caller may attach: stored by the caller (stored_files.uploaded_by_id)
- * for field evidence. Any other id answers 400 (never reveals other files).
+ * Files a caller may attach: ones the caller uploaded as field evidence (an upload
+ * claim, so a file whose identical bytes someone else uploaded first still counts).
+ * Any other id answers 400 (never reveals other files).
  */
 export async function loadOwnEvidenceFiles(
   tx: TenantTx,
@@ -98,7 +99,7 @@ export async function loadOwnEvidenceFiles(
   const ids = [...new Set(fileIds)];
   if (ids.length === 0) return [];
   const files = await tx.storedFile.findMany({
-    where: { id: { in: ids }, uploadedById: auth.userId, purpose: 'FIELD_EVIDENCE' },
+    where: { id: { in: ids }, fieldFileClaims: { some: { userId: auth.userId, purpose: 'FIELD_EVIDENCE' } } },
     select: { id: true, mimeType: true, sizeBytes: true, sha256: true },
   });
   if (files.length !== ids.length) {
@@ -278,10 +279,17 @@ export async function storeFieldFile(
   if (!sniffed || !(ALLOWED_SOURCE_MIME_TYPES as readonly string[]).includes(sniffed)) {
     throw AppException.validation('Upload a JPEG, PNG, WebP, HEIC image or a PDF');
   }
-  return storage.storeImmutable(
+  const stored = await storage.storeImmutable(
     { tenantId: auth.tenantId, uploadedById: auth.userId, buffer: file.buffer, declaredMimeType: sniffed, originalFilename: file.originalname || 'upload', purpose },
     tx,
   );
+  // Identical bytes are stored once per tenant (the first uploader's row comes back for a
+  // duplicate, whatever its purpose). Record that this caller uploaded them for this purpose.
+  await tx.$executeRaw`
+    INSERT INTO field_file_claims (id, tenant_id, stored_file_id, user_id, purpose)
+    VALUES (gen_random_uuid(), ${auth.tenantId}::uuid, ${stored.file.id}::uuid, ${auth.userId}::uuid, ${purpose}::"StoredFilePurpose")
+    ON CONFLICT (tenant_id, stored_file_id, user_id, purpose) DO NOTHING`;
+  return stored;
 }
 
 /**

@@ -1,18 +1,27 @@
 /**
- * Encryption of queued records at rest (docs/ARCHITECTURE.md §14.1).
+ * Encryption of queued records in IndexedDB (docs/ARCHITECTURE.md §14.1).
  *
  * Each signed-in user and tenant gets one AES-GCM 256 key, generated on the
- * device when their queue database is first opened and stored in that
- * database as a NON-EXTRACTABLE `CryptoKey`: script on this origin can use it
- * through WebCrypto, but its bytes cannot be read or exported, so copying the
- * browser's files does not reveal queued payloads. Every record is sealed with
- * a fresh random 96-bit IV and bound to its queue entry with additional
+ * device when their queue database is first opened and stored in that same
+ * database as a NON-EXTRACTABLE `CryptoKey`. Every record is sealed with a
+ * fresh random 96-bit IV and bound to its queue entry with additional
  * authenticated data (the idempotency key), so ciphertext cannot be swapped
  * between entries. The key and the database are deleted on sign-out.
  *
- * Known gap: the key is not wrapped with a PIN-derived key, so someone using
- * the unlocked browser profile on the same phone can still open the app and
- * see queued items. A PIN wrap (PBKDF2) is the planned next step.
+ * What this does and does NOT protect (do not overstate it):
+ * - It protects against other origins and against casual inspection of the
+ *   IndexedDB contents (dev tools, storage viewers, exported records), which
+ *   show only ciphertext.
+ * - "Non-extractable" only stops JavaScript from exporting the key. Browsers
+ *   serialise a stored CryptoKey, raw key material included, into the
+ *   profile's IndexedDB files next to the ciphertext, so copying the browser
+ *   profile from the device DOES reveal queued payloads.
+ * - Anyone who opens `/m` on the phone (also while offline, from the last
+ *   signed-in user's local session) sees queued items: nothing asks for a PIN.
+ *
+ * Known gap (priority before a live pilot): wrap the queue key with a key
+ * derived from a device PIN (PBKDF2 / Argon2) and ask for the PIN before the
+ * queue opens in offline mode (blueprint 11.3 "device PIN").
  */
 
 export interface Sealed {

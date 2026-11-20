@@ -89,7 +89,7 @@ The `demo` tenant also has the `field` module on with synthetic field data: 120 
 | `/dashboard` | holders of field or War Room permissions | Field operations card (readiness, gaps, open incidents, War Room stations reporting) and the agent-coverage KPI. |
 | `/m` (S11, S17) | `agent1@`, `agent2@` | Mobile field app: my station, check-in, opening/closing report, incident report and an encrypted offline queue that uploads with idempotency keys and shows conflicts for a decision. |
 
-Offline queue: items are sealed with AES-GCM under a non-extractable per-user key in IndexedDB; they protect against copying the browser's files, not against someone using the unlocked phone (a PIN-wrapped key is the next step). Uploads run while a tab is open. See docs/ARCHITECTURE.md §14 and docs/STATUS.md.
+Offline queue: items are sealed with AES-GCM under a non-extractable per-user key in IndexedDB; this protects only against other origins and casual inspection of the stored records, not against a copy of the browser profile (the key material is stored beside the ciphertext) or someone using the phone (a PIN-wrapped key is the priority next step). Uploads run while a tab is open. See docs/ARCHITECTURE.md §14 and docs/STATUS.md.
 
 Other tenants: `platform` (`operator@platform.example.org`, platform operator) and `other` (`owner@other.example.org`, used to test cross-tenant isolation).
 

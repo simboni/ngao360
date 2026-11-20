@@ -2,6 +2,7 @@ import { Module, type OnModuleInit } from '@nestjs/common';
 import { GeoScopeService } from '../../rbac/geo-scope.service';
 import { AgentsModule } from './agents/agents.module';
 import { FieldCommonModule } from './common/field-common.module';
+import { currentFieldCycleId } from './common/field-cycle';
 import { fieldGeoLocation } from './common/field-location';
 import { DeploymentModule } from './deployment/deployment.module';
 import { FIELD_GEO_KIND } from './field.constants';
@@ -58,15 +59,19 @@ export class FieldModule implements OnModuleInit {
       return row ? fieldGeoLocation(row) : null;
     });
     // Agents are not cycle-bound: home area, plus the stations of their active
-    // deployments (an area coordinator sees agents deployed into the area).
+    // deployments in the current field cycle (an area coordinator sees agents
+    // deployed into the area). Deployments of other cycles never widen access.
     this.geo.register(FIELD_GEO_KIND.AGENT, async (tx, id) => {
+      const cycleId = await currentFieldCycleId(tx);
       const a = await tx.agent.findUnique({
         where: { id },
         select: {
           homeCountyId: true,
           homeConstituencyId: true,
           homeWardId: true,
-          deployments: { where: { status: { in: ['ASSIGNED', 'CONFIRMED', 'CHECKED_IN'] } }, select: loc },
+          deployments: cycleId
+            ? { where: { electionCycleId: cycleId, status: { in: ['ASSIGNED', 'CONFIRMED', 'CHECKED_IN'] } }, select: loc }
+            : { where: { id: { in: [] } }, select: loc },
         },
       });
       if (!a) return null;
@@ -78,6 +83,14 @@ export class FieldModule implements OnModuleInit {
         stationKey = stationKey ?? g.stationKey ?? null;
       }
       return { unitIds: [...unitIds], stationId: null, stationKey };
+    });
+    // Personal data (reveal / edit): the agent's home area only, and only grants that
+    // apply to every cycle or to the current field cycle (a grant limited to a past
+    // cycle or a by-election does not reach personal data).
+    this.geo.register(FIELD_GEO_KIND.AGENT_PERSONAL, async (tx, id) => {
+      const a = await tx.agent.findUnique({ where: { id }, select: { homeCountyId: true, homeConstituencyId: true, homeWardId: true } });
+      if (!a) return null;
+      return { unitIds: [a.homeCountyId, a.homeConstituencyId, a.homeWardId], stationId: null, electionCycleId: await currentFieldCycleId(tx) };
     });
   }
 }

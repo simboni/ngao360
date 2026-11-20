@@ -119,6 +119,20 @@ export class DeploymentService {
     return out;
   }
 
+  /**
+   * Serialise writers of one agent's bookings (and, for a chief agent, one station's chief
+   * slot) in the cycle before the conflict check. The partial unique indexes only catch an
+   * identical shift; FULL_DAY overlaps MORNING / AFTERNOON, so without this lock two planners
+   * could both pass the check under READ COMMITTED. Locks are always taken agent first, then
+   * station, and at most one of each per transaction, so they cannot deadlock.
+   */
+  private async lockSlot(tx: TenantTx, slot: { agentId: string; electionCycleId: string; pollingStationCode: string; role: string }): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`deployment-agent:${slot.electionCycleId}:${slot.agentId}`}, 0))`;
+    if (slot.role === 'CHIEF_AGENT') {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`deployment-chief:${slot.electionCycleId}:${slot.pollingStationCode}`}, 0))`;
+    }
+  }
+
   /** Blocking conflicts: the agent double-booked on an overlapping shift, or a second active chief agent. */
   private async blockingConflicts(
     tx: TenantTx,
@@ -414,6 +428,7 @@ export class DeploymentService {
       const sup = await tx.agent.findUnique({ where: { id: dto.supervisorAgentId }, select: { id: true } });
       if (!sup) throw AppException.validation('Unknown supervisor', [{ path: ['supervisorAgentId'], message: 'Agent not found' }]);
     }
+    await this.lockSlot(tx, { agentId: dto.agentId, electionCycleId: cycle.id, pollingStationCode: loc.pollingStationCode, role: dto.role });
     const blocking = await this.blockingConflicts(tx, { agentId: dto.agentId, electionCycleId: cycle.id, pollingStationCode: loc.pollingStationCode, role: dto.role, shift: dto.shift });
     if (blocking.length > 0) throw AppException.conflict(blocking.map((c) => c.message).join('; '), { conflicts: blocking });
     let created: { id: string };
@@ -495,6 +510,7 @@ export class DeploymentService {
       const after: Record<string, unknown> = {};
       const data: Prisma.DeploymentUncheckedUpdateManyInput = {};
       if (dto.shift !== undefined && dto.shift !== d.shift) {
+        await this.lockSlot(tx, d);
         const blocking = await this.blockingConflicts(tx, { agentId: d.agentId, electionCycleId: d.electionCycleId, pollingStationCode: d.pollingStationCode, role: d.role, shift: dto.shift }, [id]);
         if (blocking.length > 0) throw AppException.conflict(blocking.map((c) => c.message).join('; '), { conflicts: blocking });
         before.shift = d.shift;
@@ -579,6 +595,18 @@ export class DeploymentService {
 
   /* ------------------------------ agent (mobile) ----------------------------- */
 
+  /**
+   * True when the only change since `expectedVersion` is the agent's own confirmation (one
+   * version step, latest event CONFIRMED by the caller): a check-in queued right after a
+   * confirmation carries the pre-confirmation version and is not a conflict. Any change by a
+   * coordinator (an UPDATED event or a second version step) still is.
+   */
+  private async onlyOwnConfirmationSince(tx: TenantTx, auth: AuthContext, d: DeploymentRow, expectedVersion: number): Promise<boolean> {
+    if (d.status !== 'CONFIRMED' || d.version !== expectedVersion + 1) return false;
+    const last = await tx.deploymentEvent.findFirst({ where: { deploymentId: d.id }, orderBy: { createdAt: 'desc' }, select: { type: true, actorId: true } });
+    return last?.type === 'CONFIRMED' && last.actorId === auth.userId;
+  }
+
   /** Own deployment only, and never one that was replaced or cancelled (409 SERVER_CHANGED). */
   private async loadOwn(tx: TenantTx, auth: AuthContext, id: string, expectedVersion: number): Promise<DeploymentRow> {
     const d = await this.load(tx, id);
@@ -586,7 +614,7 @@ export class DeploymentService {
     if (d.status === 'REPLACED' || d.status === 'CANCELLED') {
       throw serverChanged(d.version, await this.summary(tx, id), `This assignment was ${d.status.toLowerCase()} by your coordinator.`);
     }
-    if (d.version !== expectedVersion && (d.status === 'ASSIGNED' || d.status === 'CONFIRMED')) {
+    if (d.version !== expectedVersion && (d.status === 'ASSIGNED' || d.status === 'CONFIRMED') && !(await this.onlyOwnConfirmationSince(tx, auth, d, expectedVersion))) {
       throw serverChanged(d.version, await this.summary(tx, id), 'Your assignment was changed by your coordinator. Review it and try again.');
     }
     return d;

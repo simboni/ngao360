@@ -271,8 +271,12 @@ Blueprint 6 (field, registry, agents), 7 (War Room), 11.3 (mobile PWA), 13.4 (of
   `DeploymentModule`.
 - **War Room status** is derived at read time (`deriveStationStatus`) from deployments, field
   reports, open HIGH/CRITICAL incidents and tally intake matched by station code, plus the manual
-  override; no other module has to call the War Room. Every response carries `WAR_ROOM_LABEL` and
-  completeness; missing stations are never zero.
+  override; no other module has to call the War Room. One org-wide component snapshot per tenant,
+  cycle and registry is cached briefly (at most 8 entries, expired entries evicted on write) and
+  filtered by scope in memory; each caller's status is computed from it, with tally-derived states
+  only where the caller holds `tally.view` over the station. Derived-status history is written by
+  `StationStatusRecorderService` on a timer (set-based, advisory-locked), never by reads. Every
+  response carries `WAR_ROOM_LABEL` and completeness; missing stations are never zero.
 
 ### 14.1 Mobile PWA and the offline queue (Field B)
 
@@ -286,10 +290,14 @@ Blueprint 6 (field, registry, agents), 7 (War Room), 11.3 (mobile PWA), 13.4 (of
   user and tenant; each record keeps the `LocalQueueEntry` metadata (`packages/shared/src/field/sync.ts`)
   in clear and the payload (and any photo bytes) encrypted with AES-GCM (WebCrypto, random 96-bit IV
   per record). The key is a **non-extractable** `CryptoKey` generated on the device and stored in
-  IndexedDB, so the payload cannot be read by copying the browser's files or by script that cannot
-  call WebCrypto on that origin. **Known gap:** a non-extractable key protects the data at rest
-  against file copying, not against someone using the unlocked browser profile on the same device;
-  wrapping the key with a PIN-derived key (PBKDF2) is the planned step (blueprint 11.3 "device PIN").
+  the same IndexedDB database. **What this protects:** other origins and casual inspection of the
+  stored records (dev tools, storage viewers) see only ciphertext. **What it does not protect:**
+  "non-extractable" only blocks JavaScript export; the browser serialises the stored key, raw key
+  material included, into the profile's IndexedDB files beside the ciphertext, so a copy of the
+  browser profile reveals queued payloads. And anyone who opens `/m` on the phone, also offline from
+  the last user's local session, sees queued items and their summaries. **Known gap (priority before
+  a live pilot):** wrap the queue key with a PIN-derived key (PBKDF2 / Argon2) and require the PIN
+  before the queue opens offline (blueprint 11.3 "device PIN").
   On sign-out the database and key are deleted; confirmed items are deleted after `ACCEPTED`.
 - Idempotency keys are generated when a record is first saved, before any upload, and reused on
   every retry; conflicts are shown to the person (never resolved by overwriting server data).

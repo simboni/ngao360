@@ -641,6 +641,7 @@ model Tenant {
   stationStatuses      StationStatus[]
   stationStatusEvents  StationStatusEvent[]
   clientSubmissions    ClientSubmission[]
+  fieldFileClaims      FieldFileClaim[]
 
   @@map("tenants")
 }
@@ -753,6 +754,7 @@ model User {
   stationStatusesSet         StationStatus[]       @relation("StationStatusManualBy")
   stationStatusEvents        StationStatusEvent[]  @relation("StationStatusEventActor")
   clientSubmissions          ClientSubmission[]    @relation("ClientSubmissionUser")
+  fieldFileClaims            FieldFileClaim[]      @relation("FieldFileClaimUser")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -1274,6 +1276,7 @@ model StoredFile {
   agentAccreditations AgentAccreditation[]
   fieldReportEvidence FieldReportEvidence[]
   incidentEvidence    IncidentEvidence[]
+  fieldFileClaims     FieldFileClaim[]
 
   @@unique([tenantId, sha256])
   @@map("stored_files")
@@ -2987,4 +2990,25 @@ model ClientSubmission {
   @@index([tenantId, userId, deviceId, lastSeenAt])
   @@index([tenantId, outcome, lastSeenAt])
   @@map("client_submissions")
+}
+
+/// Who uploaded a content-addressed stored file for a field purpose. Identical bytes
+/// are stored once per tenant (stored_files is unique on sha256), so the first
+/// uploader alone is on stored_files.uploaded_by_id; every uploader gets a claim here,
+/// and field evidence is authorised by claim, not by the first uploader. Append-only.
+model FieldFileClaim {
+  id           String            @id @default(uuid()) @db.Uuid
+  tenantId     String            @map("tenant_id") @db.Uuid
+  storedFileId String            @map("stored_file_id") @db.Uuid
+  userId       String            @map("user_id") @db.Uuid
+  purpose      StoredFilePurpose
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  storedFile StoredFile @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  user       User       @relation("FieldFileClaimUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, storedFileId, userId, purpose])
+  @@index([tenantId, userId])
+  @@map("field_file_claims")
 }

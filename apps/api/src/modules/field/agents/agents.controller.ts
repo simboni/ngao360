@@ -33,6 +33,7 @@ import {
 import { AgentsService } from './agents.service';
 
 const AGENT: GeoTarget = { kind: FIELD_GEO_KIND.AGENT, from: 'params', key: 'id' };
+const AGENT_PERSONAL: GeoTarget = { kind: FIELD_GEO_KIND.AGENT_PERSONAL, from: 'params', key: 'id' };
 
 /**
  * S13 agent registry and profile (docs/API_CONTRACT.md §16): list, detail, create, update, status,
@@ -77,7 +78,7 @@ export class AgentsController {
   @Post(':id/reveal')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
-  @RequirePermission('field.agents.reveal_sensitive', { geo: AGENT })
+  @RequirePermission('field.agents.reveal_sensitive', { geo: AGENT_PERSONAL })
   @RequireReauth()
   reveal(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto, @Body() body: RevealAgentSensitiveDto): Promise<AgentSensitiveReveal> {
     return this.service.reveal(auth, p.id, body);
@@ -85,7 +86,7 @@ export class AgentsController {
 
   @Put(':id/sensitive')
   @Header('Cache-Control', 'no-store')
-  @RequirePermission('field.agents.reveal_sensitive', { geo: AGENT })
+  @RequirePermission('field.agents.reveal_sensitive', { geo: AGENT_PERSONAL })
   @RequireReauth()
   updateSensitive(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto, @Body() body: UpdateAgentSensitiveDto): Promise<AgentDetail> {
     return this.service.updateSensitive(auth, p.id, body);

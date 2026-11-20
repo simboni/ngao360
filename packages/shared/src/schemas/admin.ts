@@ -353,6 +353,8 @@ export const AUDIT_ACTIONS = {
   INCIDENT_REOPENED: 'field.incident.reopened',
   // War Room
   STATION_STATUS_SET: 'warroom.station_status.set',
+  /** System: derived station statuses recorded by the periodic recorder (one event per run with changes). */
+  STATION_STATUS_DERIVED_RECORDED: 'warroom.station_status.derived_recorded',
   // Offline sync
   SYNC_CONFLICT_RECORDED: 'field.sync.conflict_recorded',
 } as const;

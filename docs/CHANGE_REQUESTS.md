@@ -582,8 +582,10 @@ change is needed. Requests for files owned by others:
 Known gaps (documented, not blocking):
 
 - Queue encryption uses a per-user, per-tenant non-extractable AES-GCM key in IndexedDB (fresh IV per
-  record, entry-bound AAD). It protects against copying the browser's files, not against someone using
-  the unlocked browser profile; a PIN-wrapped key (PBKDF2) is the planned next step.
+  record, entry-bound AAD). It protects only against other origins and casual inspection of the stored
+  records: the browser serialises the key material into the profile's IndexedDB files beside the
+  ciphertext (so a copied profile is readable), and anyone opening `/m` on the phone sees queued items.
+  A PIN-wrapped key (PBKDF2 / Argon2) asked for before the queue opens offline is the priority next step.
 - No upload with every tab closed: the service worker relays Background Sync to open tabs only.
 - No separate unsaved "draft" state: a saved form goes straight into the encrypted queue (it can be
   removed from the queue before it uploads).
@@ -606,7 +608,7 @@ Applied in the integration pass (contract updated in `docs/API_CONTRACT.md` §7,
 | API 1: bulk-deployment schemas in shared | **Applied.** `BulkCreateDeploymentSchema` / `BulkDeploymentResultSchema` in `packages/shared/src/field/deployment.ts`; endpoint in the contract (§17). |
 | API 2–7, 10: interpretations | Recorded in the contract where they change behaviour (coverage over-coverage, reassignment). |
 | API 8: registry index | **Applied.** Migration `20261123000000_field_integration`: `polling_stations (tenant_id, registry_version_id, status)` plus `ANALYZE`. The hash-join workaround stays. |
-| API 9: evidence upload claims | Open (documented gap). |
+| API 9: evidence upload claims | Done in the review pass (`field_file_claims`, migration `20261124000000_field_review_fixes`). |
 | Mobile 1: `geolocation=(self)` | **Applied** in `next.config.mjs`. |
 | Mobile 2: desktop sign-out clears the queue | **Applied.** `auth-context` `logout` calls `clearOfflineDataForSignOut()`; the top-bar sign-out first counts unsent items of the last field user on the device (`unsentCountForLastSession()`, states only, no decryption) and asks for confirmation. |
 | Mobile 3: unused placeholders | **Applied.** `components/field/mobile/mobile-shell.tsx` and `mobile-placeholder.tsx` deleted. |

@@ -67,6 +67,8 @@ const INCIDENT_INCLUDE = {
 } satisfies Prisma.IncidentInclude;
 type IncidentRow = Prisma.IncidentGetPayload<{ include: typeof INCIDENT_INCLUDE }>;
 
+const RESTRICTED_TEXT = 'Classified incident: the description is limited to authorised incident handlers.';
+
 const RETRIAGE_STATUSES: IncidentStatus[] = ['TRIAGED', 'ASSIGNED', 'ESCALATED'];
 
 /**
@@ -91,6 +93,24 @@ export class IncidentsService {
 
   private can(auth: AuthContext, perm: PermissionKey, i: Parameters<typeof fieldGeoLocation>[0]): boolean {
     return auth.permissions.has(perm) && scopeAllows(this.permissions.scopeFor(auth, perm), fieldGeoLocation(i));
+  }
+
+  /**
+   * Sensitivity classification (set at triage) gates the incident's content:
+   * CONFIDENTIAL needs field.incidents.triage or field.incidents.view_subject over the
+   * incident, HIGHLY_RESTRICTED needs field.incidents.view_subject. Other viewers keep
+   * the record's existence, category, severity, status and location (so counts and the
+   * War Room stay complete) but not the description, notes, corrections or evidence.
+   */
+  private contentVisible(auth: AuthContext, i: Parameters<typeof fieldGeoLocation>[0] & { sensitivity: string }): boolean {
+    if (i.sensitivity === 'HIGHLY_RESTRICTED') return this.can(auth, 'field.incidents.view_subject', i);
+    if (i.sensitivity === 'CONFIDENTIAL') return this.can(auth, 'field.incidents.view_subject', i) || this.can(auth, 'field.incidents.triage', i);
+    return true;
+  }
+
+  /** 403 unless the caller may read the incident's restricted content (history, evidence files). */
+  private assertContentVisible(auth: AuthContext, i: IncidentRow): void {
+    if (i.reporterId !== auth.userId && !this.contentVisible(auth, i)) throw AppException.forbidden('This incident is classified; its content is limited to authorised incident handlers');
   }
 
   private async load(tx: TenantTx, id: string): Promise<IncidentRow> {
@@ -173,10 +193,12 @@ export class IncidentsService {
     }
   }
 
-  private async summaries(tx: TenantTx, rows: IncidentRow[]): Promise<IncidentSummary[]> {
+  private async summaries(tx: TenantTx, auth: AuthContext, rows: IncidentRow[]): Promise<IncidentSummary[]> {
     const locations = await loadFieldLocations(tx, rows);
     const now = Date.now();
-    return rows.map((i, n) => ({
+    return rows.map((i, n) => {
+      const restricted = i.reporterId !== auth.userId && !this.contentVisible(auth, i);
+      return {
       id: i.id,
       reference: i.reference,
       category: i.category,
@@ -188,7 +210,7 @@ export class IncidentsService {
       location: locations[n]!,
       occurredAt: i.occurredAt.toISOString(),
       reportedAt: i.reportedAt.toISOString(),
-      descriptionPreview: i.description.length > 160 ? `${i.description.slice(0, 157)}…` : i.description,
+      descriptionPreview: restricted ? RESTRICTED_TEXT : i.description.length > 160 ? `${i.description.slice(0, 157)}…` : i.description,
       reporter: i.reporter,
       assignee: i.assignee,
       escalatedTo: i.escalatedTo,
@@ -197,7 +219,9 @@ export class IncidentsService {
       ageMinutes: Math.max(0, Math.floor((now - i.reportedAt.getTime()) / 60_000)),
       submittedOffline: i.submittedOffline,
       updatedAt: i.updatedAt.toISOString(),
-    }));
+      ...(restricted ? { contentRestricted: true } : {}),
+      };
+    });
   }
 
   private allowedActions(auth: AuthContext, i: IncidentRow): IncidentDetail['allowedActions'] {
@@ -222,8 +246,12 @@ export class IncidentsService {
 
   async detailInTx(tx: TenantTx, auth: AuthContext, id: string): Promise<IncidentDetail> {
     const i = await this.loadReadable(tx, auth, id);
-    const viewer = this.can(auth, 'field.incidents.view', i);
-    const [summary] = await this.summaries(tx, [i]);
+    const isReporter = i.reporterId === auth.userId;
+    const visible = this.contentVisible(auth, i);
+    // A viewer whose access does not cover the classification sees the record like a
+    // reporter-only caller (own entries only), and without the original description.
+    const viewer = this.can(auth, 'field.incidents.view', i) && visible;
+    const [summary] = await this.summaries(tx, auth, [i]);
     const [events, evidence] = await Promise.all([
       tx.incidentEvent.findMany({ where: { incidentId: id }, include: { actor: USER_REF }, orderBy: { createdAt: 'asc' } }),
       tx.incidentEvidence.findMany({ where: { incidentId: id }, include: { storedFile: { select: { mimeType: true, sizeBytes: true, sha256: true } }, addedBy: USER_REF }, orderBy: { createdAt: 'asc' } }),
@@ -232,13 +260,13 @@ export class IncidentsService {
     const visibleEvents = viewer
       ? events.map((e) => this.toEvent(e))
       : events.map((e) => (e.actorId === auth.userId ? this.toEvent(e) : { ...this.toEvent(e), note: null, data: {}, fileIds: [], actor: { id: e.actorId, displayName: 'Incident desk' } }));
-    const visibleEvidence = viewer ? evidence : evidence.filter((e) => e.original || e.addedById === auth.userId);
+    const visibleEvidence = viewer ? evidence : evidence.filter((e) => (e.original && isReporter) || e.addedById === auth.userId);
     return {
       ...summary!,
       assignee: viewer ? summary!.assignee : null,
-      description: i.description,
-      locationDescription: i.locationDescription,
-      point: i.latitude !== null && i.longitude !== null ? { latitude: Number(i.latitude), longitude: Number(i.longitude), accuracyMetres: null, capturedAt: i.occurredAt.toISOString() } : null,
+      description: visible || isReporter ? i.description : RESTRICTED_TEXT,
+      locationDescription: visible || isReporter ? i.locationDescription : null,
+      point: (visible || isReporter) && i.latitude !== null && i.longitude !== null ? { latitude: Number(i.latitude), longitude: Number(i.longitude), accuracyMetres: null, capturedAt: i.occurredAt.toISOString() } : null,
       sensitivity: i.sensitivity,
       evidence: visibleEvidence.map((e) => ({
         fileId: e.storedFileId,
@@ -296,7 +324,7 @@ export class IncidentsService {
       const orderBy: Prisma.IncidentOrderByWithRelationInput[] =
         q.sort === 'reportedAt' ? [{ reportedAt: q.order }] : q.sort === 'updatedAt' ? [{ updatedAt: q.order }] : [{ severity: 'desc' }, { reportedAt: 'asc' }];
       const [rows, total] = await Promise.all([tx.incident.findMany({ where, include: INCIDENT_INCLUDE, orderBy, ...paging(q) }), tx.incident.count({ where })]);
-      const items = await this.summaries(tx, rows);
+      const items = await this.summaries(tx, auth, rows);
       // Reporter-only rows do not show who handles the incident.
       return {
         items: items.map((s, n) => (this.can(auth, 'field.incidents.view', rows[n]!) ? s : { ...s, assignee: null })),
@@ -313,7 +341,7 @@ export class IncidentsService {
 
   history(auth: AuthContext, id: string): Promise<AuditEvent[]> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      this.assertContentVisible(auth, await this.load(tx, id));
       return auditEventsFor(tx, [id], auth);
     });
   }
@@ -582,7 +610,7 @@ export class IncidentsService {
 
   evidenceUrl(auth: AuthContext, id: string, fileId: string, download: boolean): Promise<SignedUrlResponse> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      this.assertContentVisible(auth, await this.load(tx, id));
       const link = await tx.incidentEvidence.findFirst({ where: { incidentId: id, storedFileId: fileId }, include: { storedFile: true } });
       if (!link) throw AppException.notFound('File not found on this incident');
       return issueFieldFileUrl(tx, { storage: this.storage, audit: this.audit }, { tenantId: auth.tenantId, file: link.storedFile, entityType: FIELD_ENTITY.INCIDENT, entityId: id, download });

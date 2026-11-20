@@ -215,14 +215,16 @@ export class AgentsService {
       sts.forEach((s) => stationNames.set(`${cycleId}:${s.code}`, s.name));
     }
     const loc = this.agentLocation(a);
-    const own = a.userId === auth.userId;
+    const own = await this.isOwnRecord(tx, a, auth.userId);
     const actions: AgentDetail['allowedActions'] = [];
     const canEdit = this.can(auth, 'field.agents.edit', loc);
-    if (canEdit && a.status !== 'WITHDRAWN') actions.push('edit', 'link_user');
+    if (canEdit && a.status !== 'WITHDRAWN') actions.push('edit');
+    if (canEdit && a.status !== 'WITHDRAWN' && !own) actions.push('link_user');
     if (canEdit && AGENT_STATUS_TRANSITIONS[a.status].length > 0) actions.push('change_status');
     if (this.can(auth, 'field.agents.training', loc)) actions.push('record_training');
     if (this.can(auth, 'field.agents.accreditation', loc)) actions.push('record_accreditation');
-    if (!own && this.can(auth, 'field.agents.reveal_sensitive', loc)) actions.push('reveal_sensitive', 'edit_sensitive');
+    // Personal data: home area, grants for every cycle or the current field cycle only.
+    if (!own && this.can(auth, 'field.agents.reveal_sensitive', { ...loc, electionCycleId: cycle?.id ?? null })) actions.push('reveal_sensitive', 'edit_sensitive');
     return {
       ...summary!,
       otherNames: a.otherNames,
@@ -445,7 +447,7 @@ export class AgentsService {
   reveal(auth: AuthContext, id: string, dto: RevealAgentSensitive): Promise<AgentSensitiveReveal> {
     return this.prisma.tenantTx(async (tx) => {
       const a = await this.loadAgent(tx, id);
-      if (a.userId === auth.userId) throw AppException.separationOfDuties('You cannot reveal your own agent record’s personal data');
+      if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot reveal your own agent record’s personal data');
       const s = await tx.agentSensitive.findUnique({ where: { agentId: id } });
       const fields = [...new Set(dto.fields)];
       const out: AgentSensitiveReveal = { agentId: id, revealedAt: new Date().toISOString() };
@@ -470,7 +472,7 @@ export class AgentsService {
   updateSensitive(auth: AuthContext, id: string, dto: UpdateAgentSensitive): Promise<AgentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const a = await this.loadAgent(tx, id);
-      if (a.userId === auth.userId) throw AppException.separationOfDuties('You cannot change your own agent record’s personal data');
+      if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot change your own agent record’s personal data');
       if (a.status === 'WITHDRAWN') throw immutableRecord('A withdrawn agent record cannot be edited');
       const current = await tx.agentSensitive.findUnique({ where: { agentId: id } });
       const keys = ['nationalIdNumber', 'phone', 'mpesaNumber', 'nextOfKinName', 'nextOfKinPhone', 'nextOfKinRelationship'] as const;
@@ -647,10 +649,32 @@ export class AgentsService {
     });
   }
 
+  /**
+   * True when the user is, or ever was, linked to this agent record. The link history comes
+   * from the append-only audit stream, so unlinking does not reopen the caller's own record.
+   */
+  private async isOwnRecord(tx: TenantTx, a: { id: string; userId: string | null }, userId: string): Promise<boolean> {
+    if (a.userId === userId) return true;
+    const past = await tx.auditEvent.findFirst({
+      where: {
+        entityId: a.id,
+        action: AUDIT_ACTIONS.AGENT_USER_LINKED,
+        OR: [{ before: { path: ['userId'], equals: userId } }, { after: { path: ['userId'], equals: userId } }],
+      },
+      select: { id: true },
+    });
+    return !!past;
+  }
+
   linkUser(auth: AuthContext, id: string, dto: LinkAgentUser): Promise<AgentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const a = await this.loadAgent(tx, id);
       if (a.status === 'WITHDRAWN') throw immutableRecord('A withdrawn agent record cannot be edited');
+      // Separation of duties: nobody links or unlinks their own account (unlinking would
+      // otherwise open the reveal / edit-sensitive routes on their own record).
+      if (dto.userId === auth.userId || (await this.isOwnRecord(tx, a, auth.userId))) {
+        throw AppException.separationOfDuties('You cannot change the account link of your own agent record');
+      }
       if (dto.userId) {
         const user = await tx.user.findUnique({ where: { id: dto.userId }, select: { id: true, status: true } });
         if (!user || user.status !== 'ACTIVE') throw AppException.validation('Choose an active user account', [{ path: ['userId'], message: 'Unknown or inactive user' }]);

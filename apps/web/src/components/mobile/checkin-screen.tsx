@@ -10,7 +10,7 @@
  */
 import type { CheckOut, DeploymentDetail, MyAssignment } from '@ngao360/shared';
 import { MapPinCheck } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { geolocationAvailable, readLocationOnce } from '@/lib/offline/geo';
 import { AssignmentCard } from './assignment-card';
@@ -21,6 +21,18 @@ import { useFieldMe } from './use-field-data';
 
 export function CheckInScreen() {
   const me = useFieldMe();
+  const s = useMobileSession();
+  // When a queued confirmation or check-in leaves the queue (accepted), reload the
+  // assignment so the next action sends the server's current version.
+  const pendingKey = [...pendingTargets(s.entries, 'ASSIGNMENT_CONFIRMATION'), ...pendingTargets(s.entries, 'CHECK_IN')].sort().join(',');
+  const previous = useRef(pendingKey);
+  const reload = me.reload;
+  useEffect(() => {
+    const before = previous.current.split(',').filter(Boolean);
+    previous.current = pendingKey;
+    const now = new Set(pendingKey.split(',').filter(Boolean));
+    if (before.some((id) => !now.has(id))) void reload();
+  }, [pendingKey, reload]);
   return (
     <MobileGate anyOf={['field.deployment.checkin']}>
       <PageTitle sub="Confirm your assignment and check in when you reach your station. This works offline; it uploads when you are connected.">Check in</PageTitle>

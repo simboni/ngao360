@@ -272,11 +272,15 @@ describeDb('election-day rehearsal (field operations and War Room)', () => {
     const coverage = dash.kpis.find((k: { key: string }) => k.key === 'agent_coverage');
     expect(coverage).toMatchObject({ availability: 'AVAILABLE', value: 1, denominator: 6, href: '/field/deployment' });
 
-    // An observer without tally access sees the same statuses but no tally figures.
+    // An observer without tally access sees no tally figures and no tally-derived statuses:
+    // stations are derived from field components only (the F-002 / F-003 forms are not
+    // visible, so those stations show as assigned), and only F-001 has reported for them;
+    // the others are missing, never zero.
     const obs = (await f.http('observer').get('/warroom/overview').expect(200)).body;
     expect(obs.formIntake.available).toBe(false);
     expect(obs.tallyVerification.available).toBe(false);
-    expect(obs.stationStatus.completeness).toEqual(ov.stationStatus.completeness);
+    expect(statusCounts(obs)).toEqual({ UPDATE_RECEIVED: 1, ASSIGNED: 3, NOT_ASSIGNED: 2 });
+    expect(obs.stationStatus.completeness).toEqual({ expected: 6, reported: 1, missing: 5, ratio: 1 / 6 });
   });
 
   it('8. an agent cannot report for a station they are not deployed to', async () => {

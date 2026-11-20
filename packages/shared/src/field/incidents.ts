@@ -81,6 +81,12 @@ export const IncidentSummarySchema = z.object({
   ageMinutes: z.number().int(),
   submittedOffline: z.boolean(),
   updatedAt: IsoDateTimeSchema,
+  /**
+   * True when the incident's sensitivity hides its content from the caller
+   * (CONFIDENTIAL needs triage or view_subject, HIGHLY_RESTRICTED needs view_subject):
+   * description, notes and evidence are withheld.
+   */
+  contentRestricted: z.boolean().optional(),
 });
 export type IncidentSummary = z.infer<typeof IncidentSummarySchema>;
 

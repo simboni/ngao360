@@ -182,10 +182,12 @@ export class SyncService {
     } else if (e instanceof StaleItemException) {
       errorCode = SYNC_ERROR_CODES.STALE;
     }
-    await this.prisma.tenantTx(async (tx) => {
+    const acceptedMeanwhile = await this.prisma.tenantTx(async (tx) => {
       // A reused key keeps its original ledger row; anything else records the outcome (re-evaluated on retry).
+      // A concurrent send of the same item that was ACCEPTED in the meantime wins: nothing is overwritten.
       if (errorCode !== SYNC_ERROR_CODES.IDEMPOTENCY_KEY_REUSED) {
-        await this.ledger.record(tx, auth, this.ledgerItem(item), ClientSubmissionLedger.payloadHash(item.payload), { outcome, errorCode });
+        const accepted = await this.ledger.recordFailure(tx, auth, this.ledgerItem(item), ClientSubmissionLedger.payloadHash(item.payload), { outcome, errorCode });
+        if (accepted) return accepted;
       }
       if (outcome === 'CONFLICT') {
         await this.audit.record(
@@ -199,7 +201,21 @@ export class SyncService {
           tx,
         );
       }
+      return null;
     });
+    if (acceptedMeanwhile?.resultId) {
+      return {
+        ...this.base(item),
+        outcome: 'ACCEPTED',
+        replayed: true,
+        resultType: acceptedMeanwhile.resultType,
+        resultId: acceptedMeanwhile.resultId,
+        reference: acceptedMeanwhile.resultReference,
+        errorCode: null,
+        message: null,
+        serverState: null,
+      };
+    }
     return { ...this.base(item), ...empty, outcome, errorCode, message: err.message, serverState };
   }
 
