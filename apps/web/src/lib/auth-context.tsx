@@ -11,6 +11,7 @@ import {
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, ApiRequestError } from './api-client';
+import { clearOfflineDataForSignOut } from './offline/device';
 
 interface AuthState {
   me: MeResponse | null;
@@ -61,6 +62,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.post('/auth/logout', undefined, { noRefresh: true });
     } finally {
+      // Sign-out on this device also removes the field app's encrypted offline
+      // queue and its key (the callers warn about unsent items first).
+      await clearOfflineDataForSignOut().catch(() => undefined);
       setMe(null);
       router.replace('/login');
     }

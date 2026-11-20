@@ -68,3 +68,24 @@ export async function clearOfflineDataForSignOut(): Promise<void> {
   const { deleteQueueDatabase, queueDatabaseName } = await import('./storage');
   await deleteQueueDatabase(queueDatabaseName(s.tenantId, s.userId));
 }
+
+/**
+ * Items of the last field user's queue on this device that are not yet
+ * accepted by the server (waiting, not accepted, or needing a decision).
+ * Reads entry states only (no decryption). 0 when there is no queue.
+ */
+export async function unsentCountForLastSession(): Promise<number> {
+  const s = lastSession();
+  if (!s || typeof indexedDB === 'undefined') return 0;
+  try {
+    const { IndexedDbQueueStorage, queueDatabaseName } = await import('./storage');
+    const storage = await IndexedDbQueueStorage.open(queueDatabaseName(s.tenantId, s.userId));
+    try {
+      return (await storage.getAll()).filter((e) => e.state !== 'CONFIRMED').length;
+    } finally {
+      storage.close();
+    }
+  } catch {
+    return 0;
+  }
+}

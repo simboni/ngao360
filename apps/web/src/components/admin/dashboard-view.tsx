@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { FieldDashboardCard } from '@/components/field/field-dashboard-card';
 import { OfficeKpis } from '@/components/office/office-kpis';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -229,6 +230,10 @@ export function DashboardView() {
           ? data.kpis.map((k) => <KpiTile key={k.key} kpi={k} />)
           : Array.from({ length: 4 }).map((_, i) => <div key={i} className="ngao-card h-40 animate-pulse" />)}
       </section>
+
+      <div className="mb-6">
+        <FieldDashboardCard />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">

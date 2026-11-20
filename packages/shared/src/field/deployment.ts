@@ -177,6 +177,7 @@ export const StationCoverageSlotSchema = z.object({
       role: DeploymentRoleSchema,
       shift: DeploymentShiftSchema,
       deploymentId: UuidSchema,
+      agentId: UuidSchema,
       agentDisplayName: z.string(),
       status: DeploymentStatusSchema,
     }),
@@ -216,3 +217,26 @@ export const MyAssignmentSchema = DeploymentSummarySchema.extend({
   allowedActions: z.array(DeploymentAllowedActionSchema),
 });
 export type MyAssignment = z.infer<typeof MyAssignmentSchema>;
+
+/**
+ * Bulk planner assignment (POST /field/deployments/bulk, `field.deployment.plan`):
+ * 1–200 CreateDeployment items, each applied in its own transaction with exactly
+ * the checks of POST /field/deployments; one refusal never rolls back another.
+ */
+export const BulkCreateDeploymentSchema = z.object({ items: z.array(CreateDeploymentSchema).min(1).max(200) });
+export type BulkCreateDeployment = z.infer<typeof BulkCreateDeploymentSchema>;
+
+export const BulkDeploymentResultSchema = z.object({
+  created: z.number().int(),
+  refused: z.number().int(),
+  results: z.array(
+    z.object({
+      index: z.number().int(),
+      outcome: z.enum(['CREATED', 'REFUSED']),
+      deploymentId: UuidSchema.nullable(),
+      warnings: z.array(DeploymentConflictSchema),
+      error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }).nullable(),
+    }),
+  ),
+});
+export type BulkDeploymentResult = z.infer<typeof BulkDeploymentResultSchema>;

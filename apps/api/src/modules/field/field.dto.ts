@@ -4,6 +4,7 @@
  * §15–22). Shared by the field sub-modules so they never define ad-hoc shapes.
  */
 import {
+  BulkCreateDeploymentSchema,
   IdParamSchema,
   AddIncidentEventSchema,
   AgentQuerySchema,
@@ -125,11 +126,4 @@ export class SyncStatusQueryDto extends createZodDto(SyncStatusQuerySchema) {}
 export class DownloadQueryDto extends createZodDto(DownloadQuerySchema) {}
 export class FileParamDto extends createZodDto(z.object({ id: z.string().uuid(), fileId: z.string().uuid() })) {}
 
-/**
- * Bulk planner assignment (POST /field/deployments/bulk): up to 200 CreateDeployment
- * items applied one by one; each item is accepted or refused with its own error.
- * Proposed contract addition: docs/CHANGE_REQUESTS.md (Field).
- */
-export const BulkCreateDeploymentSchema = z.object({ items: z.array(CreateDeploymentSchema).min(1).max(200) });
-export type BulkCreateDeployment = z.infer<typeof BulkCreateDeploymentSchema>;
 export class BulkCreateDeploymentDto extends createZodDto(BulkCreateDeploymentSchema) {}

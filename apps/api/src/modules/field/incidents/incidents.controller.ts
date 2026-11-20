@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
-import type { AuditEvent, IncidentDetail, IncidentEvent, IncidentSubject, IncidentSummary, Paginated, SignedUrlResponse } from '@ngao360/shared';
+import type { AuditEvent, IncidentDetail, IncidentEvent, IncidentSubject, IncidentSummary, Paginated, SignedUrlResponse, UserRef } from '@ngao360/shared';
 import type { Response } from 'express';
 import type { AuthContext } from '../../../auth/auth.types';
 import { CurrentAuth } from '../../../common/decorators/auth.decorators';
@@ -65,6 +65,13 @@ export class IncidentsController {
   @RequirePermission('field.incidents.triage', { geo: INCIDENT })
   triage(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto, @Body() body: TriageIncidentDto): Promise<IncidentDetail> {
     return this.service.triage(auth, p.id, body);
+  }
+
+  /** Active users holding field.incidents.triage over the incident location (the assign check re-applies). */
+  @Get(':id/assignable-users')
+  @RequirePermission('field.incidents.assign', { geo: INCIDENT })
+  assignableUsers(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto): Promise<UserRef[]> {
+    return this.service.assignableUsers(auth, p.id);
   }
 
   @Post(':id/assign')

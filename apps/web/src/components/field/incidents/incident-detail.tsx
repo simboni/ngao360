@@ -4,6 +4,7 @@ import {
   INCIDENT_CATEGORY_LABELS,
   INCIDENT_ESCALATION_TARGET_LABELS,
   INCIDENT_OUTCOME_LABELS,
+  INCIDENT_SEVERITY_LABELS,
   type IncidentAllowedAction,
   type IncidentDetail as IncidentDetailDto,
   type IncidentEvent,
@@ -139,6 +140,7 @@ export function IncidentDetail({ id }: { id: string }) {
               <div>
                 <dl>
                   <MetaRow label="Category reported">{INCIDENT_CATEGORY_LABELS[i.reportedCategory]}</MetaRow>
+                  <MetaRow label="Initial severity">{INCIDENT_SEVERITY_LABELS[i.initialSeverity]}</MetaRow>
                   <MetaRow label="When it happened">{formatDateTime(i.occurredAt)}</MetaRow>
                   <MetaRow label="Station or area">{stationLabel(i.location)}</MetaRow>
                   {i.location.station && !i.location.station.inApprovedRegistry ? (

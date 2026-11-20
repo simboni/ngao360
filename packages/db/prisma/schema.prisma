@@ -1131,6 +1131,8 @@ model PollingStation {
   @@index([tenantId, electionCycleId, countyId])
   @@index([tenantId, electionCycleId, constituencyId])
   @@index([tenantId, electionCycleId, wardId])
+  /// War Room / readiness roll-ups scan the approved registry by version and status (field ops at 55k stations).
+  @@index([tenantId, registryVersionId, status])
   @@map("polling_stations")
 }
 

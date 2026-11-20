@@ -62,6 +62,8 @@ export const IncidentSummarySchema = z.object({
   /** Current (triaged) category; `reportedCategory` keeps what the reporter chose. */
   category: IncidentCategorySchema,
   reportedCategory: IncidentCategorySchema,
+  /** Severity set by the configured rules at intake (immutable); `severity` is the current, triaged value. */
+  initialSeverity: IncidentSeveritySchema,
   severity: IncidentSeveritySchema,
   status: IncidentStatusSchema,
   outcome: IncidentOutcomeSchema.nullable(),

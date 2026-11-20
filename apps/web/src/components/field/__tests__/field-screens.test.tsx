@@ -108,7 +108,7 @@ describe('deployment planner', () => {
   const station = {
     pollingStationCode: '039-001',
     pollingStationName: 'Synthetic Primary',
-    slots: [{ role: 'CHIEF_AGENT' as const, shift: 'FULL_DAY' as const, deploymentId: U(20), agentDisplayName: 'Agent A (synthetic)', status: 'ASSIGNED' as const }],
+    slots: [{ role: 'CHIEF_AGENT' as const, shift: 'FULL_DAY' as const, deploymentId: U(20), agentId: U(22), agentDisplayName: 'Agent A (synthetic)', status: 'ASSIGNED' as const }],
   };
   const agent = { id: U(21), displayName: 'Agent B (synthetic)', status: 'ACTIVE' as const, accreditationStatus: 'PENDING' as const };
 
@@ -127,6 +127,12 @@ describe('deployment planner', () => {
     assert.ok(c.some((x) => x.kind === 'AGENT_NOT_ACCREDITED' && !x.blocking));
     const ok = precheckAssignment({ agent: { ...agent, accreditationStatus: 'APPROVED' }, station, role: 'STATION_AGENT', shift: 'FULL_DAY' }, [station]);
     assert.equal(ok.length, 0);
+  });
+  it('flags a double booking by agent id, not by name', () => {
+    const sameName = precheckAssignment({ agent: { ...agent, accreditationStatus: 'APPROVED', displayName: 'Agent A (synthetic)' }, station: { ...station, slots: [] }, role: 'RUNNER', shift: 'OPENING' }, [station]);
+    assert.ok(!sameName.some((x) => x.kind === 'AGENT_DOUBLE_BOOKED'));
+    const sameAgent = precheckAssignment({ agent: { ...agent, id: U(22), accreditationStatus: 'APPROVED' }, station: { ...station, slots: [] }, role: 'RUNNER', shift: 'OPENING' }, [station]);
+    assert.ok(sameAgent.some((x) => x.kind === 'AGENT_DOUBLE_BOOKED' && x.blocking));
   });
   it('blocks inactive agents', () => {
     const c = precheckAssignment({ agent: { ...agent, status: 'INACTIVE' as never }, station, role: 'RUNNER', shift: 'FULL_DAY' }, []);

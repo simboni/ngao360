@@ -54,8 +54,8 @@ export function precheckAssignment(plan: PlannedAssignment, visibleStations: Rea
   }
   for (const st of visibleStations) {
     for (const s of st.slots) {
-      if (s.agentDisplayName === plan.agent.displayName && shiftsOverlap(s.shift, plan.shift)) {
-        out.push({ ...base, kind: 'AGENT_DOUBLE_BOOKED', message: `${plan.agent.displayName} may already hold an overlapping slot at ${st.pollingStationCode} (matched by name; the server checks by agent).`, deploymentIds: [s.deploymentId], blocking: false });
+      if (s.agentId === plan.agent.id && shiftsOverlap(s.shift, plan.shift)) {
+        out.push({ ...base, kind: 'AGENT_DOUBLE_BOOKED', message: `${plan.agent.displayName} already holds an overlapping slot at ${st.pollingStationCode}.`, deploymentIds: [s.deploymentId], blocking: true });
       }
     }
   }

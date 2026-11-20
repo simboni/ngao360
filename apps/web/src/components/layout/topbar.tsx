@@ -3,10 +3,17 @@
 import { Bell, LogOut, Menu, Search, UserCircle2 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { unsentCountForLastSession } from '@/lib/offline/device';
 
 export function Topbar({ onMenu }: { onMenu: () => void }) {
   const { me, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const signOut = async () => {
+    // Signing out deletes the field app's offline queue on this device: warn about unsent items first.
+    const unsent = await unsentCountForLastSession();
+    if (unsent > 0 && !window.confirm(`${unsent} field item(s) saved on this device have not been sent yet. Signing out deletes them. Sign out anyway?`)) return;
+    await logout();
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-topbar items-center gap-3 border-b border-line bg-surface px-4">
@@ -51,7 +58,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
             <button
               type="button"
               role="menuitem"
-              onClick={() => void logout()}
+              onClick={() => void signOut()}
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-body hover:bg-cloud"
             >
               <LogOut className="h-4 w-4" aria-hidden /> Sign out

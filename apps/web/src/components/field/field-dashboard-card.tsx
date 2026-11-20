@@ -1,6 +1,7 @@
 'use client';
 
 import { RadioTower } from 'lucide-react';
+import { WAR_ROOM_LABEL } from '@ngao360/shared';
 import Link from 'next/link';
 import { useAsync } from '@/components/tally/use-async';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -20,7 +21,10 @@ export function FieldDashboardCard() {
   const on = moduleEnabled('field');
   const readiness = useAsync(() => fieldApi.readinessSummary({}), [], on && can('field.readiness.view'));
   const incidents = useAsync(() => fieldApi.incidents({ view: 'open', pageSize: 1 }), [], on && can('field.incidents.view'));
-  if (!on || (!can('field.readiness.view') && !can('field.incidents.view'))) return null;
+  const warRoomOn = on && moduleEnabled('tally') && can('warroom.view');
+  const warRoom = useAsync(() => fieldApi.warRoomOverview({}), [], warRoomOn);
+  if (!on || (!can('field.readiness.view') && !can('field.incidents.view') && !warRoomOn)) return null;
+  const sc = warRoom.data?.stationStatus.completeness;
   const r = readiness.data;
   const ready = r?.byStatus.find((b) => b.status === 'READY')?.count ?? 0;
   return (
@@ -46,7 +50,16 @@ export function FieldDashboardCard() {
             </>
           ) : null}
           {incidents.data ? <Fig label="Open incidents" value={String(incidents.data.total)} hint="Incident desk" href="/field/incidents" /> : null}
+          {sc ? (
+            <Fig
+              label="Stations reporting (War Room)"
+              value={`${sc.reported} of ${sc.expected}`}
+              hint={`${sc.missing} with no update yet (not zero)`}
+              href="/warroom"
+            />
+          ) : null}
         </dl>
+        {sc ? <p className="mt-3 text-meta text-slate">{WAR_ROOM_LABEL}</p> : null}
       </CardBody>
     </Card>
   );

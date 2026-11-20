@@ -11,6 +11,7 @@ import type { AuthContext } from '../../auth/auth.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionService } from '../../rbac/permission.service';
 import { type PermissionScope, stationScopeWhere } from '../../rbac/scope';
+import { TenantModulesService } from '../../tenant-modules/tenant-modules.service';
 
 const PENDING_STATUSES: SubmissionStatus[] = ['SUBMITTED', 'OCR_COMPLETE', 'DATA_ENTRY_REVIEWED', 'SECOND_REVIEW_PENDING'];
 const REJECTED_STATUSES: SubmissionStatus[] = ['RETURNED', 'DISPUTED', 'QUARANTINED', 'EXCLUDED_FROM_AGGREGATE'];
@@ -51,6 +52,7 @@ export class DashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionService,
+    private readonly modules: TenantModulesService,
   ) {}
 
   summary(auth: AuthContext, q: DashboardQuery): Promise<DashboardSummaryExtended> {
@@ -234,17 +236,45 @@ export class DashboardService {
         }
       }
 
-      // Agent coverage: the agent-management module is not built yet (blueprint 4.2).
-      kpis.push({
-        ...base,
-        key: 'agent_coverage',
-        label: 'Agent deployment coverage',
-        value: null,
-        denominator: expected,
-        definition: 'Assigned station slots with a confirmed agent ÷ planned slots. Available when agent management is enabled. Not a measure of voter preference or support.',
-        href: null,
-        availability: 'NOT_AVAILABLE',
-      });
+      // Agent coverage (blueprint 4.2): stations of the approved registry in the caller's
+      // field deployment scope with a confirmed or checked-in chief / station agent.
+      // Needs the field module and field.deployment.view; otherwise "not available".
+      const fieldOn = cycle && registry && has('field.deployment.view') && (await this.modules.isEnabled(tx, 'field'));
+      if (fieldOn) {
+        const fieldScope = this.permissions.scopeFor(auth, 'field.deployment.view', cycle.id);
+        const fieldStations: Prisma.PollingStationWhereInput = { AND: [{ registryVersionId: registry.id, status: { not: 'INACTIVE' } }, stationScopeWhere(fieldScope) ?? {}] };
+        const planned = await tx.pollingStation.count({ where: fieldStations });
+        const confirmedCodes = await tx.deployment.findMany({
+          where: { electionCycleId: cycle.id, role: { in: ['CHIEF_AGENT', 'STATION_AGENT'] }, status: { in: ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] } },
+          select: { pollingStationCode: true },
+          distinct: ['pollingStationCode'],
+        });
+        const covered = confirmedCodes.length
+          ? await tx.pollingStation.count({ where: { AND: [fieldStations, { code: { in: confirmedCodes.map((d) => d.pollingStationCode) } }] } })
+          : 0;
+        kpis.push({
+          ...base,
+          key: 'agent_coverage',
+          label: 'Agent deployment coverage',
+          value: covered,
+          denominator: planned,
+          definition:
+            'Approved-registry stations in your field scope with a confirmed or checked-in chief or station agent ÷ all such stations. Stations without one are not covered (never counted as zero agents reporting). Not a measure of voter preference or support.',
+          href: '/field/deployment',
+          availability: 'AVAILABLE',
+        });
+      } else {
+        kpis.push({
+          ...base,
+          key: 'agent_coverage',
+          label: 'Agent deployment coverage',
+          value: null,
+          denominator: expected,
+          definition: 'Stations with a confirmed or checked-in chief or station agent ÷ approved-registry stations. Available when the field module is on, to holders of the field deployment view permission. Not a measure of voter preference or support.',
+          href: null,
+          availability: 'NOT_AVAILABLE',
+        });
+      }
 
       const recentActivity = await this.recentActivity(tx, auth);
       return {

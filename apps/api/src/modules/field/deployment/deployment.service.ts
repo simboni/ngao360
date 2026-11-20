@@ -42,7 +42,7 @@ import { agentScopeWhere, approvedRegistryId, fieldGeoLocation, fieldScopeWhere,
 import { FIELD_COLS, STATION_COLS, areaFilterSql, expectedStationSql, scopeSql } from '../common/field-sql';
 import { USER_REF, assertOfflineAge, contains, immutableRecord, notifyUsers, paging, serverChanged } from '../common/field-support';
 import { FIELD_ENTITY } from '../field.constants';
-import type { BulkCreateDeployment } from '../field.dto';
+import type { BulkCreateDeployment, BulkDeploymentResult } from '@ngao360/shared';
 import { DEPLOYMENT_INCLUDE, type DeploymentRow, agentDisplayName, ownDeploymentActions, toDeploymentSummaries } from './deployment.mappers';
 
 const ACTIVE = [...ACTIVE_DEPLOYMENT_STATUSES];
@@ -55,17 +55,7 @@ export interface FieldWriteContext {
   deviceId: string;
 }
 
-export interface BulkDeploymentResult {
-  created: number;
-  refused: number;
-  results: Array<{
-    index: number;
-    outcome: 'CREATED' | 'REFUSED';
-    deploymentId: string | null;
-    warnings: DeploymentConflict[];
-    error: { code: string; message: string; details?: unknown } | null;
-  }>;
-}
+export type { BulkDeploymentResult };
 
 /**
  * Deployment planner (blueprint 6.3, S14) and agent confirmation / check-in
@@ -345,7 +335,7 @@ export class DeploymentService {
               pollingStationCode: s.code,
               pollingStationName: s.name,
               ward: s.ward,
-              slots: mine.map((d) => ({ role: d.role, shift: d.shift, deploymentId: d.id, agentDisplayName: agentDisplayName(d.agent), status: d.status })),
+              slots: mine.map((d) => ({ role: d.role, shift: d.shift, deploymentId: d.id, agentId: d.agentId, agentDisplayName: agentDisplayName(d.agent), status: d.status })),
               covered: mine.some((d) => (COVERING_ROLES as readonly string[]).includes(d.role)),
             };
           }),

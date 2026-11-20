@@ -59,9 +59,9 @@ import type {
   TriageIncident,
   UpdateDeployment,
   UpdateReadinessItem,
-  UserSummary,
   WarRoomOverview,
   WarRoomQuery,
+  UserRef,
 } from '@ngao360/shared';
 import { api } from '@/lib/api-client';
 
@@ -89,8 +89,6 @@ export const fieldApi = {
       query: q({ electionCycleId, type, parentId, pageSize: 200, sort: 'officialName', order: 'asc' }),
     }),
 
-  /** User directory (§6.1, `users.view` only): assignee choices for administrators. */
-  activeUsers: () => api.get<Paginated<UserSummary>>('/admin/users', { query: { status: 'ACTIVE', pageSize: 200 } }),
 
   /* -------------------------------- Agents (§16) --------------------------- */
   agents: (query: Partial<AgentQuery>) => api.get<Paginated<AgentSummary>>('/field/agents', { query: q(query) }),
@@ -130,6 +128,8 @@ export const fieldApi = {
   /* ------------------------------ Incidents (§20) -------------------------- */
   incidents: (query: Partial<IncidentQuery>) => api.get<Paginated<IncidentSummary>>('/field/incidents', { query: q(query) }),
   incident: (id: string) => api.get<IncidentDetail>(`/field/incidents/${id}`),
+  /** Active users who may be assigned the incident (`field.incidents.assign`, geo). */
+  incidentAssignableUsers: (id: string) => api.get<UserRef[]>(`/field/incidents/${id}/assignable-users`),
   triageIncident: (id: string, body: TriageIncident) => api.post<IncidentDetail>(`/field/incidents/${id}/triage`, body),
   assignIncident: (id: string, body: AssignIncident) => api.post<IncidentDetail>(`/field/incidents/${id}/assign`, body),
   escalateIncident: (id: string, body: EscalateIncident) => api.post<IncidentDetail>(`/field/incidents/${id}/escalate`, body),

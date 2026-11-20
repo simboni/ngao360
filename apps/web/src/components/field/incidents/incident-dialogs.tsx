@@ -165,14 +165,14 @@ function TriageDialog({ incident, onClose, onDone }: { incident: IncidentDetail;
   );
 }
 
-/** Assignee choice: the caller, people seen on recent incidents, or the user directory when permitted. */
-function AssigneeSelect({ value, onChange, label = 'Assign to', optional = false }: { value: string; onChange: (id: string) => void; label?: string; optional?: boolean }) {
+/** Assignee choice: the people allowed to handle this incident (from the API), plus the caller and recent assignees as a fallback. */
+function AssigneeSelect({ incidentId, value, onChange, label = 'Assign to', optional = false }: { incidentId: string; value: string; onChange: (id: string) => void; label?: string; optional?: boolean }) {
   const { me, can } = useAuth();
-  const recent = useAsync(() => fieldApi.incidents({ view: 'open', pageSize: 100 }), []);
-  const directory = useAsync(() => fieldApi.activeUsers(), [], can('users.view'));
+  const eligible = useAsync(() => fieldApi.incidentAssignableUsers(incidentId), [incidentId], can('field.incidents.assign'));
+  const recent = useAsync(() => fieldApi.incidents({ view: 'open', pageSize: 100 }), [], !can('field.incidents.assign'));
   const people = assigneeCandidates(me ? { id: me.user.id, displayName: `${me.user.displayName} (me)` } : null, [
-    ...(recent.data?.items ?? []).map((i) => i.assignee),
-    ...(directory.data?.items ?? []).map((u) => ({ id: u.id, displayName: u.displayName })),
+    ...(eligible.data ?? []),
+    ...(eligible.data ? [] : (recent.data?.items ?? []).map((i) => i.assignee)),
   ]);
   return (
     <SelectField
@@ -201,7 +201,7 @@ function AssignDialog({ incident, onClose, onDone }: { incident: IncidentDetail;
       error={error}
       onConfirm={() => void go(() => fieldApi.assignIncident(incident.id, { expectedVersion: incident.version, assigneeId, note: note.trim() || null }))}
     >
-      <AssigneeSelect value={assigneeId} onChange={setAssigneeId} />
+      <AssigneeSelect incidentId={incident.id} value={assigneeId} onChange={setAssigneeId} />
       <TextArea label="Note (optional)" value={note} onChange={setNote} min={0} max={2000} hint={NEUTRAL_HINT} />
     </Shell>
   );
@@ -224,7 +224,7 @@ function EscalateDialog({ incident, onClose, onDone }: { incident: IncidentDetai
       onConfirm={() => void go(() => fieldApi.escalateIncident(incident.id, { expectedVersion: incident.version, target, assigneeId: assigneeId || null, reason: reason.trim() }))}
     >
       <SelectField label="Escalate to" value={target} onChange={(e) => setTarget(e.target.value as typeof target)} options={INCIDENT_ESCALATION_TARGETS.map((t) => ({ value: t, label: INCIDENT_ESCALATION_TARGET_LABELS[t] }))} />
-      <AssigneeSelect value={assigneeId} onChange={setAssigneeId} label="Reviewer (optional)" optional />
+      <AssigneeSelect incidentId={incident.id} value={assigneeId} onChange={setAssigneeId} label="Reviewer (optional)" optional />
       <TextArea label="Reason (recorded in the audit log)" value={reason} onChange={setReason} max={2000} />
     </Shell>
   );

@@ -136,6 +136,10 @@ export class IndexedDbQueueStorage implements QueueStorage {
     this.db.close();
     await deleteQueueDatabase(this.name);
   }
+  /** Close this connection without deleting anything. */
+  close(): void {
+    this.db.close();
+  }
 }
 
 export function deleteQueueDatabase(name: string): Promise<void> {
