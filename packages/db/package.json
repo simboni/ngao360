@@ -1,0 +1,40 @@
+{
+  "name": "@ngao360/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prisma schema, client, migrations and seed for NGAO360",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "prisma"
+  ],
+  "scripts": {
+    "generate": "prisma generate",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "echo \"db: no unit tests (covered by api integration tests)\"",
+    "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
+    "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "migrate:status": "dotenv -e ../../.env -- prisma migrate status",
+    "reset": "dotenv -e ../../.env -- prisma migrate reset --force --skip-seed",
+    "seed": "dotenv -e ../../.env -- tsx src/seed/index.ts",
+    "studio": "dotenv -e ../../.env -- prisma studio",
+    "validate": "dotenv -e ../../.env -- prisma validate"
+  },
+  "dependencies": {
+    "@ngao360/shared": "workspace:*",
+    "@prisma/client": "6.19.3"
+  },
+  "devDependencies": {
+    "@ngao360/config": "workspace:*",
+    "@types/node": "22.18.12",
+    "argon2": "0.44.0",
+    "eslint": "9.38.0",
+    "prisma": "6.19.3",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "dotenv-cli": "10.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "@ngao360/config/tsconfig/nestjs.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "baseUrl": ".",
+    "types": ["node", "jest"]
+  },
+  "include": ["src", "test"]
+}

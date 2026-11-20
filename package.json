@@ -1,0 +1,28 @@
+{
+  "name": "ngao360",
+  "private": true,
+  "version": "0.1.0",
+  "description": "NGAO360 operations platform: foundation and NGAO TALLY parallel recordkeeping",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @ngao360/db run generate",
+    "db:migrate": "pnpm --filter @ngao360/db run migrate:deploy",
+    "db:migrate:dev": "pnpm --filter @ngao360/db run migrate:dev",
+    "db:seed": "pnpm --filter @ngao360/db run seed",
+    "db:reset": "pnpm --filter @ngao360/db run reset",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css,yml,yaml}\""
+  },
+  "devDependencies": {
+    "prettier": "3.6.2",
+    "turbo": "2.5.8",
+    "typescript": "5.9.3"
+  }
+}

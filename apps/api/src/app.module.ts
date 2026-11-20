@@ -1,0 +1,58 @@
+import { type MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
+import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { RequestContextMiddleware } from './common/context/request-context.middleware';
+import { AllExceptionsFilter } from './common/http/all-exceptions.filter';
+import { CsrfGuard } from './common/http/csrf.guard';
+import { ZodValidationPipe } from './common/zod/zod-validation.pipe';
+import { AppConfig } from './config/app-config';
+import { ConfigModule } from './config/config.module';
+import { HealthModule } from './health/health.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { ReferenceModule } from './modules/reference/reference.module';
+import { TallyModule } from './modules/tally/tally.module';
+import { PrismaModule } from './prisma/prisma.module';
+import { QueueModule } from './queue/queue.module';
+import { RbacGuard } from './rbac/rbac.guard';
+import { RbacModule } from './rbac/rbac.module';
+import { StorageModule } from './storage/storage.module';
+
+@Module({
+  imports: [
+    ConfigModule,
+    ThrottlerModule.forRootAsync({
+      inject: [AppConfig],
+      useFactory: (config: AppConfig) => [
+        { ttl: config.values.RATE_LIMIT_TTL_SECONDS * 1000, limit: config.values.RATE_LIMIT_MAX },
+      ],
+    }),
+    PrismaModule,
+    AuditModule,
+    RbacModule,
+    AuthModule,
+    StorageModule,
+    QueueModule.register(),
+    HealthModule,
+    // Domain modules (filled by module agents)
+    ReferenceModule,
+    TallyModule,
+    AdminModule,
+  ],
+  providers: [
+    { provide: APP_PIPE, useClass: ZodValidationPipe },
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    // Guard order matters: rate limit → CSRF → authenticate → authorise.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: CsrfGuard },
+    { provide: APP_GUARD, useExisting: JwtAuthGuard },
+    { provide: APP_GUARD, useExisting: RbacGuard },
+  ],
+})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}
