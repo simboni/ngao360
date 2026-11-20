@@ -422,7 +422,6 @@ export class CasesService {
       if (row.status === 'CLOSED' && dto.type !== 'NOTE') throw immutableRecord('Only internal notes can be added to a closed case');
       const visibility: CaseEventVisibility = dto.type === 'PUBLIC_UPDATE' ? 'PUBLIC' : 'INTERNAL';
       const [eventId] = await this.addEvents(tx, auth, id, [{ type: dto.type, visibility, body: dto.body }]);
-      await tx.citizenCase.update({ where: { id }, data: { version: { increment: 1 } } });
       await this.audit.record(
         { tenantId: auth.tenantId, action: AUDIT_ACTIONS.CASE_EVENT_ADDED, entityType: CASE_ENTITY, entityId: id, after: { eventId, type: dto.type, visibility } },
         tx,
@@ -452,8 +451,7 @@ export class CasesService {
         const [eventId] = await this.addEvents(tx, auth, id, [
           { type: 'EVIDENCE_ADDED', visibility: meta.visibility, body: meta.description, storedFileId: stored.id },
         ]);
-        await tx.citizenCase.update({ where: { id }, data: { version: { increment: 1 } } });
-        await this.audit.record(
+          await this.audit.record(
           {
             tenantId: auth.tenantId,
             action: AUDIT_ACTIONS.CASE_EVIDENCE_ADDED,

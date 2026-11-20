@@ -449,7 +449,6 @@ export class ProjectsService {
         },
         include: MILESTONE_INCLUDE,
       });
-      await tx.project.update({ where: { id }, data: { version: { increment: 1 } } });
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -488,7 +487,6 @@ export class ProjectsService {
       const resetsVerification = diff.keys.includes('status') || diff.keys.includes('actualDate');
       if (resetsVerification) Object.assign(patch, { verificationStatus: 'UNVERIFIED', verifiedById: null, verifiedAt: null, verificationNote: null });
       const updated = await tx.projectMilestone.update({ where: { id: milestoneId }, data: patch, include: MILESTONE_INCLUDE });
-      await tx.project.update({ where: { id }, data: { version: { increment: 1 } } });
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -577,8 +575,7 @@ export class ProjectsService {
           },
           include: EVIDENCE_INCLUDE,
         });
-        await tx.project.update({ where: { id }, data: { version: { increment: 1 } } });
-        await this.audit.record(
+          await this.audit.record(
           {
             tenantId: auth.tenantId,
             action: AUDIT_ACTIONS.PROJECT_EVIDENCE_ADDED,
