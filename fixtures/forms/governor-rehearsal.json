@@ -1,0 +1,65 @@
+{
+  "_note": "SYNTHETIC rehearsal data for the County Governor end-to-end test. Fictional candidates, synthetic stations and invented figures. Not an IEBC form and not a result of any election.",
+  "contest": "County Governor — Bungoma (synthetic rehearsal)",
+  "candidates": [
+    "Amani Synthetic Wekesa",
+    "Baraka Synthetic Nanjala",
+    "Chanya Synthetic Wafula",
+    "Dalili Synthetic Simiyu"
+  ],
+  "stationForms": [
+    {
+      "file": "synthetic-37a-SYN-C01-W01-P01-S01.png",
+      "stationCode": "SYN-C01-W01-P01-S01",
+      "registeredVoters": 395,
+      "candidateVotes": [120, 95, 40, 25],
+      "totalValidVotes": 280,
+      "rejectedBallots": 4,
+      "totalVotesCast": 284,
+      "scenario": "clean: captured, verified"
+    },
+    {
+      "file": "synthetic-37a-SYN-C01-W01-P01-S02.png",
+      "stationCode": "SYN-C01-W01-P01-S02",
+      "registeredVoters": 386,
+      "candidateVotes": [110, 101, 30, 19],
+      "totalValidVotes": 260,
+      "rejectedBallots": 3,
+      "totalVotesCast": 263,
+      "scenario": "clean: captured, verified"
+    },
+    {
+      "file": "synthetic-37a-SYN-C01-W01-P02-S01.png",
+      "stationCode": "SYN-C01-W01-P02-S01",
+      "registeredVoters": 443,
+      "candidateVotes": [150, 120, 45, 20],
+      "totalValidVotes": 335,
+      "rejectedBallots": 5,
+      "totalVotesCast": 340,
+      "mistypedTotalValidVotes": 345,
+      "scenario": "clerk mis-keys total valid (345 instead of 335): validation fails, arithmetic case, supervisor resolves, clerk corrects with reason, verified"
+    },
+    {
+      "file": "synthetic-37a-SYN-C01-W01-P02-S02.png",
+      "stationCode": "SYN-C01-W01-P02-S02",
+      "registeredVoters": 553,
+      "candidateVotes": [200, 150, 60, 40],
+      "totalValidVotes": 450,
+      "rejectedBallots": 6,
+      "totalVotesCast": 456,
+      "scenario": "captured and awaiting second review: never counted in the aggregate"
+    }
+  ],
+  "collationForm": {
+    "file": "synthetic-37b-SYN-C01.png",
+    "formNumber": "37B",
+    "tallyCentreCode": "TC-SYN-C01",
+    "constituencyCode": "SYN-C01",
+    "stationsCount": 3,
+    "candidateVotes": [395, 316, 115, 64],
+    "totalValidVotes": 890,
+    "rejectedBallots": 12,
+    "totalVotesCast": 902,
+    "scenario": "printed constituency totals differ from the verified 37A sum (candidate 1: 395 vs 380): cross-stage variance case"
+  }
+}
