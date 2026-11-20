@@ -49,6 +49,9 @@ const OWNER_URL = process.env.TEST_DATABASE_URL;
 const APP_URL = process.env.TEST_APP_DATABASE_URL;
 const d = OWNER_URL && APP_URL ? describe : describe.skip;
 
+// Sign-in may wait for the next TOTP step (up to ~30 s) rather than reuse a code.
+jest.setTimeout(120_000);
+
 const FORMS_DIR = join(__dirname, '..', '..', '..', 'fixtures', 'forms');
 interface StationForm {
   file: string;
@@ -123,14 +126,25 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
   /* --------------------------------- helpers --------------------------------- */
 
   /** Next TOTP code for a persona, never reusing a step (the API rejects replays). */
-  const nextCode = (who: Persona): string => {
+  /**
+   * A fresh TOTP code for this persona, never reusing a step (the server refuses replays).
+   * The previous step's code is used only early in the current 30 s step: near a boundary a
+   * slow run would present it after it left the server's window. When the usable steps are
+   * used up, wait for the next step rather than send a code that may be refused.
+   */
+  const nextCode = async (who: Persona): Promise<string> => {
     const secret = totpSecrets[who]!;
-    const now = currentTotpStep();
-    let step = now - 1;
-    while (lastStep[who] !== undefined && step <= lastStep[who]!) step++;
-    if (step > now + 1) throw new Error('TOTP steps exhausted for this window');
-    lastStep[who] = step;
-    return totpAt(secret, step);
+    for (;;) {
+      const now = currentTotpStep();
+      const secondsIntoStep = Math.floor(Date.now() / 1000) % 30;
+      let step = secondsIntoStep < 20 ? now - 1 : now;
+      while (lastStep[who] !== undefined && step <= lastStep[who]!) step++;
+      if (step <= now + 1) {
+        lastStep[who] = step;
+        return totpAt(secret, step);
+      }
+      await new Promise((resolve) => setTimeout(resolve, (30 - secondsIntoStep) * 1000 + 250));
+    }
   };
 
   const http = (who: Persona) => {
@@ -148,7 +162,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     const res = await http(who).post('/auth/login').send({ tenantSlug: slug, email: `${who.toLowerCase()}@rehearsal.example.org`, password: PASSWORD });
     expect(res.status).toBe(200);
     if (res.body.status === 'MFA_REQUIRED') {
-      const mfa = await http(who).post('/auth/mfa/verify').send({ challengeToken: res.body.challengeToken, code: nextCode(who) });
+      const mfa = await http(who).post('/auth/mfa/verify').send({ challengeToken: res.body.challengeToken, code: await nextCode(who) });
       expect(mfa.status).toBe(200);
       expect(mfa.body.mfaVerified).toBe(true);
     } else {
@@ -157,7 +171,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
   }
 
   async function reauth(who: Persona): Promise<void> {
-    const res = await http(who).post('/auth/reauth').send({ password: PASSWORD, ...(totpSecrets[who] ? { code: nextCode(who) } : {}) });
+    const res = await http(who).post('/auth/reauth').send({ password: PASSWORD, ...(totpSecrets[who] ? { code: await nextCode(who) } : {}) });
     expect(res.status).toBe(200);
   }
 
