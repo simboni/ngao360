@@ -3,8 +3,7 @@
  * registry CSV import validation, form-template catalogue and the declarative
  * validation-rule semantics.
  *
- * Import from '@ngao360/shared/dist/reference' until the root index re-exports
- * this folder (see docs/CHANGE_REQUESTS.md).
+ * Re-exported from the `@ngao360/shared` root index.
  */
 export * from './counties';
 export * from './csv';

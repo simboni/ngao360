@@ -15,7 +15,7 @@ import type {
   ResultValue,
   ValidationRules,
 } from '@ngao360/shared';
-import { type CapturedValues, evaluateValidationRules, type RuleEvaluation } from '@ngao360/shared/dist/reference/rules';
+import { type CapturedValues, evaluateValidationRules, type RuleEvaluation } from '@ngao360/shared';
 
 export type CellKind = FormFieldDefinition['kind'];
 

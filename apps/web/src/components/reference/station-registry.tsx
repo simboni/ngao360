@@ -1,7 +1,7 @@
 'use client';
 
 import type { CreateRegistryVersion, Paginated, PollingStation, PollingStationStatus, RegistryVersion } from '@ngao360/shared';
-import type { RegistryImportOutcome } from '@ngao360/shared/dist/reference';
+import type { RegistryImportOutcome } from '@ngao360/shared';
 import { Archive, CheckCircle2, CircleDashed, Clock, FileText, MapPin, Plus, Upload } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';

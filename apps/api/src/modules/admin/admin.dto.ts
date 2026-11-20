@@ -14,7 +14,7 @@ import {
   UserStatusChangeSchema,
   UuidSchema,
 } from '@ngao360/shared';
-import { DashboardQuerySchema } from '@ngao360/shared/dist/admin';
+import { DashboardQuerySchema } from '@ngao360/shared';
 import { z } from 'zod';
 import { createZodDto } from '../../common/zod';
 

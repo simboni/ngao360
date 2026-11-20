@@ -1,6 +1,6 @@
 import type { Role, ScopeType, TenantTx } from '@ngao360/db';
 import { ERROR_CODES } from '@ngao360/shared';
-import { ACCESS_ADMIN_PERMISSIONS, findRoleSodConflicts, TALLY_VALUE_WRITE_PERMISSIONS } from '@ngao360/shared/dist/admin';
+import { ACCESS_ADMIN_PERMISSIONS, findRoleSodConflicts, TALLY_VALUE_WRITE_PERMISSIONS } from '@ngao360/shared';
 import { HttpStatus } from '@nestjs/common';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';

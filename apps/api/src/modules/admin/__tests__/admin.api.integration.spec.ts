@@ -123,7 +123,7 @@ d('Admin API (integration)', () => {
       data: { tenantId, name: 'Synthetic 2027 rehearsal', electionDate: new Date('2027-08-10'), legalConfigVersion: 'test', dataProvenance: 'SYNTHETIC', status: 'ACTIVE' },
     });
     ids.cycle = cycle.id;
-    const registry = await owner.registryVersion.create({ data: { tenantId, electionCycleId: cycle.id, version: 'v1', source: 'synthetic', status: 'APPROVED', stationCount: 4, approvedAt: new Date() } });
+    const registry = await owner.registryVersion.create({ data: { tenantId, electionCycleId: cycle.id, version: 'v1', source: 'synthetic', status: 'DRAFT', stationCount: 4 } });
     const unit = async (type: 'COUNTY' | 'CONSTITUENCY' | 'WARD', code: string, parent?: { id: string; path: string }) => {
       const id = randomUUID();
       const path = `${parent?.path ?? '/'}${id}/`;
@@ -148,6 +148,8 @@ d('Admin API (integration)', () => {
     ids.s2 = await station('S2', w1, k1);
     ids.s3 = await station('S3', w2, k2);
     ids.s4 = await station('S4', w2, k2);
+    // Stations are added while the version is DRAFT (database guard), then it is approved.
+    await owner.registryVersion.update({ where: { id: registry.id }, data: { status: 'APPROVED', approvedAt: new Date() } });
     const contest = await owner.contest.create({
       data: { tenantId, electionCycleId: cycle.id, officeType: 'GOVERNOR', name: 'Synthetic County Governor', geographicUnitId: county.id, formSeries: '37', status: 'ACTIVE' },
     });

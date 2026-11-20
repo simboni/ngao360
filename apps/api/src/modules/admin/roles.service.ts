@@ -18,7 +18,7 @@ import {
   computeEffectiveAccess,
   type EffectiveAccess,
   TALLY_VALUE_WRITE_PERMISSIONS,
-} from '@ngao360/shared/dist/admin';
+} from '@ngao360/shared';
 import { AuditService } from '../../audit/audit.service';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';

@@ -1,7 +1,7 @@
 'use client';
 
 import type { CreateRoleAssignment, Paginated, PollingStation, Role, RoleAssignment, ScopeType, UserSummary } from '@ngao360/shared';
-import { findRoleSodConflicts } from '@ngao360/shared/dist/admin';
+import { findRoleSodConflicts } from '@ngao360/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api-client';

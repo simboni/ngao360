@@ -12,7 +12,7 @@ import { AuditService } from '../../audit/audit.service';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { contains, dateOnly, immutable, pageArgs, sortArgs, toElectionCycle } from './reference.common';
-import { ELECTION_CYCLE_TRANSITIONS } from './reference-shared';
+import { ELECTION_CYCLE_TRANSITIONS } from '@ngao360/shared';
 
 @Injectable()
 export class ElectionCyclesService {

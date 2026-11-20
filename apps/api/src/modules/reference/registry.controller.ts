@@ -6,7 +6,7 @@ import type { AuthContext } from '../../auth/auth.types';
 import { CurrentAuth } from '../../common/decorators/auth.decorators';
 import { RequirePermission, RequireReauth } from '../../rbac/require-permission.decorator';
 import { CreateRegistryVersionDto, IdParamDto, ReasonBodyDto, RegistryVersionListQueryDto } from './reference.dto';
-import { RegistryImportOptionsSchema, type RegistryImportOutcome } from './reference-shared';
+import { RegistryImportOptionsSchema, type RegistryImportOutcome } from '@ngao360/shared';
 import { RegistryService, type UploadedCsv } from './registry.service';
 
 /** CSV uploads up to 25 MB (~55k stations is ~6 MB). */

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, type TenantTx } from '@ngao360/db';
 import { AUDIT_ACTIONS, type CreateUser, type OkResponse, type Paginated, type ResetMfa, type UpdateUser, type UserDetail, type UserStatusChange, type UserSummary } from '@ngao360/shared';
-import type { UserSession } from '@ngao360/shared/dist/admin';
+import type { UserSession } from '@ngao360/shared';
 import { AuditService } from '../../audit/audit.service';
 import { AuthService } from '../../auth/auth.service';
 import type { AuthContext } from '../../auth/auth.types';

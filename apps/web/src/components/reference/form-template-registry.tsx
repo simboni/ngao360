@@ -11,7 +11,7 @@ import {
   type OfficeType,
   type Paginated,
 } from '@ngao360/shared';
-import { isCapturableFormLevel, seriesForOffice } from '@ngao360/shared/dist/reference';
+import { isCapturableFormLevel, seriesForOffice } from '@ngao360/shared';
 import { CheckCircle2, ExternalLink, FileStack } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';

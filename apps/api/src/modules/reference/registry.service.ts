@@ -1,7 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
-import { sha256Hex, type TenantTx } from '@ngao360/db';
+import { Prisma, sha256Hex, type TenantTx } from '@ngao360/db';
 import {
   AUDIT_ACTIONS,
   type CreateRegistryVersion,
@@ -26,7 +26,7 @@ import {
   type RegistryImportReport,
   type RegistryImportStatus,
   validateRegistryCsv,
-} from './reference-shared';
+} from '@ngao360/shared';
 import { applyRegistryRows, diffAgainstApproved } from './registry-import.applier';
 
 export interface UploadedCsv {
@@ -370,6 +370,29 @@ export class RegistryService {
   }
 
   private async logImport(tx: TenantTx, tenantId: string, actorId: string, id: string, entry: ImportLogEntry): Promise<void> {
+    const version = await tx.registryVersion.findUniqueOrThrow({ where: { id }, select: { sourceFileId: true, publicationDate: true } });
+    const meta = entry.report?.sourceMetadata;
+    const publicationDate = meta?.publicationDate ? new Date(`${meta.publicationDate.slice(0, 10)}T00:00:00Z`) : null;
+    await tx.registryImport.create({
+      data: {
+        tenantId,
+        registryVersionId: id,
+        sourceFileId: version.sourceFileId,
+        status: entry.status,
+        publicationDate,
+        sourceUrl: meta?.sourceUrl ?? null,
+        changeNotes: meta?.changeNotes ?? null,
+        report: entry.report ? (entry.report as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
+        unitsCreated: entry.unitsCreated,
+        stationsCreated: entry.stationsCreated,
+        rowsRejected: entry.rowsRejected,
+        error: entry.error ?? null,
+        importedById: actorId,
+      },
+    });
+    if (entry.status === 'COMPLETED' && publicationDate && !version.publicationDate) {
+      await tx.registryVersion.update({ where: { id }, data: { publicationDate } });
+    }
     await this.audit.record(
       {
         tenantId,
@@ -384,6 +407,22 @@ export class RegistryService {
   }
 
   private async latestImport(tx: TenantTx, id: string, withReport = false): Promise<ImportLogEntry | null> {
+    const logged = await tx.registryImport.findFirst({
+      where: { registryVersionId: id, ...(withReport ? { NOT: { report: { equals: Prisma.AnyNull } } } : {}) },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (logged) {
+      const parsedReport = logged.report ? RegistryImportReportSchema.safeParse(logged.report) : null;
+      return {
+        status: logged.status as RegistryImportStatus,
+        unitsCreated: logged.unitsCreated,
+        stationsCreated: logged.stationsCreated,
+        rowsRejected: logged.rowsRejected,
+        report: parsedReport?.success ? parsedReport.data : null,
+        ...(logged.error ? { error: logged.error } : {}),
+      };
+    }
+    // Imports recorded before the registry_imports log existed (e.g. the seed) are audit events.
     const events = await tx.auditEvent.findMany({
       where: { entityType: 'RegistryVersion', entityId: id, action: AUDIT_ACTIONS.REFERENCE_IMPORTED },
       orderBy: { seq: 'desc' },

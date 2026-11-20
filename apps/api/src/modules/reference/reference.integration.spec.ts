@@ -25,7 +25,7 @@ import { ElectionCyclesService } from './election-cycles.service';
 import { FormTemplatesService } from './form-templates.service';
 import { GeographyService } from './geography.service';
 import { PollingStationsService } from './polling-stations.service';
-import { allFormTemplateDefinitions } from './reference-shared';
+import { allFormTemplateDefinitions } from '@ngao360/shared';
 import { RegistryService, type UploadedCsv } from './registry.service';
 import { TallyCentresService } from './tally-centres.service';
 

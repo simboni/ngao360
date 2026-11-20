@@ -332,6 +332,7 @@ model Tenant {
   electionCycles       ElectionCycle[]
   geographicUnits      GeographicUnit[]
   registryVersions     RegistryVersion[]
+  registryImports      RegistryImport[]
   pollingStations      PollingStation[]
   tallyCentres         TallyCentre[]
   contests             Contest[]
@@ -400,6 +401,7 @@ model User {
   approvedTemplates       FormTemplate[]          @relation("TemplateApprover")
   createdTemplates        FormTemplate[]          @relation("TemplateCreator")
   approvedRegistries      RegistryVersion[]       @relation("RegistryApprover")
+  registryImports         RegistryImport[]        @relation("RegistryImporter")
   reportedIncidents       Incident[]              @relation("IncidentReporter")
   assignedIncidents       Incident[]              @relation("IncidentAssignee")
 
@@ -625,6 +627,7 @@ model RegistryVersion {
   stationCount    Int                   @default(0) @map("station_count")
   sourceFileId    String?               @map("source_file_id") @db.Uuid
   notes           String?
+  publicationDate DateTime?             @map("publication_date") @db.Date
   importedAt      DateTime              @default(now()) @map("imported_at") @db.Timestamptz(3)
   approvedById    String?               @map("approved_by_id") @db.Uuid
   approvedAt      DateTime?             @map("approved_at") @db.Timestamptz(3)
@@ -637,10 +640,39 @@ model RegistryVersion {
   pollingStations PollingStation[]
   submissions     ResultSubmission[]
   snapshots       TallySnapshot[]
+  imports         RegistryImport[]
 
   @@unique([tenantId, electionCycleId, version])
   @@index([tenantId, electionCycleId, status])
   @@map("registry_versions")
+}
+
+/// Append-only log of registry import lifecycle events (QUEUED, RUNNING, COMPLETED, FAILED)
+/// with the full validation report (blueprint 6.2). Updates and deletes are rejected by trigger.
+model RegistryImport {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  registryVersionId String    @map("registry_version_id") @db.Uuid
+  sourceFileId      String?   @map("source_file_id") @db.Uuid
+  status            String
+  publicationDate   DateTime? @map("publication_date") @db.Date
+  sourceUrl         String?   @map("source_url")
+  changeNotes       String?   @map("change_notes")
+  report            Json?
+  unitsCreated      Int       @default(0) @map("units_created")
+  stationsCreated   Int       @default(0) @map("stations_created")
+  rowsRejected      Int       @default(0) @map("rows_rejected")
+  error             String?
+  importedById      String    @map("imported_by_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  registryVersion RegistryVersion @relation(fields: [registryVersionId], references: [id], onDelete: Restrict)
+  sourceFile      StoredFile?     @relation(fields: [sourceFileId], references: [id], onDelete: Restrict)
+  importedBy      User            @relation("RegistryImporter", fields: [importedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, registryVersionId, createdAt])
+  @@map("registry_imports")
 }
 
 model GeographicUnit {
@@ -855,6 +887,7 @@ model StoredFile {
   uploadedBy       User               @relation("FileUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
   submissions      ResultSubmission[]
   registryVersions RegistryVersion[]
+  registryImports  RegistryImport[]
   exports          TallyExport[]
 
   @@unique([tenantId, sha256])

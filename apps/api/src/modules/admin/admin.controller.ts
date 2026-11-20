@@ -10,7 +10,7 @@ import type {
   UserDetail,
   UserSummary,
 } from '@ngao360/shared';
-import type { AuditEventDetail, EffectiveAccess, UserSession } from '@ngao360/shared/dist/admin';
+import type { AuditEventDetail, EffectiveAccess, UserSession } from '@ngao360/shared';
 import type { AuthContext } from '../../auth/auth.types';
 import { CurrentAuth } from '../../common/decorators/auth.decorators';
 import { RequirePermission, RequireReauth } from '../../rbac/require-permission.decorator';

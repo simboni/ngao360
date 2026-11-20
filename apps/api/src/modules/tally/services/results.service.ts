@@ -38,29 +38,8 @@ import { ENTITY, OPEN_CASE_STATUSES } from '../tally.constants';
 import { iso, submissionSummaryInclude, toSubmissionSummary, userRef } from './mappers';
 import { caseScopeWhere } from './scope-where';
 
-/** Row of GET /tally/results/stations (see docs/CHANGE_REQUESTS.md for the shared schema request). */
-type SubmissionSpecific =
-  | 'id'
-  | 'reference'
-  | 'formNumber'
-  | 'formLevel'
-  | 'formTemplateVersion'
-  | 'status'
-  | 'sourceType'
-  | 'isCanonical'
-  | 'duplicateFlag'
-  | 'submitter'
-  | 'submittedAt'
-  | 'createdAt'
-  | 'updatedAt';
-export type StationCoverageRow = Omit<SubmissionSummary, SubmissionSpecific | 'pollingStationId'> & {
-  [K in SubmissionSpecific]: SubmissionSummary[K] | null;
-} & {
-  pollingStationId: string;
-  coverageStatus: CoverageStatus;
-  /** Votes by candidate id for included (verified) stations only; null otherwise, never zero-filled. */
-  candidateVotes: Record<string, number> | null;
-};
+export type { StationCoverageRow } from '@ngao360/shared';
+import type { StationCoverageRow } from '@ngao360/shared';
 
 export interface ComputeParams {
   electionCycleId: string;

@@ -7,7 +7,7 @@ import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { TallyCentreQuerySchema } from './reference.dto';
 import { contains, pageArgs, sortArgs, toTallyCentre } from './reference.common';
-import { TALLY_CENTRE_UNIT_TYPE } from './reference-shared';
+import { TALLY_CENTRE_UNIT_TYPE } from '@ngao360/shared';
 
 type TallyCentreQuery = z.infer<typeof TallyCentreQuerySchema>;
 

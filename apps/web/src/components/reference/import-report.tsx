@@ -1,6 +1,6 @@
 'use client';
 
-import type { RegistryImportReport } from '@ngao360/shared/dist/reference';
+import type { RegistryImportReport } from '@ngao360/shared';
 import { AlertTriangle, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Chip, Notice } from '@/components/admin/primitives';

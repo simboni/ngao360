@@ -178,7 +178,7 @@ d('NGAO TALLY API (integration)', () => {
     });
     ids.cycle = cycle.id;
     const registry = await owner.registryVersion.create({
-      data: { tenantId, electionCycleId: cycle.id, version: 'v1', source: 'synthetic', status: 'APPROVED', stationCount: 4 },
+      data: { tenantId, electionCycleId: cycle.id, version: 'v1', source: 'synthetic', status: 'DRAFT', stationCount: 4 },
     });
     ids.registry = registry.id;
     const unit = async (type: 'COUNTY' | 'CONSTITUENCY' | 'WARD', code: string, parent?: { id: string; path: string }) => {
@@ -206,6 +206,8 @@ d('NGAO TALLY API (integration)', () => {
     ids.s2 = await station('S2', w2, k1);
     ids.s3 = await station('S3', w3, k2);
     ids.s4 = await station('S4', w3, k2);
+    // Stations are added while the version is DRAFT (database guard), then it is approved.
+    await owner.registryVersion.update({ where: { id: registry.id }, data: { status: 'APPROVED', approvedAt: new Date() } });
     ids.tc1 = (
       await owner.tallyCentre.create({ data: { tenantId, electionCycleId: cycle.id, level: 'CONSTITUENCY', geographicUnitId: k1.id, code: 'TC-9011', name: 'Synthetic constituency tally centre' } })
     ).id;

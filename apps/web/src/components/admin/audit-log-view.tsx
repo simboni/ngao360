@@ -1,7 +1,7 @@
 'use client';
 
 import { AUDIT_ACTIONS, type AuditEvent, type AuditQuery, type Paginated, type SignedUrlResponse, type UserSummary } from '@ngao360/shared';
-import { type AuditEventDetail, describeAuditAction } from '@ngao360/shared/dist/admin';
+import { type AuditEventDetail, describeAuditAction } from '@ngao360/shared';
 import { CheckCircle2, Download, ShieldAlert, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState } from 'react';

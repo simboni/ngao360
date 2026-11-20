@@ -18,7 +18,7 @@ import {
   type RegistryImportReport,
   type RegistryRow,
   type StationSnapshot,
-} from './reference-shared';
+} from '@ngao360/shared';
 
 export interface ApplyTarget {
   tenantId: string;

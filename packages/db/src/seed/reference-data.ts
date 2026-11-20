@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import type { GeographicUnitType, PrismaClient } from '@prisma/client';
 import { AUDIT_ACTIONS } from '@ngao360/shared';
-import { KENYA_COUNTIES, validateRegistryCsv } from '@ngao360/shared/dist/reference';
+import { KENYA_COUNTIES, validateRegistryCsv } from '@ngao360/shared';
 import { canonicalJson, hashJson, sha256Hex } from '../security';
 import {
   rowsToCsv,
@@ -195,15 +195,23 @@ export async function seedReferenceData(prisma: PrismaClient, tenantId: string):
       registeredVoters: r.registeredVoters,
       locationSource: r.locationSource,
     };
-    const station = await prisma.pollingStation.upsert({
-      where: { tenantId_registryVersionId_code: { tenantId, registryVersionId: registry.id, code: r.stationCode } },
-      create: { tenantId, electionCycleId: cycle.id, registryVersionId: registry.id, code: r.stationCode, ...data },
-      update: data,
-    });
+    // Stations can only change while the registry version is DRAFT (database guard);
+    // on a re-run against an approved registry the existing rows are reused as-is.
+    const where = { tenantId_registryVersionId_code: { tenantId, registryVersionId: registry.id, code: r.stationCode } };
+    const station =
+      registry.status === 'DRAFT'
+        ? await prisma.pollingStation.upsert({
+            where,
+            create: { tenantId, electionCycleId: cycle.id, registryVersionId: registry.id, code: r.stationCode, ...data },
+            update: data,
+          })
+        : await prisma.pollingStation.findUniqueOrThrow({ where });
     stations.set(keys.station, station.id);
   }
   const stationCount = await prisma.pollingStation.count({ where: { registryVersionId: registry.id } });
-  await prisma.registryVersion.update({ where: { id: registry.id }, data: { stationCount } });
+  if (registry.stationCount !== stationCount) {
+    await prisma.registryVersion.update({ where: { id: registry.id }, data: { stationCount } });
+  }
 
   // Import report (once), so GET /import-status shows how the registry was loaded.
   const logged = await prisma.auditEvent.count({

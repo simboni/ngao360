@@ -1,7 +1,7 @@
 'use client';
 
 import type { OkResponse, RoleAssignment, UserDetail, UserStatusChange } from '@ngao360/shared';
-import type { UserSession } from '@ngao360/shared/dist/admin';
+import type { UserSession } from '@ngao360/shared';
 import { KeyRound, PauseCircle, PlayCircle, Plus, ShieldOff, UserX } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';

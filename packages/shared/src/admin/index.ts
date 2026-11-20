@@ -1,8 +1,7 @@
 /**
  * Administration helpers shared by the admin API and the admin screens.
  *
- * Imported as `@ngao360/shared/dist/admin` until the root index re-exports it
- * (see docs/CHANGE_REQUESTS.md, admin module).
+ * Re-exported from the `@ngao360/shared` root index.
  *
  * Everything here is a superset of the contract types in `schemas/admin.ts` and
  * `schemas/dashboard.ts`; it never changes their shapes.

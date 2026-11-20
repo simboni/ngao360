@@ -1,7 +1,7 @@
 'use client';
 
 import type { RegistryVersion } from '@ngao360/shared';
-import { REGISTRY_OPTIONAL_COLUMNS, REGISTRY_REQUIRED_COLUMNS, type RegistryImportOutcome } from '@ngao360/shared/dist/reference';
+import { REGISTRY_OPTIONAL_COLUMNS, REGISTRY_REQUIRED_COLUMNS, type RegistryImportOutcome } from '@ngao360/shared';
 import { FileUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';

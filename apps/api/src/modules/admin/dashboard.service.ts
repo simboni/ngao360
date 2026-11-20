@@ -6,7 +6,7 @@ import type {
   DashboardQuery,
   DashboardQueueItem,
   DashboardSummaryExtended,
-} from '@ngao360/shared/dist/admin';
+} from '@ngao360/shared';
 import type { AuthContext } from '../../auth/auth.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionService } from '../../rbac/permission.service';

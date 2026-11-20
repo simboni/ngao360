@@ -6,7 +6,7 @@ import {
   type DashboardKpi,
   type DashboardQueueItem,
   type DashboardSummaryExtended,
-} from '@ngao360/shared/dist/admin';
+} from '@ngao360/shared';
 import {
   AlertTriangle,
   ArrowRight,

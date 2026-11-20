@@ -23,7 +23,7 @@ import {
   FORM_TEMPLATE_DECISIONS,
   isTemplateEditable,
   nextTemplateState,
-} from './reference-shared';
+} from '@ngao360/shared';
 
 /**
  * Versioned form-template registry (blueprint 8.1, 8.4, 17.2). A template is

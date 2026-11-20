@@ -1,7 +1,7 @@
 'use client';
 
 import type { CreateRole, Paginated, Permission, PermissionKey, Role, RoleAssignment, UpdateRole, UserSummary } from '@ngao360/shared';
-import { computeEffectiveAccess, type EffectiveAccess, findRoleSodConflicts } from '@ngao360/shared/dist/admin';
+import { computeEffectiveAccess, type EffectiveAccess, findRoleSodConflicts } from '@ngao360/shared';
 import { AlertTriangle, Copy, Download, Lock, Plus, ShieldAlert, ShieldOff } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';

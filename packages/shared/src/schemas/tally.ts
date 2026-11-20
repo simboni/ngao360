@@ -125,6 +125,35 @@ export const SubmissionSummarySchema = z.object({
 });
 export type SubmissionSummary = z.infer<typeof SubmissionSummarySchema>;
 
+/** Coverage state of one expected polling station in the parallel tally. */
+export const StationCoverageStatusSchema = z.enum(['MISSING', 'RECEIVED', 'VERIFIED', 'FLAGGED', 'EXCLUDED']);
+export type StationCoverageStatus = z.infer<typeof StationCoverageStatusSchema>;
+
+/**
+ * Row of GET /tally/results/stations. MISSING stations have no submission, so the
+ * submission-specific fields are nullable; they stay visible and are never zero-filled.
+ */
+export const StationCoverageRowSchema = SubmissionSummarySchema.extend({
+  id: UuidSchema.nullable(),
+  reference: z.string().nullable(),
+  formNumber: z.string().nullable(),
+  formLevel: FormLevelSchema.nullable(),
+  formTemplateVersion: z.number().int().nullable(),
+  status: SubmissionStatusSchema.nullable(),
+  sourceType: SubmissionSourceTypeSchema.nullable(),
+  isCanonical: z.boolean().nullable(),
+  duplicateFlag: z.boolean().nullable(),
+  submitter: UserRefSchema.nullable(),
+  submittedAt: IsoDateTimeSchema.nullable(),
+  createdAt: IsoDateTimeSchema.nullable(),
+  updatedAt: IsoDateTimeSchema.nullable(),
+  pollingStationId: UuidSchema,
+  coverageStatus: StationCoverageStatusSchema,
+  /** Votes by candidate id for VERIFIED (included) stations only; null otherwise, never zero-filled. */
+  candidateVotes: z.record(z.number().int()).nullable(),
+});
+export type StationCoverageRow = z.infer<typeof StationCoverageRowSchema>;
+
 export const SubmissionQuerySchema = PaginationQuerySchema.extend({
   electionCycleId: UuidSchema.optional(),
   contestId: UuidSchema.optional(),

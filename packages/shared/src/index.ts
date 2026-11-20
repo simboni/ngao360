@@ -9,3 +9,5 @@ export * from './schemas/reference';
 export * from './schemas/tally';
 export * from './schemas/admin';
 export * from './schemas/dashboard';
+export * from './reference';
+export * from './admin';

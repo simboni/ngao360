@@ -11,7 +11,7 @@
  * That gives 17 stations per constituency and 153 stations in total.
  */
 import { createHash } from 'node:crypto';
-import { toCsv } from '@ngao360/shared/dist/reference';
+import { toCsv } from '@ngao360/shared';
 
 export const SYNTHETIC_REGISTRY_VERSION = 'SYNTHETIC-2027-R1';
 export const SYNTHETIC_REGISTRY_SOURCE =

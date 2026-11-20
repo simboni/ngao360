@@ -17,7 +17,7 @@ import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { ContestQuerySchema } from './reference.dto';
 import { contains, immutable, pageArgs, sortArgs, toCandidate, toContest } from './reference.common';
-import { checkCandidateLabel, CONTEST_AREA_TYPE, CONTEST_TRANSITIONS } from './reference-shared';
+import { checkCandidateLabel, CONTEST_AREA_TYPE, CONTEST_TRANSITIONS } from '@ngao360/shared';
 
 type ContestQuery = z.infer<typeof ContestQuerySchema>;
 

@@ -237,6 +237,7 @@ export const AUDIT_ACTIONS = {
   SUBMISSION_STATUS_CHANGED: 'tally.submission.status_changed',
   SUBMISSION_CANONICAL_DESIGNATED: 'tally.submission.canonical_designated',
   RESULT_VALUE_CHANGED: 'tally.result_value.changed',
+  OCR_RECORDED: 'tally.ocr.recorded',
   VALIDATION_RUN: 'tally.validation.run',
   VERIFICATION_RECORDED: 'tally.verification.recorded',
   SUPERVISOR_ACTION: 'tally.verification.supervisor_action',

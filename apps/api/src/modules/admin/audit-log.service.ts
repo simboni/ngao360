@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { canonicalJson, hashJson, type Prisma, sha256Hex } from '@ngao360/db';
 import { AUDIT_ACTIONS, type AuditEvent, type AuditQuery, type Paginated, type SignedUrlResponse } from '@ngao360/shared';
-import { AUDIT_EXPORT_MAX_ROWS, type AuditEventDetail, auditEventsToCsv } from '@ngao360/shared/dist/admin';
+import { AUDIT_EXPORT_MAX_ROWS, type AuditEventDetail, auditEventsToCsv } from '@ngao360/shared';
 import { AuditService } from '../../audit/audit.service';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';

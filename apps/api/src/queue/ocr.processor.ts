@@ -1,36 +1,28 @@
 import { Logger } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
-import { PrismaService } from '../prisma/prisma.service';
+import { TallyOcrService } from '../modules/tally/ocr/ocr.service';
 import { OCR_QUEUE, type OcrJobData } from './queue.constants';
 
 /**
- * OCR worker STUB. No OCR engine is configured in the foundation: the job marks
- * the extraction NOT_CONFIGURED so the clerk captures every value manually.
- * A self-hosted engine can be plugged in here later (blueprint 13.1); its output
- * must be written as ResultValue.ocrValue/ocrConfidence only, never as confirmed values.
+ * OCR worker. Routes each job through the pluggable tally OCR provider
+ * (OCR_PROVIDER=none|stub). Output is written as ResultValue.ocrValue /
+ * ocrConfidence drafts only, never as confirmed values. With the default
+ * provider "none" the extraction is marked NOT_CONFIGURED and the clerk
+ * captures every value manually.
  */
 @Processor(OCR_QUEUE)
 export class OcrProcessor extends WorkerHost {
   private readonly logger = new Logger(OcrProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(private readonly moduleRef: ModuleRef) {
     super();
   }
 
   async process(job: Job<OcrJobData>): Promise<void> {
     const { tenantId, extractionId } = job.data;
-    await this.prisma.withTenant(tenantId, (tx) =>
-      tx.ocrExtraction.update({
-        where: { id: extractionId },
-        data: {
-          status: 'NOT_CONFIGURED',
-          engine: null,
-          completedAt: new Date(),
-          error: 'No OCR engine configured; manual capture required',
-        },
-      }),
-    );
-    this.logger.log(`OCR stub processed extraction ${extractionId}`);
+    await this.moduleRef.get(TallyOcrService, { strict: false }).process(tenantId, extractionId);
+    this.logger.log(`OCR processed extraction ${extractionId}`);
   }
 }

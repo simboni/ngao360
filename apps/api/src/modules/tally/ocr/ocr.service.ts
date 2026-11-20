@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@ngao360/db';
-import { FormFieldSchemaSchema, type OcrExtraction } from '@ngao360/shared';
+import { AUDIT_ACTIONS, FormFieldSchemaSchema, type OcrExtraction } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
@@ -12,8 +12,8 @@ import { TallyWorkflowService } from '../services/tally-workflow.service';
 import { ENTITY } from '../tally.constants';
 import { OCR_PROVIDER, type OcrProvider } from './ocr-provider';
 
-/** Audit action for recording an OCR draft (pending addition to AUDIT_ACTIONS; see docs/CHANGE_REQUESTS.md). */
-export const OCR_RECORDED_ACTION = 'tally.ocr.recorded';
+/** Audit action for recording an OCR draft. */
+export const OCR_RECORDED_ACTION = AUDIT_ACTIONS.OCR_RECORDED;
 
 /**
  * Runs OCR draft extraction through the configured provider. Output is written

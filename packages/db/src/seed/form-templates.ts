@@ -15,7 +15,7 @@
  * the actual 2027 IEBC forms (blueprint 8, legal baseline box).
  */
 import type { PrismaClient } from '@prisma/client';
-import { allFormTemplateDefinitions, type FormTemplateDefinition } from '@ngao360/shared/dist/reference';
+import { allFormTemplateDefinitions, type FormTemplateDefinition } from '@ngao360/shared';
 import { canonicalJson } from '../security';
 
 const APPROVED_SERIES = new Set(['37A', '37B', '37C', '37D']);

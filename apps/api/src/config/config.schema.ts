@@ -45,6 +45,9 @@ export const ConfigSchema = z.object({
   REAUTH_WINDOW_SECONDS: z.coerce.number().int().positive().default(600),
   LOGIN_MAX_FAILURES: z.coerce.number().int().positive().default(5),
   LOGIN_LOCK_MINUTES: z.coerce.number().int().positive().default(15),
+
+  /** OCR draft provider: 'none' (manual capture) or 'stub' (synthetic low-confidence drafts, development only). */
+  OCR_PROVIDER: z.enum(['none', 'stub']).default('none'),
 });
 
 export type AppConfigValues = z.infer<typeof ConfigSchema>;

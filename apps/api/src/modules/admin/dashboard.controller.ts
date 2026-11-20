@@ -1,6 +1,6 @@
 import { Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
 import type { Notification, OkResponse, Paginated } from '@ngao360/shared';
-import type { DashboardSummaryExtended } from '@ngao360/shared/dist/admin';
+import type { DashboardSummaryExtended } from '@ngao360/shared';
 import type { AuthContext } from '../../auth/auth.types';
 import { AuthenticatedOnly, CurrentAuth } from '../../common/decorators/auth.decorators';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
