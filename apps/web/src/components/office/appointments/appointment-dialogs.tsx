@@ -35,7 +35,8 @@ import {
 } from '../correspondence/office-common';
 import { type AppointmentActionSpec, availableAppointmentActions } from './appointment-model';
 import { AppointmentStatusBadge } from './appointment-badges';
-import { appointmentsApi, workspaceModulesApi } from './appointments-api';
+import { useOfficePrivacyNotices } from '../office-api';
+import { appointmentsApi } from './appointments-api';
 
 export const APPOINTMENT_OFFICER_ROLES = ['CORRESPONDENCE_CLERK', 'OFFICE_ADMINISTRATOR', 'CASE_OFFICER'] as const;
 
@@ -49,26 +50,23 @@ const SOURCE_LABELS: Record<AppointmentSource, string> = {
 };
 
 /**
- * The appointment privacy notice to read or show to the requester. Built with
- * the office's own configuration when the caller can read it (`workspace.view`),
- * otherwise with the organisation name and the default retention period, and
- * says so. The API only checks the notice version.
+ * The appointment privacy notice to read or show to the requester, built by
+ * the API from the office's own configuration (GET /office/privacy-notice).
+ * While that is unavailable, it falls back to the organisation name and the
+ * default retention period, and says so. The API only checks the version.
  */
 export function useAppointmentNotice(): { notice: PrivacyNotice; configured: boolean } {
-  const { me, can } = useAuth();
-  const canRead = can('workspace.view');
-  const modules = useAsync(() => workspaceModulesApi.list(), [canRead], canRead);
-  const office = modules.data?.find((m) => m.key === 'office');
-  const parsed = office ? OfficeModuleConfigSchema.safeParse(office.config) : null;
-  const cfg = parsed?.success ? parsed.data : OfficeModuleConfigSchema.parse({});
-  const configured = !!parsed?.success;
+  const { me } = useAuth();
+  const notices = useOfficePrivacyNotices();
+  if (notices) return { notice: notices.appointment, configured: true };
+  const cfg = OfficeModuleConfigSchema.parse({});
   const notice = appointmentPrivacyNotice({
-    controllerName: configured ? cfg.controllerName : (me?.tenant.name ?? cfg.controllerName),
-    dataProtectionContact: configured ? cfg.dataProtectionContact : 'the office data-protection contact (ask at the front desk)',
+    controllerName: me?.tenant.name ?? cfg.controllerName,
+    dataProtectionContact: 'the office data-protection contact (ask at the front desk)',
     caseRetentionMonths: cfg.caseRetentionMonths,
     contactRetentionMonths: cfg.contactRetentionMonths,
   });
-  return { notice, configured };
+  return { notice, configured: false };
 }
 
 export function PrivacyNoticePanel({ notice, configured }: { notice: PrivacyNotice; configured: boolean }) {

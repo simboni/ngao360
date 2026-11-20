@@ -2,7 +2,7 @@
 
 import type { Institution } from '@ngao360/shared';
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/lib/auth-context';
+import { useOfficeGeography } from '../office-api';
 import { projectsApi } from './projects-api';
 
 export interface ProjectGeography {
@@ -11,23 +11,11 @@ export interface ProjectGeography {
   wards: Array<{ id: string; name: string; constituencyId: string }>;
 }
 
-/** Constituencies and wards of the office county (see `projectsApi.portalGeography`). Null when unavailable. */
+/** Constituencies and wards of the office county (GET /office/geography). Null when unavailable. */
 export function useProjectGeography(): ProjectGeography | null {
-  const { me } = useAuth();
-  const [geo, setGeo] = useState<ProjectGeography | null>(null);
-  const slug = me?.tenant.slug;
-  useEffect(() => {
-    if (!slug) return;
-    let alive = true;
-    projectsApi
-      .portalGeography(slug)
-      .then((info) => alive && setGeo({ countyName: null, constituencies: info.constituencies, wards: info.wards }))
-      .catch(() => alive && setGeo(null));
-    return () => {
-      alive = false;
-    };
-  }, [slug]);
-  return geo;
+  const geo = useOfficeGeography();
+  if (!geo) return null;
+  return { countyName: geo.county?.name ?? null, constituencies: geo.constituencies, wards: geo.wards };
 }
 
 /** Options for a ward / constituency select: constituency then its wards. */

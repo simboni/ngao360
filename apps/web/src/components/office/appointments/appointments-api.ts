@@ -17,7 +17,6 @@ import type {
   Paginated,
   RecordMeetingDecision,
   SaveMeetingActionItem,
-  TenantModuleState,
   UpdateAppointment,
   UpdateMeeting,
 } from '@ngao360/shared';
@@ -45,9 +44,4 @@ export const meetingsApi = {
   updateActionItem: (id: string, itemId: string, body: SaveMeetingActionItem) =>
     api.patch<MeetingActionItem>(`${m(id)}/action-items/${encodeURIComponent(itemId)}`, body),
   recordDecision: (id: string, body: RecordMeetingDecision) => api.post<MeetingDecision>(`${m(id)}/decisions`, body),
-};
-
-/** Office module configuration (controller name, retention) for the privacy notice; needs `workspace.view`. */
-export const workspaceModulesApi = {
-  list: () => api.get<TenantModuleState[]>('/workspace/modules'),
 };

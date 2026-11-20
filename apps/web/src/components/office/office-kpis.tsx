@@ -3,11 +3,9 @@
 /**
  * Office overview widget for the executive dashboard (S04). Shows only the
  * figures the caller is allowed to see, each from the list endpoint's `total`
- * (one small request per figure, scoped server-side). Not mounted by this
- * file: see docs/CHANGE_REQUESTS.md (Office correspondence/appointments/projects UI).
- *
- *   import { OfficeKpis } from '@/components/office/office-kpis';
- *   <OfficeKpis />   // renders nothing unless the office module is on
+ * (one small request per figure, scoped server-side). Mounted on /dashboard,
+ * both in the command centre and in the Office overview for Office staff.
+ * Renders nothing unless the office module is on.
  */
 import type { Paginated } from '@ngao360/shared';
 import { CalendarClock, ClipboardCheck, Inbox, type LucideIcon, MailWarning, ShieldQuestion } from 'lucide-react';

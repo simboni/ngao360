@@ -202,7 +202,7 @@ export function TransitionDialog({ detail, to, onClose, onDone }: { detail: Case
 /* --------------------------------- Assign --------------------------------- */
 
 export function AssignDialog({ detail, onClose, onDone }: { detail: CaseDetail; onClose: () => void; onDone: (d: CaseDetail) => void }) {
-  const officers = useAssignableOfficers([detail.assignee]);
+  const officers = useAssignableOfficers([detail.assignee], detail.id);
   const [assigneeId, setAssigneeId] = useState(detail.assignee?.id ?? '');
   const [nextReviewDate, setNextReviewDate] = useState(detail.nextReviewDate ?? addDays(todayNairobi(), 7));
   const [note, setNote] = useState('');

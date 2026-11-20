@@ -4,53 +4,54 @@ import type { Paginated, PrivacyNotice, UserRef, UserSummary } from '@ngao360/sh
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
-import { casesApi } from './case-api';
+import { officeApi, useOfficeGeography, useOfficePrivacyNotices } from '../office-api';
 
 export interface CaseGeography {
   constituencies: Array<{ id: string; name: string }>;
   wards: Array<{ id: string; name: string; constituencyId: string }>;
-  /** The office's current portal privacy notice (read to walk-in requesters). */
-  privacyNotice: PrivacyNotice;
+  /** The office's current portal privacy notice (read to walk-in requesters); null when unavailable. */
+  privacyNotice: PrivacyNotice | null;
 }
 
 /**
- * Constituencies and wards of the office's county, for filters and forms.
- * See `casesApi.portalGeography`. Returns null when unavailable.
+ * Constituencies and wards of the office's county, for filters and forms, plus
+ * the portal privacy notice. Reads GET /office/geography and
+ * GET /office/privacy-notice, so it works with the public portal switched off.
+ * Returns null while the geography is unavailable.
  */
 export function useCaseGeography(): CaseGeography | null {
-  const { me } = useAuth();
-  const [geo, setGeo] = useState<CaseGeography | null>(null);
-  const slug = me?.tenant.slug;
-  useEffect(() => {
-    if (!slug) return;
-    let alive = true;
-    casesApi
-      .portalGeography(slug)
-      .then((info) => alive && setGeo({ constituencies: info.constituencies, wards: info.wards, privacyNotice: info.privacyNotice }))
-      .catch(() => alive && setGeo(null));
-    return () => {
-      alive = false;
-    };
-  }, [slug]);
-  return geo;
+  const geo = useOfficeGeography();
+  const notices = useOfficePrivacyNotices();
+  if (!geo) return null;
+  return { constituencies: geo.constituencies, wards: geo.wards, privacyNotice: notices?.portal ?? null };
 }
 
 const OFFICER_ROLE_KEYS = ['CASE_OFFICER', 'OFFICE_ADMINISTRATOR'];
 
 /**
- * Officers who can be offered as assignees. There is no office-specific
- * lookup in the API contract yet (see docs/CHANGE_REQUESTS.md), so: the caller
- * themself, anyone already assigned in view, and, for holders of
- * `users.view`, active users with a case-handling role. The API still checks
- * that the assignee holds `office.cases.manage` over the case location.
+ * Officers who can be offered as assignees: with a case id, the active users
+ * holding `office.cases.manage` over the case location
+ * (GET /office/cases/:id/assignable-officers); otherwise, for holders of
+ * `users.view`, active users with a case-handling role. The caller and anyone
+ * already assigned are always offered. The API re-checks the assignee.
  */
-export function useAssignableOfficers(extra: Array<UserRef | null | undefined> = []): UserRef[] {
+export function useAssignableOfficers(extra: Array<UserRef | null | undefined> = [], caseId?: string): UserRef[] {
   const { me, can } = useAuth();
   const [directory, setDirectory] = useState<UserRef[]>([]);
   const canList = can('users.view');
+  const canManage = can('office.cases.manage');
   useEffect(() => {
-    if (!canList) return;
     let alive = true;
+    if (caseId && canManage) {
+      officeApi
+        .assignableOfficers(caseId)
+        .then((users) => alive && setDirectory(users))
+        .catch(() => alive && setDirectory([]));
+      return () => {
+        alive = false;
+      };
+    }
+    if (!canList) return;
     Promise.all(
       OFFICER_ROLE_KEYS.map((roleKey) =>
         api.get<Paginated<UserSummary>>('/admin/users', { query: { roleKey, status: 'ACTIVE', pageSize: 200 } }).catch(() => null),
@@ -63,7 +64,7 @@ export function useAssignableOfficers(extra: Array<UserRef | null | undefined> =
     return () => {
       alive = false;
     };
-  }, [canList]);
+  }, [canList, canManage, caseId]);
 
   const out = new Map<string, UserRef>();
   if (me) out.set(me.user.id, { id: me.user.id, displayName: `${me.user.displayName} (me)` });

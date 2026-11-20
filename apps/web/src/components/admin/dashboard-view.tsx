@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { OfficeKpis } from '@/components/office/office-kpis';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
@@ -220,6 +221,8 @@ export function DashboardView() {
           {describeError(error)} {data ? `Showing figures from ${formatDateTime(data.generatedAt)}.` : ''}
         </Notice>
       ) : null}
+
+      <OfficeKpis className="mb-6" />
 
       <section aria-label="Key figures" className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {data

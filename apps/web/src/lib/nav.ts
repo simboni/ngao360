@@ -39,7 +39,15 @@ export interface NavGroup {
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Overview',
-    items: [{ label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, anyOf: ['dashboard.view'] }],
+    items: [
+      {
+        label: 'Dashboard',
+        href: '/dashboard',
+        icon: LayoutDashboard,
+        // Office staff see the Office overview there (office KPIs scoped by their own permissions).
+        anyOf: ['dashboard.view', 'office.correspondence.view', 'office.appointments.view', 'office.meetings.view', 'office.cases.view', 'office.projects.view'],
+      },
+    ],
   },
   {
     label: 'NGAO TALLY',

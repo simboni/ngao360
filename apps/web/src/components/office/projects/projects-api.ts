@@ -17,7 +17,6 @@ import type {
   ProjectQuery,
   ProjectSummary,
   ProjectTransition,
-  PublicPortalInfo,
   PublicProjectDetail,
   SignedUrlResponse,
   UpdateProject,
@@ -62,11 +61,4 @@ export const projectsApi = {
   history: (id: string) => api.get<AuditEvent[]>(`${p(id)}/history`),
   institutions: (query: { q?: string; type?: InstitutionQuery['type']; active?: 'true' | 'false' } = {}) =>
     api.get<Paginated<Institution>>('/office/institutions', { query: { pageSize: 200, ...query } as Record<string, string | number | undefined> }),
-  /**
-   * Constituencies and wards for filters and forms. Office roles do not hold
-   * `reference.view`, so this reads the tenant's public portal description
-   * (public data); it fails when the portal is off, and callers then hide the
-   * geography filter. See docs/CHANGE_REQUESTS.md (Office geography lookup).
-   */
-  portalGeography: (tenantSlug: string) => api.get<PublicPortalInfo>(`/public/${encodeURIComponent(tenantSlug)}/portal`, { noRefresh: true }),
 };

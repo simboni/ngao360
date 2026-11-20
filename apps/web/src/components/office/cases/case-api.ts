@@ -24,7 +24,6 @@ import type {
   InstitutionQuery,
   Paginated,
   ProposeCaseResolution,
-  PublicPortalInfo,
   ReopenCase,
   SignedUrlResponse,
   UpdateCase,
@@ -65,11 +64,4 @@ export const casesApi = {
   /** `active` is sent as the string the query schema expects ('true' / 'false'). */
   institutions: (query: { q?: string; type?: InstitutionQuery['type']; active?: 'true' | 'false' }) =>
     api.get<Paginated<Institution>>('/office/institutions', { query: { pageSize: 200, ...query } as Record<string, string | number | undefined> }),
-  /**
-   * Constituencies and wards for filters and forms. Office roles do not hold
-   * `reference.view`, so this reuses the tenant's public portal description
-   * (public data). It fails when the portal is switched off; callers then hide
-   * the geography filter and ask for a landmark instead.
-   */
-  portalGeography: (tenantSlug: string) => api.get<PublicPortalInfo>(`/public/${encodeURIComponent(tenantSlug)}/portal`, { noRefresh: true }),
 };
