@@ -4,6 +4,7 @@ import { ACCESS_ADMIN_PERMISSIONS, findRoleSodConflicts, TALLY_VALUE_WRITE_PERMI
 import { HttpStatus } from '@nestjs/common';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
+import { type GeoLocation, pathToUnitIds, scopeAllows, scopeFromGrants } from '../../rbac/scope';
 import { activeAssignmentWhere } from './admin.mappers';
 
 export interface AssignmentRequest {
@@ -59,12 +60,21 @@ export async function assertAssignmentAllowed(
   const role = await tx.role.findUnique({ where: { id: req.roleId }, include: { permissions: { select: { permissionKey: true } } } });
   if (!role) throw AppException.notFound('Role not found');
 
+  let target: GeoLocation | null = null;
   if (req.scopeType === 'POLLING_STATION') {
-    const st = await tx.pollingStation.findUnique({ where: { id: req.pollingStationId! }, select: { id: true } });
+    const st = await tx.pollingStation.findUnique({
+      where: { id: req.pollingStationId! },
+      select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
+    });
     if (!st) throw AppException.validation('The polling station does not exist', [{ path: 'pollingStationId', message: 'Not found' }]);
+    target = {
+      unitIds: [st.countyId, st.constituencyId, st.wardId, st.pollingCentreId].filter((v): v is string => !!v),
+      stationId: st.id,
+    };
   } else if (req.scopeType !== 'ORGANISATION') {
-    const unit = await tx.geographicUnit.findUnique({ where: { id: req.geographicUnitId! }, select: { type: true } });
+    const unit = await tx.geographicUnit.findUnique({ where: { id: req.geographicUnitId! }, select: { type: true, path: true } });
     if (!unit) throw AppException.validation('The geographic unit does not exist', [{ path: 'geographicUnitId', message: 'Not found' }]);
+    target = { unitIds: pathToUnitIds(unit.path), stationId: null };
     if (unit.type !== UNIT_TYPE_FOR_SCOPE[req.scopeType]) {
       throw AppException.validation(`A ${req.scopeType.toLowerCase()} scope needs a ${req.scopeType.toLowerCase()} unit`, [
         { path: 'geographicUnitId', message: `Expected ${req.scopeType}, got ${unit.type}` },
@@ -75,6 +85,8 @@ export async function assertAssignmentAllowed(
     const c = await tx.electionCycle.findUnique({ where: { id: req.electionCycleId }, select: { id: true } });
     if (!c) throw AppException.validation('The election cycle does not exist', [{ path: 'electionCycleId', message: 'Not found' }]);
   }
+
+  assertGrantorCovers(auth, target, req.electionCycleId, role.permissions.map((p) => p.permissionKey));
 
   const validFrom = req.validFrom ? new Date(req.validFrom) : new Date();
   if (req.expiresAt) {
@@ -99,4 +111,61 @@ export async function assertAssignmentAllowed(
     );
   }
   return { role };
+}
+
+/**
+ * The grantor may only grant (or revoke) inside their own roles.assign scope:
+ * - an organisation-wide assignment needs an organisation-wide roles.assign grant;
+ * - a geographic assignment must lie inside the grantor's roles.assign geography;
+ * - an assignment for every election cycle needs a roles.assign grant that is
+ *   not limited to one cycle.
+ * A grantor whose roles.assign is not organisation-wide may additionally only
+ * hand out permissions they hold themselves over the same target, so a county
+ * administrator cannot mint organisation-level approvers or role configurers.
+ * `target` null means organisation scope.
+ */
+export function assertGrantorCovers(
+  auth: AuthContext,
+  target: GeoLocation | null,
+  electionCycleId: string | null,
+  rolePermissions: readonly string[] | null,
+): void {
+  const assign = scopeFromGrants(auth.grants, 'roles.assign', electionCycleId);
+  if (!assign.held) throw AppException.forbidden('Granting roles needs the roles.assign permission');
+  const covers = (scope: ReturnType<typeof scopeFromGrants>) => (target === null ? scope.orgWide : scopeAllows(scope, target));
+  if (!covers(assign)) {
+    throw AppException.outOfScope(
+      target === null
+        ? 'Only an organisation-wide administrator can grant or revoke organisation-wide roles.'
+        : 'This assignment is outside the geography or election cycle you administer.',
+    );
+  }
+  if (assign.orgWide || rolePermissions === null) return;
+  const missing = rolePermissions.filter((p) => !covers(scopeFromGrants(auth.grants, p, electionCycleId)));
+  if (missing.length > 0) {
+    throw new AppException(
+      ERROR_CODES.OUT_OF_SCOPE,
+      HttpStatus.FORBIDDEN,
+      'You can only grant permissions you hold yourself over this area. Ask an organisation-wide administrator.',
+      { permissions: missing },
+    );
+  }
+}
+
+/** Geography of an existing assignment, for revocation checks (null = organisation scope). */
+export async function assignmentTarget(
+  tx: TenantTx,
+  a: { scopeType: ScopeType; geographicUnitId: string | null; pollingStationId: string | null },
+): Promise<GeoLocation | null> {
+  if (a.scopeType === 'ORGANISATION') return null;
+  if (a.scopeType === 'POLLING_STATION' && a.pollingStationId) {
+    const st = await tx.pollingStation.findUnique({
+      where: { id: a.pollingStationId },
+      select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
+    });
+    if (!st) return { unitIds: [], stationId: a.pollingStationId };
+    return { unitIds: [st.countyId, st.constituencyId, st.wardId, st.pollingCentreId].filter((v): v is string => !!v), stationId: st.id };
+  }
+  const unit = a.geographicUnitId ? await tx.geographicUnit.findUnique({ where: { id: a.geographicUnitId }, select: { path: true } }) : null;
+  return { unitIds: unit ? pathToUnitIds(unit.path) : a.geographicUnitId ? [a.geographicUnitId] : [], stationId: null };
 }

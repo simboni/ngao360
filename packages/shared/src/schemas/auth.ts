@@ -95,6 +95,23 @@ export const ReauthRequestSchema = z.object({
 });
 export type ReauthRequest = z.infer<typeof ReauthRequestSchema>;
 
+/**
+ * Redeem a single-use invitation: the invited person chooses their own
+ * password. Administrators never set another person's password.
+ */
+export const AcceptInvitationRequestSchema = z.object({
+  tenantSlug: z.string().trim().toLowerCase().min(2).max(64),
+  token: z.string().min(20).max(200),
+  password: z
+    .string()
+    .min(12, 'Use at least 12 characters')
+    .max(256)
+    .regex(/[a-z]/, 'Include a lowercase letter')
+    .regex(/[A-Z]/, 'Include an uppercase letter')
+    .regex(/[0-9]/, 'Include a number'),
+});
+export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequestSchema>;
+
 export const OkResponseSchema = z.object({ ok: z.literal(true) });
 export type OkResponse = z.infer<typeof OkResponseSchema>;
 

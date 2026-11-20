@@ -1,4 +1,5 @@
 import {
+  AcceptInvitationRequestSchema,
   LoginRequestSchema,
   MfaEnrolConfirmRequestSchema,
   MfaEnrolStartRequestSchema,
@@ -12,3 +13,4 @@ export class MfaVerifyDto extends createZodDto(MfaVerifyRequestSchema) {}
 export class MfaEnrolStartDto extends createZodDto(MfaEnrolStartRequestSchema) {}
 export class MfaEnrolConfirmDto extends createZodDto(MfaEnrolConfirmRequestSchema) {}
 export class ReauthDto extends createZodDto(ReauthRequestSchema) {}
+export class AcceptInvitationDto extends createZodDto(AcceptInvitationRequestSchema) {}

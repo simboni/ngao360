@@ -13,23 +13,41 @@ export interface SubmissionParticipants {
   editorIds: ReadonlySet<string>;
   /** Users who recorded a verification (any round). */
   verifierIds: ReadonlySet<string>;
+  /** Users who took a supervisor action on any verification round. */
+  supervisorIds: ReadonlySet<string>;
+  /** Users who resolved a discrepancy case linked to the submission. */
+  resolverIds: ReadonlySet<string>;
 }
 
 export interface ParticipantSources {
   submitterId: string;
   valueChanges: ReadonlyArray<{ actorId: string }>;
   values: ReadonlyArray<{ confirmedById: string | null }>;
-  verifications: ReadonlyArray<{ reviewerId: string }>;
+  /**
+   * Everyone who ever confirmed or changed a value, from the append-only audit
+   * stream. A later save overwrites `values.confirmedById`, so the current
+   * value row alone would let an earlier confirmer drop out of the set.
+   */
+  valueAuditActorIds?: ReadonlyArray<string | null>;
+  verifications: ReadonlyArray<{ reviewerId: string; supervisorId?: string | null }>;
+  resolvedCases?: ReadonlyArray<{ resolvedById: string | null }>;
 }
 
 export function participantsOf(src: ParticipantSources): SubmissionParticipants {
   const editorIds = new Set<string>();
   for (const c of src.valueChanges) editorIds.add(c.actorId);
   for (const v of src.values) if (v.confirmedById) editorIds.add(v.confirmedById);
+  for (const a of src.valueAuditActorIds ?? []) if (a) editorIds.add(a);
+  const supervisorIds = new Set<string>();
+  for (const v of src.verifications) if (v.supervisorId) supervisorIds.add(v.supervisorId);
+  const resolverIds = new Set<string>();
+  for (const c of src.resolvedCases ?? []) if (c.resolvedById) resolverIds.add(c.resolvedById);
   return {
     submitterId: src.submitterId,
     editorIds,
     verifierIds: new Set(src.verifications.map((v) => v.reviewerId)),
+    supervisorIds,
+    resolverIds,
   };
 }
 
@@ -37,6 +55,8 @@ export type SodViolation =
   | 'SUBMITTER_CANNOT_VERIFY'
   | 'EDITOR_CANNOT_VERIFY'
   | 'PRIOR_REVIEWER_CANNOT_THIRD_CHECK'
+  | 'SUPERVISOR_CANNOT_VERIFY'
+  | 'RESOLVER_CANNOT_VERIFY'
   | 'SUBMITTER_CANNOT_SUPERVISE'
   | 'EDITOR_CANNOT_SUPERVISE'
   | 'VERIFIER_CANNOT_SUPERVISE'
@@ -49,6 +69,10 @@ export const SOD_MESSAGES: Record<SodViolation, string> = {
     'You entered or corrected values on this submission, so you cannot verify it. A different authorised reviewer must check it.',
   PRIOR_REVIEWER_CANNOT_THIRD_CHECK:
     'A third check was requested. It must be done by a reviewer who has not already reviewed this submission.',
+  SUPERVISOR_CANNOT_VERIFY:
+    'You took a supervisor action on this submission, so you cannot also be its independent verifier.',
+  RESOLVER_CANNOT_VERIFY:
+    'You resolved a discrepancy on this submission, so you cannot also be its independent verifier.',
   SUBMITTER_CANNOT_SUPERVISE: 'You submitted this result form, so you cannot take a supervisor action on it.',
   EDITOR_CANNOT_SUPERVISE:
     'You entered or corrected values on this submission, so you cannot take a supervisor action on it.',
@@ -57,7 +81,10 @@ export const SOD_MESSAGES: Record<SodViolation, string> = {
     'You resolved this discrepancy case, so a different person must approve its closure.',
 };
 
-/** Rule 1: verifier ≠ submitter and ≠ any value editor; third checks need a fresh reviewer. */
+/**
+ * Rule 1: verifier ≠ submitter, ≠ any value editor or confirmer, ≠ any
+ * supervisor or discrepancy resolver of the record; third checks need a fresh reviewer.
+ */
 export function verificationViolation(
   userId: string,
   p: SubmissionParticipants,
@@ -65,6 +92,8 @@ export function verificationViolation(
 ): SodViolation | null {
   if (userId === p.submitterId) return 'SUBMITTER_CANNOT_VERIFY';
   if (p.editorIds.has(userId)) return 'EDITOR_CANNOT_VERIFY';
+  if (p.supervisorIds?.has(userId)) return 'SUPERVISOR_CANNOT_VERIFY';
+  if (p.resolverIds?.has(userId)) return 'RESOLVER_CANNOT_VERIFY';
   if (opts.thirdCheck && p.verifierIds.has(userId)) return 'PRIOR_REVIEWER_CANNOT_THIRD_CHECK';
   return null;
 }

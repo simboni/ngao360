@@ -120,14 +120,49 @@ describe('aggregation (blueprint 8.6)', () => {
     expect(r.candidates.map((c) => c.ballotOrder)).toEqual([1, 2]);
   });
 
-  it('classifies stations: verified beats flags; all-excluded is excluded; archived is ignored', () => {
+  it('classifies stations: verified beats flags; all-excluded is excluded; archived-only stays visible as excluded', () => {
     expect(classifyStation([]).status).toBe('MISSING');
-    expect(classifyStation([sub(1, 'ARCHIVED')]).status).toBe('MISSING');
+    // A received form that was archived is never reported as missing (17.2).
+    expect(classifyStation([sub(1, 'ARCHIVED')]).status).toBe('EXCLUDED');
     expect(classifyStation([sub(1, 'VERIFIED'), sub(1, 'DISPUTED', null, { isCanonical: false })]).status).toBe('VERIFIED');
     expect(classifyStation([sub(1, 'EXCLUDED_FROM_AGGREGATE'), sub(1, 'EXCLUDED_FROM_AGGREGATE')]).status).toBe('EXCLUDED');
     expect(classifyStation([sub(1, 'SUBMITTED', null, { hasOpenDiscrepancy: true })]).status).toBe('FLAGGED');
     expect(classifyStation([sub(1, 'QUARANTINED')]).status).toBe('FLAGGED');
     expect(classifyStation([sub(1, 'OCR_COMPLETE')]).status).toBe('RECEIVED');
+  });
+});
+
+describe('aggregation regressions (review findings)', () => {
+  const stations = [1, 2, 3, 4, 5, 6].map(station);
+
+  it('never counts a VERIFIED record while a holding case is open; the station shows as flagged', () => {
+    const held = sub(1, 'VERIFIED', { a: 100, b: 50 }, { hasOpenDiscrepancy: true, hasOpenHoldingCase: true });
+    expect(classifyStation([held]).status).toBe('FLAGGED');
+    const r = computeAggregate([station(1)], [held], candidates);
+    expect(r.includedSubmissionIds).toEqual([]);
+    expect(r.totalVerifiedValidVotes).toBe(0);
+    expect(r.stations[0]!.candidateVotes).toBeNull();
+  });
+
+  it('keeps coverage segments mutually exclusive so they sum to the expected stations', () => {
+    const subs = [
+      sub(1, 'VERIFIED', { a: 10, b: 5 }),
+      // awaiting review AND flagged by an intake image-quality case: counted once, as flagged
+      sub(2, 'SECOND_REVIEW_PENDING', null, { hasOpenDiscrepancy: true, hasOpenHoldingCase: true }),
+      sub(3, 'SECOND_REVIEW_PENDING'),
+      sub(4, 'EXCLUDED_FROM_AGGREGATE'),
+      sub(5, 'ARCHIVED'),
+    ];
+    const r = computeAggregate(stations, subs, candidates);
+    const c = r.coverage;
+    expect(c.awaitingReview).toBe(1);
+    expect(c.flagged).toBe(1);
+    const receivedOther = c.received - c.verified - c.awaitingReview - c.flagged - c.excluded;
+    expect(receivedOther).toBeGreaterThanOrEqual(0);
+    expect(c.verified + c.awaitingReview + receivedOther + c.flagged + c.excluded + c.missing).toBe(c.expectedStations);
+    // archived-only station 5 is excluded, not missing
+    expect(r.stations.find((x) => x.pollingStationId === 'st-5')!.coverageStatus).toBe('EXCLUDED');
+    expect(c.missing).toBe(1);
   });
 });
 

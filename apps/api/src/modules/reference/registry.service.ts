@@ -300,6 +300,39 @@ export class RegistryService {
       if (latest && latest.status !== 'COMPLETED') {
         throw AppException.conflict(`The import is ${latest.status.toLowerCase()}; wait for it to complete before approving`);
       }
+      // Maker-checker (blueprint 3.2): the registry defines the tally
+      // denominator, so whoever imported a station list for this version
+      // cannot also approve it.
+      const importers = await tx.registryImport.findMany({
+        where: { registryVersionId: id },
+        select: { importedById: true },
+        distinct: ['importedById'],
+      });
+      if (importers.some((i) => i.importedById === auth.userId)) {
+        throw AppException.separationOfDuties('You imported the station list for this registry version, so a different person must approve it.');
+      }
+      // Results already filed against earlier versions are matched to this
+      // version by station code. Refuse approval if any would be orphaned:
+      // a received form must never turn into a "missing" station.
+      const newCodes = new Set(
+        (await tx.pollingStation.findMany({ where: { registryVersionId: id }, select: { code: true } })).map((st) => st.code),
+      );
+      const filed = await tx.pollingStation.findMany({
+        where: {
+          electionCycleId: current.electionCycleId,
+          registryVersionId: { not: id },
+          submissions: { some: {} },
+        },
+        select: { code: true },
+        distinct: ['code'],
+      });
+      const orphaned = filed.map((f) => f.code).filter((c) => !newCodes.has(c));
+      if (orphaned.length > 0) {
+        throw AppException.conflict(
+          `${orphaned.length} station(s) with result forms already filed are not in this registry version. Add them (or record their replacement) before approving, so no received form is reported as missing.`,
+          { stationCodes: orphaned.slice(0, 100) },
+        );
+      }
       const previous = await tx.registryVersion.findMany({ where: { electionCycleId: current.electionCycleId, status: 'APPROVED' } });
       for (const p of previous) {
         const superseded = await tx.registryVersion.update({ where: { id: p.id }, data: { status: 'SUPERSEDED' } });

@@ -51,6 +51,14 @@ export const UserDetailSchema = UserSummarySchema.extend({
   assignments: z.array(RoleAssignmentSchema),
   privacyNoticeVersion: z.string().nullable(),
   privacyNoticeAcceptedAt: IsoDateTimeSchema.nullable(),
+  /**
+   * Present only in the response that issues an invitation (create or
+   * re-issue). The raw token is never stored and is not shown again; relay it
+   * to the invited person through a separate channel.
+   */
+  invitation: z
+    .object({ token: z.string(), expiresAt: IsoDateTimeSchema, acceptPath: z.string() })
+    .optional(),
 });
 export type UserDetail = z.infer<typeof UserDetailSchema>;
 
@@ -72,8 +80,12 @@ export const CreateUserSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().max(32).nullable().optional(),
   displayName: z.string().trim().min(2).max(200),
-  /** Optional initial password; when omitted the user is INVITED and must set one. */
-  initialPassword: PasswordSchema.optional(),
+  // No initial password: administrators never choose another person's password
+  // (blueprint 3.2). The user is INVITED and redeems a single-use invitation.
+  // The key is refused outright so an old client cannot silently send one.
+  initialPassword: z
+    .never({ message: 'Administrators cannot set a password for another person; the user sets it from the invitation' })
+    .optional(),
   roleAssignments: z
     .array(
       z.object({
@@ -211,11 +223,15 @@ export const AUDIT_ACTIONS = {
   AUTH_LOGIN_FAILED: 'auth.login.failed',
   AUTH_LOGOUT: 'auth.logout',
   AUTH_REFRESH: 'auth.refresh',
+  AUTH_MFA_ENROL_STARTED: 'auth.mfa.enrol_started',
   AUTH_MFA_ENROLLED: 'auth.mfa.enrolled',
+  AUTH_MFA_LOCKED: 'auth.mfa.locked',
+  AUTH_INVITATION_ACCEPTED: 'auth.invitation.accepted',
   AUTH_MFA_VERIFIED: 'auth.mfa.verified',
   AUTH_MFA_FAILED: 'auth.mfa.failed',
   AUTH_REAUTH: 'auth.reauth',
   USER_CREATED: 'user.created',
+  USER_INVITATION_ISSUED: 'user.invitation_issued',
   USER_UPDATED: 'user.updated',
   USER_STATUS_CHANGED: 'user.status_changed',
   USER_MFA_RESET: 'user.mfa_reset',

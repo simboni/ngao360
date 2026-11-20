@@ -23,7 +23,7 @@ export function SubmissionRail({
   electionCycleId: string;
   contestId: string;
   statuses: SubmissionStatus[];
-  view?: 'all' | 'mine' | 'awaiting_me';
+  view?: 'all' | 'mine' | 'awaiting_me' | 'awaiting_supervisor';
   hrefFor: (id: string) => string;
   title: string;
 }) {

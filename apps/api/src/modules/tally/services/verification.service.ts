@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@ngao360/db';
 import {
   AUDIT_ACTIONS,
@@ -23,6 +23,8 @@ import { ValidationService } from './validation.service';
 
 @Injectable()
 export class VerificationService {
+  private readonly logger = new Logger(VerificationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -69,15 +71,28 @@ export class VerificationService {
       }
       const mode = body.independentValues.length > 0 ? 'INDEPENDENT_REENTRY' : 'CONFIRM';
       if (mode === 'INDEPENDENT_REENTRY') {
+        const blank = body.independentValues
+          .filter((v) => v.numericValue === null || v.numericValue === undefined)
+          .map((v) => cellKey(v.fieldKey, v.candidateReferenceId));
+        if (blank.length > 0) {
+          throw AppException.validation('Enter every figure you re-key from the source, or send no re-entered values', { blank });
+        }
         const given = new Set(body.independentValues.map((v) => cellKey(v.fieldKey, v.candidateReferenceId)));
         const missing = requiredReentryCells(schema, candidateIds).filter((c) => !given.has(c));
         if (missing.length > 0) {
           throw AppException.validation('Independent re-entry must include every candidate vote and required count', { missing });
         }
       }
+      // A third check after a supervisor intervention must be an independent re-entry.
+      if (thirdCheck && body.decision === 'PASS' && mode !== 'INDEPENDENT_REENTRY') {
+        throw AppException.validation('A third check must re-enter every figure independently from the source before passing');
+      }
       const mismatches = compareIndependentValues(sub.values, body.independentValues);
 
       if (body.decision === 'PASS') {
+        // A record held by an open arithmetic, disagreement, metadata or image
+        // case cannot enter the verified aggregate until that case is resolved.
+        await this.workflow.assertNoOpenHoldingCase(tx, sub.id, 'passing this submission');
         const c = body.checklist;
         const unchecked = (
           [
@@ -92,8 +107,12 @@ export class VerificationService {
         if (unchecked.length > 0) {
           throw AppException.validation('Complete the checklist before passing a submission, or return or dispute it', { unchecked });
         }
-        const { run } = await this.validation.runAndStore(tx, sub.id, auth.userId, { openCases: false });
-        const fails = run.results.filter((r) => r.outcome === 'FAIL');
+        const { run, arithmetic } = await this.validation.runAndStore(tx, sub.id, auth.userId, { openCases: false });
+        // Arithmetic failures on figures as printed may pass only after a
+        // supervisor resolved the arithmetic case (accepting the printed figures).
+        const accepted = arithmetic.length > 0 && (await this.validation.arithmeticAccepted(tx, sub.id));
+        const arithmeticKeys = new Set(accepted ? arithmetic.map((a) => a.ruleKey) : []);
+        const fails = run.results.filter((r) => r.outcome === 'FAIL' && !arithmeticKeys.has(r.ruleKey));
         if (fails.length > 0) {
           throw AppException.validation('Failed checks remain. Return or dispute the submission instead of passing it.', {
             failed: fails.map((f) => f.ruleKey),
@@ -118,11 +137,14 @@ export class VerificationService {
         include: verificationInclude,
       });
 
+      // An explicit RETURN keeps its outcome (any differences are stored on the
+      // verification for information). A PASS with differences is a reviewer
+      // disagreement and is held for the supervisor.
       let outcome: 'VERIFIED' | 'RETURNED' | 'DISPUTED';
-      if (mismatches.length > 0) outcome = 'DISPUTED';
-      else if (body.decision === 'PASS') outcome = 'VERIFIED';
-      else if (body.decision === 'RETURN') outcome = 'RETURNED';
+      if (body.decision === 'RETURN') outcome = 'RETURNED';
+      else if (body.decision === 'PASS') outcome = mismatches.length > 0 ? 'DISPUTED' : 'VERIFIED';
       else outcome = 'DISPUTED';
+      const disagreement = outcome === 'DISPUTED' && mismatches.length > 0;
 
       await this.audit.record(
         {
@@ -149,12 +171,12 @@ export class VerificationService {
           ? `Verified for parallel tally by independent reviewer (round ${round})`
           : outcome === 'RETURNED'
             ? body.notes ?? `Returned by reviewer (round ${round})`
-            : mismatches.length > 0
+            : disagreement
               ? `Reviewer disagreement on ${mismatches.length} value(s) (round ${round})`
               : body.notes ?? `Disputed by reviewer (round ${round})`;
       await this.workflow.transition(tx, sub, outcome, reason, outcome === 'VERIFIED' ? { verifiedAt: new Date() } : {});
 
-      if (mismatches.length > 0) {
+      if (disagreement) {
         await this.workflow.openCase(tx, {
           tenantId: auth.tenantId,
           electionCycleId: sub.electionCycleId,
@@ -189,8 +211,16 @@ export class VerificationService {
     });
 
     if (result.outcome === 'VERIFIED' && result.sub.formTemplate.formLevel !== 'POLLING_STATION') {
-      // Later-stage forms are compared with the verified A-form aggregate (blueprint 8.6).
-      await this.stages.compareSubmission(auth, result.sub.id);
+      // Later-stage forms are compared with the verified A-form aggregate
+      // (blueprint 8.6). The verification is already recorded, so a failure
+      // here must not turn into an error response for it.
+      try {
+        await this.stages.compareSubmission(auth, result.sub.id);
+      } catch (err) {
+        this.logger.error(
+          `Cross-stage comparison failed for submission ${result.sub.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     return toVerification(result.verification);
   }
@@ -218,8 +248,7 @@ export class VerificationService {
     return this.prisma.tenantTx(async (tx) => {
       const v = await tx.verification.findUnique({ where: { id: verificationId } });
       if (!v) throw AppException.notFound('Verification not found');
-      const loc = await this.workflow.submissionLocation(tx, v.submissionId);
-      if (loc) this.workflow.assertInScope(auth, 'tally.approve', loc);
+      await this.workflow.assertSubmissionInScope(tx, auth, 'tally.approve', v.submissionId);
       if (v.supervisorAction) {
         throw AppException.conflict('A supervisor action has already been recorded for this verification');
       }
@@ -235,16 +264,20 @@ export class VerificationService {
         where: { id: v.submissionId },
         select: { id: true, tenantId: true, status: true, version: true },
       });
-      const updated = await tx.verification.update({
-        where: { id: v.id },
+      // Conditional write: two concurrent supervisor actions cannot both succeed.
+      const claimed = await tx.verification.updateMany({
+        where: { id: v.id, supervisorAction: null },
         data: {
           supervisorAction: body.action,
           supervisorId: auth.userId,
           supervisorReason: body.reason,
           supervisorActionAt: new Date(),
         },
-        include: verificationInclude,
       });
+      if (claimed.count !== 1) {
+        throw AppException.conflict('A supervisor action has already been recorded for this verification');
+      }
+      const updated = await tx.verification.findUniqueOrThrow({ where: { id: v.id }, include: verificationInclude });
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -265,6 +298,19 @@ export class VerificationService {
         await this.workflow.transitionPath(tx, sub, path, `${label} by tally supervisor: ${body.reason}`);
       }
 
+      if (body.action !== 'APPROVED') {
+        // Rejecting the outcome or asking for a third check is the supervisor's
+        // reasoned decision on the disagreement: resolve the case so it is not
+        // left open while the record is re-verified, and record who decided.
+        await this.workflow.resolveLinkedCases(
+          tx,
+          auth,
+          sub.id,
+          'REVIEWER_DISAGREEMENT',
+          `Supervisor ${body.action === 'THIRD_CHECK_REQUESTED' ? 'requested a third independent check' : 'rejected the verification outcome'}: ${body.reason}`.slice(0, 2000),
+          { verificationId: v.id, supervisorAction: body.action },
+        );
+      }
       const cases = await tx.discrepancyCase.findMany({
         where: {
           varianceType: 'REVIEWER_DISAGREEMENT',

@@ -31,13 +31,21 @@ import { tallyApi } from './tally-api';
 import { UploadDialog } from './upload-dialog';
 import { useAsync } from './use-async';
 
-type View = 'all' | 'mine' | 'awaiting_me';
+type View = 'all' | 'mine' | 'awaiting_me' | 'awaiting_supervisor';
 
 const VIEWS: Array<{ key: View; label: string }> = [
   { key: 'all', label: 'All forms' },
   { key: 'mine', label: 'My uploads' },
   { key: 'awaiting_me', label: 'Awaiting my review' },
+  { key: 'awaiting_supervisor', label: 'Awaiting supervisor' },
 ];
+
+const VIEW_TITLES: Record<View, string> = {
+  all: 'Form inbox',
+  mine: 'Form inbox',
+  awaiting_me: 'Verification queue',
+  awaiting_supervisor: 'Supervisor queue',
+};
 
 /** S18 Form inbox: upload queue, filters and processing state. */
 export function InboxView() {
@@ -49,6 +57,7 @@ export function InboxView() {
   const view = (params.get('view') as View | null) ?? 'all';
   const canVerify = can('tally.verify');
   const canCapture = can('tally.capture');
+  const canApprove = can('tally.approve');
 
   const [formNumber, setFormNumber] = useState('');
   const [status, setStatus] = useState<SubmissionStatus | ''>('');
@@ -112,7 +121,7 @@ export function InboxView() {
       header: 'Submission',
       sortValue: (r) => r.reference,
       cell: (r) => (
-        <Link href={submissionHref(r, { canVerify, canCapture })} className="font-medium text-deep-blue hover:underline" onClick={(e) => e.stopPropagation()}>
+        <Link href={submissionHref(r, { canVerify, canCapture, canApprove })} className="font-medium text-deep-blue hover:underline" onClick={(e) => e.stopPropagation()}>
           {r.reference}
         </Link>
       ),
@@ -182,13 +191,15 @@ export function InboxView() {
   return (
     <>
       <PageHeader
-        title={view === 'awaiting_me' ? 'Verification queue' : 'Form inbox'}
+        title={VIEW_TITLES[view] ?? 'Form inbox'}
         description={
           view === 'awaiting_me'
             ? 'Forms waiting for an independent second review. Records you submitted or captured are not shown here.'
-            : 'Result forms received through authorised channels, with their processing state. Originals are never edited or deleted.'
+            : view === 'awaiting_supervisor'
+              ? 'Verification outcomes waiting for a tally supervisor to approve, reject or request a third check. Records you took part in are not shown here.'
+              : 'Result forms received through authorised channels, with their processing state. Originals are never edited or deleted.'
         }
-        breadcrumbs={[{ label: 'NGAO TALLY' }, { label: view === 'awaiting_me' ? 'Verification queue' : 'Form inbox' }]}
+        breadcrumbs={[{ label: 'NGAO TALLY' }, { label: VIEW_TITLES[view] ?? 'Form inbox' }]}
         actions={
           <>
             <Button variant="secondary" onClick={() => void list.reload()} aria-label="Refresh list">
@@ -206,7 +217,9 @@ export function InboxView() {
       />
 
       <div role="tablist" aria-label="Inbox views" className="mb-4 flex gap-1 border-b border-line">
-        {VIEWS.filter((v) => v.key !== 'awaiting_me' || canAny(['tally.verify', 'tally.approve'])).map((v) => (
+        {VIEWS.filter(
+          (v) => (v.key !== 'awaiting_me' || canAny(['tally.verify', 'tally.approve'])) && (v.key !== 'awaiting_supervisor' || canApprove),
+        ).map((v) => (
           <button
             key={v.key}
             type="button"
@@ -302,7 +315,7 @@ export function InboxView() {
         loading={list.loading && !list.data}
         emptyTitle={view === 'awaiting_me' ? 'Nothing waiting for your review' : 'No forms match these filters'}
         emptyDescription={view === 'awaiting_me' ? 'Forms appear here once a clerk submits them for second review.' : 'Upload a form or change the filters.'}
-        onRowClick={(r) => router.push(submissionHref(r, { canVerify, canCapture }))}
+        onRowClick={(r) => router.push(submissionHref(r, { canVerify, canCapture, canApprove }))}
         sort={sort}
         onSortChange={setSort}
         pagination={list.data ? { page: list.data.page, pageSize: list.data.pageSize, total: list.data.total, onPageChange: setPage } : undefined}

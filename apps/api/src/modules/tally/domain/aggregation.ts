@@ -2,12 +2,17 @@
  * Parallel-tally aggregation (blueprint 8.6, 8.7; API contract §5.6). Pure.
  *
  * - Only canonical submissions with status VERIFIED ("Verified for parallel
- *   tally") contribute votes.
+ *   tally") and no open holding discrepancy case contribute votes. A verified
+ *   record with an open holding case is shown as FLAGGED.
  * - The denominator is the expected station list from the approved registry.
  * - Missing stations are reported as missing and never contribute zero votes:
  *   their rows carry `candidateVotes: null`, not zeros.
  * - Received, transcribed, awaiting review, flagged and excluded records stay
- *   visible in the coverage counts.
+ *   visible in the coverage counts. A station whose only forms were archived
+ *   counts as received and excluded, never as missing.
+ * - Coverage statuses are mutually exclusive; `awaitingReview` is a subset of
+ *   RECEIVED, so verified + awaitingReview + other received + flagged +
+ *   excluded + missing = expected stations.
  */
 import { AGGREGATE_ELIGIBLE_STATUS, type SubmissionStatus } from '@ngao360/shared';
 
@@ -38,6 +43,12 @@ export interface AggSubmission {
   status: SubmissionStatus;
   isCanonical: boolean;
   hasOpenDiscrepancy: boolean;
+  /**
+   * An open case of a holding type (arithmetic, reviewer disagreement,
+   * metadata, image quality, form version) is linked: the record is held from
+   * the verified aggregate even if its status is VERIFIED.
+   */
+  hasOpenHoldingCase?: boolean;
   values: readonly AggValue[];
 }
 
@@ -120,19 +131,25 @@ export function classifyStation(subs: readonly AggSubmission[]): {
 } {
   const active = subs.filter((s) => s.status !== 'ARCHIVED');
   if (active.length === 0) {
+    if (subs.length > 0) {
+      // Every form for this station was archived: it was received and set aside,
+      // so it stays visible as excluded rather than disappearing into "missing".
+      return { status: 'EXCLUDED', included: null, representative: subs[0] ?? null, transcribed: false, awaitingReview: false };
+    }
     return { status: 'MISSING', included: null, representative: null, transcribed: false, awaitingReview: false };
   }
-  const included = active.find((s) => s.isCanonical && s.status === AGGREGATE_ELIGIBLE_STATUS) ?? null;
+  const included =
+    active.find((s) => s.isCanonical && s.status === AGGREGATE_ELIGIBLE_STATUS && !s.hasOpenHoldingCase) ?? null;
   const transcribed = active.some((s) => TRANSCRIBED.has(s.status));
-  const awaitingReview = !included && active.some((s) => s.status === 'SECOND_REVIEW_PENDING');
   const representative = included ?? active.find((s) => s.isCanonical) ?? active[0] ?? null;
   if (included) return { status: 'VERIFIED', included, representative, transcribed: true, awaitingReview: false };
   if (active.every((s) => s.status === 'EXCLUDED_FROM_AGGREGATE')) {
-    return { status: 'EXCLUDED', included: null, representative, transcribed, awaitingReview };
+    return { status: 'EXCLUDED', included: null, representative, transcribed, awaitingReview: false };
   }
-  if (active.some((s) => FLAGGED.has(s.status) || s.hasOpenDiscrepancy)) {
-    return { status: 'FLAGGED', included: null, representative, transcribed, awaitingReview };
+  if (active.some((s) => FLAGGED.has(s.status) || s.hasOpenDiscrepancy || s.hasOpenHoldingCase)) {
+    return { status: 'FLAGGED', included: null, representative, transcribed, awaitingReview: false };
   }
+  const awaitingReview = active.some((s) => s.status === 'SECOND_REVIEW_PENDING');
   return { status: 'RECEIVED', included: null, representative, transcribed, awaitingReview };
 }
 

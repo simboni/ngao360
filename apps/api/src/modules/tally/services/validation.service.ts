@@ -11,7 +11,7 @@ import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { arithmeticFailures, type EngineRun, runValidation } from '../domain/validation-engine';
+import { arithmeticFailures, type EngineResult, type EngineRun, runValidation } from '../domain/validation-engine';
 import { ENTITY } from '../tally.constants';
 import { toValidationRun } from './mappers';
 import { TallyWorkflowService } from './tally-workflow.service';
@@ -39,7 +39,7 @@ export class ValidationService {
     submissionId: string,
     actorId: string,
     opts: { openCases: boolean },
-  ): Promise<{ run: ValidationRun; engine: EngineRun }> {
+  ): Promise<{ run: ValidationRun; engine: EngineRun; arithmetic: EngineResult[] }> {
     const sub = await tx.resultSubmission.findUnique({
       where: { id: submissionId },
       select: {
@@ -100,24 +100,11 @@ export class ValidationService {
       tx,
     );
 
-    if (opts.openCases) {
-      const failures = arithmeticFailures(rules, engine);
-      if (failures.length > 0 && !(await this.workflow.findOpenCase(tx, sub.id, 'ARITHMETIC'))) {
-        await this.workflow.openCase(tx, {
-          tenantId: sub.tenantId,
-          electionCycleId: sub.electionCycleId,
-          contestId: sub.contestId,
-          varianceType: 'ARITHMETIC',
-          severity: 'HIGH',
-          title: `Arithmetic check failed on ${sub.reference}`,
-          description: failures.map((f) => f.message).join('\n'),
-          details: { runId, failures: failures.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, ...f.details })) },
-          links: [{ submissionId: sub.id, role: 'SOURCE_A' }],
-          openedById: actorId,
-        });
-        if (HOLD_ON_ARITHMETIC_FAIL.has(sub.status)) {
-          await this.workflow.hold(tx, sub.id, 'Held from the verified aggregate: arithmetic check failed', actorId);
-        }
+    const arithmetic = arithmeticFailures(rules, engine);
+    if (opts.openCases && arithmetic.length > 0 && !(await this.workflow.findOpenCase(tx, sub.id, 'ARITHMETIC'))) {
+      await this.openArithmeticCase(tx, sub, actorId, runId, arithmetic);
+      if (HOLD_ON_ARITHMETIC_FAIL.has(sub.status)) {
+        await this.workflow.hold(tx, sub.id, 'Held from the verified aggregate: arithmetic check failed', actorId);
       }
     }
 
@@ -125,7 +112,52 @@ export class ValidationService {
     // createMany preserves insertion order only by id; re-order by the engine's rule order.
     const order = new Map(engine.results.map((r, i) => [r.ruleKey, i] as const));
     rows.sort((a, b) => (order.get(a.ruleKey) ?? 0) - (order.get(b.ruleKey) ?? 0));
-    return { run: toValidationRun(sub.id, rows)!, engine };
+    return { run: toValidationRun(sub.id, rows)!, engine, arithmetic };
+  }
+
+  private async openArithmeticCase(
+    tx: TenantTx,
+    sub: { id: string; tenantId: string; electionCycleId: string; contestId: string; reference: string },
+    actorId: string,
+    runId: string | null,
+    failures: EngineResult[],
+  ): Promise<void> {
+    await this.workflow.openCase(tx, {
+      tenantId: sub.tenantId,
+      electionCycleId: sub.electionCycleId,
+      contestId: sub.contestId,
+      varianceType: 'ARITHMETIC',
+      severity: 'HIGH',
+      title: `Arithmetic check failed on ${sub.reference}`,
+      description: failures.map((f) => f.message).join('\n'),
+      details: { runId, failures: failures.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, ...f.details })) },
+      links: [{ submissionId: sub.id, role: 'SOURCE_A' }],
+      openedById: actorId,
+    });
+  }
+
+  /**
+   * Blueprint 8.5: a form whose printed figures fail arithmetic is held, shows
+   * the arithmetic, and goes to second review through the case. Ensures an
+   * open ARITHMETIC case is linked and moves the record to DISPUTED (held).
+   */
+  async holdForArithmetic(tx: TenantTx, submissionId: string, actorId: string, failures: EngineResult[]): Promise<void> {
+    if (!(await this.workflow.findOpenCase(tx, submissionId, 'ARITHMETIC'))) {
+      const sub = await tx.resultSubmission.findUniqueOrThrow({
+        where: { id: submissionId },
+        select: { id: true, tenantId: true, electionCycleId: true, contestId: true, reference: true },
+      });
+      await this.openArithmeticCase(tx, sub, actorId, null, failures);
+    }
+    await this.workflow.hold(tx, submissionId, 'Held from the verified aggregate: arithmetic check failed on the figures as printed', actorId);
+  }
+
+  /** True when a supervisor has resolved an arithmetic case on this record (figures accepted as printed). */
+  async arithmeticAccepted(tx: TenantTx, submissionId: string): Promise<boolean> {
+    const n = await tx.discrepancyCase.count({
+      where: { varianceType: 'ARITHMETIC', status: { in: ['RESOLVED', 'CLOSED'] }, links: { some: { submissionId } } },
+    });
+    return n > 0;
   }
 
   /** POST /tally/submissions/:id/validate */

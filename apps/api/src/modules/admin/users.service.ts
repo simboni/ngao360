@@ -11,6 +11,10 @@ import { assertAssignmentAllowed } from './access-policy';
 import { activeAssignmentWhere, ASSIGNMENT_INCLUDE, paginate, toAssignment, toUserDetail, toUserSummary, userInclude, userSnapshot } from './admin.mappers';
 import type { UserQueryDto } from './admin.dto';
 
+function toInvitation(i: { token: string; expiresAt: Date }) {
+  return { token: i.token, expiresAt: i.expiresAt.toISOString(), acceptPath: `/accept-invitation#token=${i.token}` };
+}
+
 const USER_SORT: Record<string, keyof Prisma.UserOrderByWithRelationInput> = {
   displayName: 'displayName',
   email: 'email',
@@ -52,11 +56,16 @@ export class UsersService {
     return this.prisma.tenantTx(async (tx) => toUserDetail(await this.load(tx, id)));
   }
 
+  /**
+   * Invite a user. Administrators never choose another person's password
+   * (blueprint 3.2): the account stays INVITED until the person redeems the
+   * single-use invitation token returned here once, and sets their own password.
+   */
   async create(auth: AuthContext, dto: CreateUser): Promise<UserDetail> {
     if (dto.roleAssignments.length > 0 && !auth.permissions.has('roles.assign')) {
       throw AppException.forbidden('Granting roles while inviting a user also needs the roles.assign permission');
     }
-    const passwordHash = dto.initialPassword ? await this.authService.hashPassword(dto.initialPassword) : null;
+    const invitation = this.authService.newInvitation();
     return this.prisma.tenantTx(async (tx) => {
       const exists = await tx.user.findFirst({ where: { email: dto.email }, select: { id: true } });
       if (exists) throw AppException.conflict('A user with this email already exists');
@@ -66,9 +75,11 @@ export class UsersService {
           email: dto.email,
           phone: dto.phone ?? null,
           displayName: dto.displayName,
-          passwordHash,
-          passwordChangedAt: passwordHash ? new Date() : null,
-          status: passwordHash ? 'ACTIVE' : 'INVITED',
+          passwordHash: null,
+          status: 'INVITED',
+          invitationTokenHash: invitation.tokenHash,
+          invitationExpiresAt: invitation.expiresAt,
+          invitedById: auth.userId,
         },
       });
       await this.audit.record(
@@ -77,7 +88,7 @@ export class UsersService {
           action: AUDIT_ACTIONS.USER_CREATED,
           entityType: 'User',
           entityId: user.id,
-          after: { ...userSnapshot(user), initialPasswordSet: !!passwordHash },
+          after: { ...userSnapshot(user), invitationExpiresAt: invitation.expiresAt.toISOString() },
         },
         tx,
       );
@@ -92,7 +103,33 @@ export class UsersService {
           tx,
         );
       }
-      return toUserDetail(await this.load(tx, user.id));
+      return { ...toUserDetail(await this.load(tx, user.id)), invitation: toInvitation(invitation) };
+    });
+  }
+
+  /** Re-issue an invitation for a user who has not redeemed theirs; the old token stops working. */
+  reissueInvitation(auth: AuthContext, id: string, reason: string): Promise<UserDetail> {
+    if (id === auth.userId) throw AppException.separationOfDuties('You cannot issue an invitation to yourself');
+    const invitation = this.authService.newInvitation();
+    return this.prisma.tenantTx(async (tx) => {
+      const before = await this.load(tx, id);
+      if (before.status !== 'INVITED') throw AppException.conflict('Only invited users who have not set a password can be sent a new invitation');
+      await tx.user.update({
+        where: { id },
+        data: { invitationTokenHash: invitation.tokenHash, invitationExpiresAt: invitation.expiresAt, invitedById: auth.userId },
+      });
+      await this.audit.record(
+        {
+          tenantId: auth.tenantId,
+          action: AUDIT_ACTIONS.USER_INVITATION_ISSUED,
+          entityType: 'User',
+          entityId: id,
+          after: { invitationExpiresAt: invitation.expiresAt.toISOString(), previousTokenInvalidated: true },
+          reason,
+        },
+        tx,
+      );
+      return { ...toUserDetail(await this.load(tx, id)), invitation: toInvitation(invitation) };
     });
   }
 

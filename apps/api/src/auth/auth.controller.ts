@@ -1,10 +1,11 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type {
-  LoginResponse,
-  MeResponse,
-  MfaEnrolStartResponse,
-  OkResponse,
+import {
+  ERROR_CODES,
+  type LoginResponse,
+  type MeResponse,
+  type MfaEnrolStartResponse,
+  type OkResponse,
 } from '@ngao360/shared';
 import type { Response } from 'express';
 import {
@@ -16,10 +17,11 @@ import {
 import { AppException } from '../common/http/app-exception';
 import type { AppRequest } from '../common/http/app-request';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { LoginDto, MfaEnrolConfirmDto, MfaEnrolStartDto, MfaVerifyDto, ReauthDto } from './auth.dto';
+import { AcceptInvitationDto, LoginDto, MfaEnrolConfirmDto, MfaEnrolStartDto, MfaVerifyDto, ReauthDto } from './auth.dto';
 import { AuthService, type SessionMeta } from './auth.service';
 import { type AuthContext, REFRESH_COOKIE } from './auth.types';
 import { TokenService } from './token.service';
+import { AppConfig } from '../config/app-config';
 
 const AUTH_THROTTLE = { default: { limit: Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10), ttl: 60_000 } };
 
@@ -33,7 +35,18 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly tokens: TokenService,
     private readonly jwtGuard: JwtAuthGuard,
+    private readonly config: AppConfig,
   ) {}
+
+  /** Redeem a single-use invitation and set one's own password. */
+  @Public()
+  @Throttle(AUTH_THROTTLE)
+  @Post('invitation/accept')
+  @HttpCode(200)
+  async acceptInvitation(@Body() dto: AcceptInvitationDto): Promise<OkResponse> {
+    await this.auth.acceptInvitation(dto);
+    return { ok: true };
+  }
 
   /** S01 step 1: organisation + email + password. */
   @Public()
@@ -131,6 +144,18 @@ export class AuthController {
     await this.jwtGuard.authenticate(req);
     const auth = req.auth;
     if (!auth) throw AppException.unauthenticated();
-    return { tenantId: auth.tenantId, userId: auth.userId };
+    const who = { tenantId: auth.tenantId, userId: auth.userId };
+    // Replacing an existing authenticator is high risk: it needs an MFA-verified
+    // session and a recent re-authentication (password plus current code).
+    if (await this.auth.hasActiveFactor(who)) {
+      if (!auth.mfaVerified) {
+        throw new AppException(ERROR_CODES.MFA_REQUIRED, HttpStatus.FORBIDDEN, 'Multi-factor authentication is required');
+      }
+      const now = Math.floor(Date.now() / 1000);
+      if (auth.reauthAt === null || now - auth.reauthAt > this.config.values.REAUTH_WINDOW_SECONDS) {
+        throw new AppException(ERROR_CODES.REAUTH_REQUIRED, HttpStatus.UNAUTHORIZED, 'Please confirm your password and current code to continue');
+      }
+    }
+    return who;
   }
 }

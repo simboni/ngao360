@@ -23,7 +23,7 @@ import { AuditService } from '../../audit/audit.service';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
-import { assertAssignmentAllowed, assertRolePermissionsAllowed, sodBadRequest } from './access-policy';
+import { assertAssignmentAllowed, assertGrantorCovers, assertRolePermissionsAllowed, assignmentTarget, sodBadRequest } from './access-policy';
 import type { RoleAssignmentQuery, RoleListQueryDto } from './admin.dto';
 import { activeAssignmentWhere, ASSIGNMENT_INCLUDE, paginate, ROLE_INCLUDE, toAssignment, toRole } from './admin.mappers';
 
@@ -173,6 +173,7 @@ export class RolesService {
       if (before.userId === auth.userId) {
         throw AppException.separationOfDuties('You cannot revoke your own role assignment. Ask another administrator.');
       }
+      assertGrantorCovers(auth, await assignmentTarget(tx, before), before.electionCycleId, null);
       const after = await tx.roleAssignment.update({
         where: { id },
         data: { revokedAt: new Date(), revokedById: auth.userId, revokedReason: reason },

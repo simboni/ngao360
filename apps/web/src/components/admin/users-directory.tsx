@@ -190,9 +190,8 @@ export function UsersDirectory() {
         open={inviting}
         onClose={() => setInviting(false)}
         onInvited={(u) => {
-          setNotice(`${u.displayName} was invited${u.status === 'INVITED' ? ' and can sign in once a password is set' : ''}.`);
+          setNotice(`${u.displayName} was invited. They can sign in once they set a password from their invitation link.`);
           void list.reload();
-          openUser(u.id);
         }}
       />
     </>

@@ -112,3 +112,41 @@ describe('statusPath', () => {
     expect(statusPath('QUARANTINED', 'VERIFIED')).toBeNull(); // not within two allowed steps
   });
 });
+
+describe('separation of duties regressions (review findings)', () => {
+  it('a supervisor of any round cannot be the independent verifier', () => {
+    const p = participantsOf({
+      submitterId: SUBMITTER,
+      valueChanges: [{ actorId: CLERK }],
+      values: [],
+      verifications: [{ reviewerId: VERIFIER, supervisorId: SUPERVISOR }],
+    });
+    expect(verificationViolation(SUPERVISOR, p)).toBe('SUPERVISOR_CANNOT_VERIFY');
+    expect(verificationViolation(SUPERVISOR, p, { thirdCheck: true })).toBe('SUPERVISOR_CANNOT_VERIFY');
+  });
+
+  it('a discrepancy resolver on the record cannot be the independent verifier', () => {
+    const p = participantsOf({
+      submitterId: SUBMITTER,
+      valueChanges: [],
+      values: [],
+      verifications: [],
+      resolvedCases: [{ resolvedById: OTHER }, { resolvedById: null }],
+    });
+    expect(verificationViolation(OTHER, p)).toBe('RESOLVER_CANNOT_VERIFY');
+  });
+
+  it('a confirmer stays an editor even after a later save overwrote confirmedById', () => {
+    // The value row now names CLERK; CONFIRMER is only in the append-only audit stream.
+    const p = participantsOf({
+      submitterId: SUBMITTER,
+      valueChanges: [{ actorId: CLERK }],
+      values: [{ confirmedById: CLERK }],
+      valueAuditActorIds: [CLERK, CONFIRMER, null],
+      verifications: [],
+    });
+    expect(verificationViolation(CONFIRMER, p)).toBe('EDITOR_CANNOT_VERIFY');
+    expect(supervisorViolation(CONFIRMER, p)).toBe('EDITOR_CANNOT_SUPERVISE');
+  });
+});
+

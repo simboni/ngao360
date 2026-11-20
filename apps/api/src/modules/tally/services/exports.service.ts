@@ -28,6 +28,8 @@ import { renderXlsx } from '../export/xlsx';
 import { ENTITY } from '../tally.constants';
 import { iso, userRef } from './mappers';
 import { ResultsService } from './results.service';
+import { snapshotScopeWhere } from './scope-where';
+import { PermissionService } from '../../../rbac/permission.service';
 
 const FORMAT_META: Record<ExportFormat, { mime: string; ext: string }> = {
   CSV: { mime: 'text/csv', ext: 'csv' },
@@ -53,6 +55,7 @@ export class ExportsService {
     private readonly storage: StorageService,
     private readonly audit: AuditService,
     private readonly results: ResultsService,
+    private readonly permissions: PermissionService,
   ) {}
 
   /**
@@ -203,7 +206,11 @@ export class ExportsService {
 
   list(auth: AuthContext, q: PaginationQuery & { snapshotId?: string }): Promise<Paginated<TallyExport>> {
     return this.prisma.tenantTx(async (tx) => {
-      const where: Prisma.TallyExportWhereInput = q.snapshotId ? { snapshotId: q.snapshotId } : {};
+      // Only exports of snapshots inside the caller's tally.export geography (and cycle).
+      const scoped = snapshotScopeWhere(this.permissions.scopeFor(auth, 'tally.export'));
+      const where: Prisma.TallyExportWhereInput = {
+        AND: [q.snapshotId ? { snapshotId: q.snapshotId } : {}, scoped ? { snapshot: scoped } : {}],
+      };
       const [total, rows] = await Promise.all([
         tx.tallyExport.count({ where }),
         tx.tallyExport.findMany({

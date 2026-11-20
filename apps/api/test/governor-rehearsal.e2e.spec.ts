@@ -324,7 +324,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     }
   });
 
-  it('a validation failure opens an arithmetic discrepancy; the supervisor resolves it and the corrected record is verified', async () => {
+  it('an arithmetic failure is held by a discrepancy case; the supervisor resolves it, second review returns the keying error, and the corrected record is verified', async () => {
     const f = DATA.stationForms[2]!;
     // The clerk mis-keys total valid votes (the image shows the correct figure).
     const id = await uploadAndCapture(f, f.mistypedTotalValidVotes);
@@ -333,7 +333,11 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     expect([200, 201]).toContain(run.status);
     const fail = run.body.results.find((r: { ruleKey: string }) => r.ruleKey === 'CANDIDATES_SUM_TO_TOTAL_VALID');
     expect(fail.outcome).toBe('FAIL');
-    expect((await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({})).status).toBe(400);
+    // Figures that do not add up are not the capturer's to change on their own
+    // (blueprint 8.5): the record goes forward but is held by an arithmetic case.
+    const held = await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({});
+    expect(held.status).toBe(200);
+    expect(held.body.status).toBe('DISPUTED');
 
     const cases = await http('supervisor').get(`/tally/discrepancies?submissionId=${id}&varianceType=ARITHMETIC`);
     expect(cases.status).toBe(200);
@@ -341,7 +345,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     caseIds.arithmetic = cases.body.items[0].id;
 
     const resolution = {
-      resolution: 'Keying error confirmed against the source image: total valid votes is printed as 335. Clerk to correct with a reason.',
+      resolution: 'Total valid votes on the image differs from the capture. Send to second review so the reviewer can return the keying error to the clerk.',
       excludeSubmissionIds: [],
     };
     // Resolving is high-risk: a fresh password + authenticator check is required.
@@ -352,6 +356,8 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     const resolved = await http('supervisor').post(`/tally/discrepancies/${caseIds.arithmetic}/resolve`).send(resolution);
     expect(resolved.status).toBe(200);
     expect(resolved.body.status).toBe('RESOLVED');
+    // A held record goes to a fresh independent review, never straight to verified.
+    expect((await http('clerk').get(`/tally/submissions/${id}`)).body.status).toBe('SECOND_REVIEW_PENDING');
     // The resolver cannot also approve closure; a second supervisor closes it.
     const self = await http('supervisor').post(`/tally/discrepancies/${caseIds.arithmetic}/close`).send({ closureNote: 'Closing my own decision' });
     expect(self.status).toBe(403);
@@ -364,6 +370,12 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     const before = await http('clerk').get(`/tally/submissions/${id}`);
     const total = before.body.values.find((v: { fieldKey: string }) => v.fieldKey === 'total_valid_votes');
     expect(total.numericValue).toBe(f.mistypedTotalValidVotes);
+    // The second reviewer reads the image and returns the keying error to the clerk.
+    const returned = await http('verifier')
+      .post(`/tally/submissions/${id}/verifications`)
+      .send({ decision: 'RETURN', checklist: { ...CHECKLIST, allValuesComparedToSource: true }, notes: `Total valid votes keyed as ${f.mistypedTotalValidVotes}; the image shows ${f.totalValidVotes}.` });
+    expect(returned.status).toBe(201);
+    expect((await http('clerk').get(`/tally/submissions/${id}`)).body.status).toBe('RETURNED');
     const fix = await http('clerk')
       .put(`/tally/submissions/${id}/values`)
       .send({ values: [{ fieldKey: 'total_valid_votes', candidateReferenceId: null, numericValue: f.totalValidVotes, expectedChangeVersion: total.changeVersion }], reason: 'Corrected keying error per discrepancy resolution' });

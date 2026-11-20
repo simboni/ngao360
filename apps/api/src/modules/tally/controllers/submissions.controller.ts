@@ -27,7 +27,7 @@ import {
 import type { Response } from 'express';
 import type { AuthContext } from '../../../auth/auth.types';
 import { CurrentAuth } from '../../../common/decorators/auth.decorators';
-import { type GeoTarget, RequirePermission } from '../../../rbac/require-permission.decorator';
+import { type GeoTarget, RequirePermission, RequireReauth } from '../../../rbac/require-permission.decorator';
 import {
   CreateVerificationDto,
   DesignateCanonicalDto,
@@ -100,6 +100,7 @@ export class SubmissionsController {
   @Post(':id/designate-canonical')
   @HttpCode(200)
   @RequirePermission('tally.approve', { geo: SUBMISSION })
+  @RequireReauth()
   designateCanonical(@CurrentAuth() auth: AuthContext, @Param() p: IdParamDto, @Body() body: DesignateCanonicalDto): Promise<SubmissionDetail> {
     return this.submissions.designateCanonical(auth, p.id, body);
   }

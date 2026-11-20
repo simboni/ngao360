@@ -14,7 +14,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useTallyActions } from './action-provider';
 import { AuditDrawer } from './audit-drawer';
 import { CaptureFieldTable, rowLabel } from './capture-field-table';
-import { analyseDraft, type CaptureRow, initialDraft, liveValidation, unconfirmedRequired } from './capture-model';
+import { blockingFailures, analyseDraft, type CaptureRow, initialDraft, liveValidation, unconfirmedRequired } from './capture-model';
 import { describeError, isAccessError } from './errors';
 import { FlagDiscrepancyDialog } from './flag-discrepancy-dialog';
 import { Notice } from './notice';
@@ -171,7 +171,8 @@ function CaptureLayout({
   const submitBlockers: string[] = [];
   if (dirty) submitBlockers.push('Save your changes first.');
   if (detail.status !== 'DATA_ENTRY_REVIEWED' && !dirty) submitBlockers.push('Save the captured values first (the record must be in “Data entry reviewed”).');
-  if (liveFails.length > 0) submitBlockers.push(`${liveFails.length} validation rule(s) fail. Check the figures against the image, or flag a discrepancy.`);
+  const failSplit = blockingFailures(liveFails);
+  if (failSplit.blocking.length > 0) submitBlockers.push(`${failSplit.blocking.length} validation rule(s) fail. Check the figures against the image, or flag a discrepancy.`);
   if (missing.length > 0) submitBlockers.push(`${missing.length} required value(s) are not yet confirmed by a person.`);
 
   return (

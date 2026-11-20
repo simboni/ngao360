@@ -10,9 +10,12 @@ import { useHighRisk } from './reauth';
 import { describeError, fieldErrors, useApiQuery } from './use-api';
 
 /**
- * Invite a user (S06). The account starts INVITED unless an initial password is
- * set. An organisation-wide role can be granted at the same time (needs
- * roles.assign); geography-limited grants are made from the user's profile.
+ * Invite a user (S06). The account starts INVITED. Administrators never choose
+ * another person's password (blueprint 3.2): the API returns a single-use
+ * invitation link once, which the administrator relays through a separate
+ * channel, and the invited person sets their own password. An
+ * organisation-wide role can be granted at the same time (needs roles.assign);
+ * geography-limited grants are made from the user's profile.
  */
 export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; onClose: () => void; onInvited: (u: UserDetail) => void }) {
   const { can } = useAuth();
@@ -22,8 +25,7 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
-  const [setPassword, setSetPassword] = useState(false);
-  const [password, setPasswordValue] = useState('');
+  const [created, setCreated] = useState<UserDetail | null>(null);
   const [roleId, setRoleId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [error, setError] = useState<unknown>(null);
@@ -34,8 +36,7 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
     setEmail('');
     setDisplayName('');
     setPhone('');
-    setSetPassword(false);
-    setPasswordValue('');
+    setCreated(null);
     setRoleId('');
     setExpiresAt('');
     setError(null);
@@ -50,21 +51,45 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
       email,
       displayName,
       phone: phone || null,
-      ...(setPassword && password ? { initialPassword: password } : {}),
       roleAssignments: roleId
         ? [{ roleId, scopeType: 'ORGANISATION', geographicUnitId: null, pollingStationId: null, electionCycleId: null, expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null }]
         : [],
     };
     try {
-      const created = await highRisk(() => api.post<UserDetail>('/admin/users', body));
-      onInvited(created);
-      onClose();
+      const user = await highRisk(() => api.post<UserDetail>('/admin/users', body));
+      onInvited(user);
+      setCreated(user);
     } catch (err) {
       if (!(err instanceof Error && err.message === 'Confirmation cancelled')) setError(err);
     } finally {
       setBusy(false);
     }
   };
+
+  if (created) {
+    const link = created.invitation && typeof window !== 'undefined' ? `${window.location.origin}${created.invitation.acceptPath}` : null;
+    return (
+      <Dialog open={open} onClose={onClose} title="Invitation created" description="This link is shown only once. Send it to the person through a separate, secure channel.">
+        {link ? (
+          <Field label={`Invitation link for ${created.displayName}`} htmlFor="inv-link" hint={`Single use. Expires ${new Date(created.invitation!.expiresAt).toLocaleString()}.`}>
+            <TextInput id="inv-link" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+          </Field>
+        ) : (
+          <Notice tone="warning" className="mb-4">No invitation link was returned. Issue a new invitation from the user's profile.</Notice>
+        )}
+        <div className="flex justify-end gap-2">
+          {link ? (
+            <Button type="button" variant="secondary" onClick={() => void navigator.clipboard?.writeText(link)}>
+              Copy link
+            </Button>
+          ) : null}
+          <Button type="button" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onClose={onClose} title="Invite a user" description="Only invite people who need access. Every invitation is recorded in the audit log.">
@@ -78,17 +103,9 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
         <Field label="Phone (optional)" htmlFor="inv-phone" error={errors.phone}>
           <TextInput id="inv-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="off" />
         </Field>
-        <label className="mb-2 flex items-center gap-2 text-body">
-          <input type="checkbox" className="h-4 w-4 accent-teal" checked={setPassword} onChange={(e) => setSetPassword(e.target.checked)} />
-          Set an initial password now
-        </label>
-        {setPassword ? (
-          <Field label="Initial password" htmlFor="inv-pass" hint="At least 12 characters with upper and lower case letters and a number. Share it through a separate, secure channel." error={errors.initialPassword}>
-            <TextInput id="inv-pass" type="password" autoComplete="new-password" value={password} onChange={(e) => setPasswordValue(e.target.value)} />
-          </Field>
-        ) : (
-          <p className="mb-4 text-meta text-slate">Without a password the account stays “Invited” and cannot sign in yet.</p>
-        )}
+        <p className="mb-4 text-meta text-slate">
+          The account stays “Invited” until the person opens their single-use invitation link and sets their own password.
+        </p>
         {canAssign ? (
           <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
             <Field label="Organisation-wide role (optional)" htmlFor="inv-role" hint="For a county, ward or station-limited role, grant it from the user's profile.">
@@ -112,7 +129,7 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
             Cancel
           </Button>
           <Button type="submit" loading={busy} disabled={!email || displayName.trim().length < 2}>
-            Send invitation
+            Create invitation
           </Button>
         </div>
       </form>

@@ -59,14 +59,15 @@ export class DashboardService {
       const asOf = now.toISOString();
       const has = (p: Parameters<PermissionService['has']>[1]) => this.permissions.has(auth, p);
       const includesTally = has('tally.view');
-      const tallyScope = this.permissions.scopeFor(auth, 'tally.view');
-      const refScope = this.permissions.scopeFor(auth, 'reference.view');
-      const scope: PermissionScope | null = includesTally ? tallyScope : refScope.held ? refScope : null;
-
       const cycle = q.electionCycleId
         ? await tx.electionCycle.findUnique({ where: { id: q.electionCycleId } })
         : ((await tx.electionCycle.findFirst({ where: { status: 'ACTIVE' }, orderBy: { electionDate: 'desc' } })) ??
           (await tx.electionCycle.findFirst({ where: { status: { not: 'ARCHIVED' } }, orderBy: { electionDate: 'desc' } })));
+
+      // Tally figures are for one cycle: only grants that apply to it count.
+      const tallyScope = this.permissions.scopeFor(auth, 'tally.view', cycle?.id ?? null);
+      const refScope = this.permissions.scopeFor(auth, 'reference.view');
+      const scope: PermissionScope | null = includesTally ? tallyScope : refScope.held ? refScope : null;
 
       const registry = cycle
         ? await tx.registryVersion.findFirst({ where: { electionCycleId: cycle.id, status: 'APPROVED' }, orderBy: { approvedAt: 'desc' } })

@@ -233,7 +233,9 @@ Requests from module agents for changes outside the files they own. Append below
      whether in one role (400) or across roles (400). The last active organisation-wide holder of
      `roles.assign` cannot be suspended (409).
 
-3. **Invitation completion (auth).** `POST /admin/users` without `initialPassword` creates an
+3. **Invitation completion (auth). Done:** implemented as `POST /auth/invitation/accept` and
+   `POST /admin/users/:id/invitation` (token hash on `users.invitation_token_hash`; no e-mail
+   delivery yet). Original request: `POST /admin/users` without `initialPassword` creates an
    `INVITED` user, but there is no endpoint for an invited user to set a password, and no
    invitation e-mail. Proposed: `POST /auth/invitations/accept { token, password }` with a
    single-use, 72-hour token (hash stored on a new `user_invitations` table with `tenant_id`, RLS

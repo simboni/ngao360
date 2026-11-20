@@ -27,8 +27,9 @@ describe('OCR providers', () => {
     const b = await p.extract(req);
     expect(a).toEqual(b);
     expect(a.engine).toBe('stub');
-    // 3 candidate cells + registered_voters, total_valid_votes, rejected_ballots, total_votes_cast
-    expect(a.fields).toHaveLength(7);
+    // 3 candidate cells + every non-observation numeric field of the seeded 37A schema
+    const numericFields = FIELD_SCHEMA_37A.fields.filter((f) => f.kind === 'INTEGER' && !f.observationOnly).length;
+    expect(a.fields).toHaveLength(CANDIDATES.length + numericFields);
     expect(a.fields.filter((f) => f.fieldKey === 'candidate_votes').map((f) => f.candidateReferenceId)).toEqual([...CANDIDATES]);
     for (const f of a.fields) {
       expect(f.confidence).toBeGreaterThanOrEqual(0);

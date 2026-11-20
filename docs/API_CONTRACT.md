@@ -39,9 +39,10 @@ reference, tally and admin module agents.
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
 | POST | `/auth/login` | Public, rate-limited | `LoginRequest` | `LoginResponse` | `AUTHENTICATED` sets cookies. `MFA_REQUIRED` or `MFA_ENROLMENT_REQUIRED` returns a 5-minute `challengeToken`. Locks the account after 5 failures for 15 min. Audit: `AUTH_LOGIN_SUCCEEDED` / `AUTH_LOGIN_FAILED`. |
-| POST | `/auth/mfa/verify` | Public, rate-limited | `MfaVerifyRequest` | `MeResponse` | Sets cookies. TOTP replay is rejected. Audit: `AUTH_MFA_VERIFIED` / `AUTH_MFA_FAILED`. |
-| POST | `/auth/mfa/enrol/start` | Public with `challengeToken`, or a session | `MfaEnrolStartRequest` | `MfaEnrolStartResponse` | Creates a PENDING TOTP factor. |
-| POST | `/auth/mfa/enrol/confirm` | Public with `challengeToken`, or a session | `MfaEnrolConfirmRequest` | `MeResponse` | Activates the factor. With a challenge token it also completes login (sets cookies). Audit: `AUTH_MFA_ENROLLED`. |
+| POST | `/auth/mfa/verify` | Public, rate-limited | `MfaVerifyRequest` | `MeResponse` | Needs a `verify` challenge. Sets cookies. TOTP replay is rejected. After `MFA_MAX_FAILURES` (5) consecutive wrong codes the authenticator is locked for `MFA_LOCK_MINUTES` (15), whatever IP the attempts come from (also applies to `/auth/reauth`). Audit: `AUTH_MFA_VERIFIED` / `AUTH_MFA_FAILED` / `AUTH_MFA_LOCKED`. |
+| POST | `/auth/mfa/enrol/start` | Public with an `enrol` challenge, or a session | `MfaEnrolStartRequest` | `MfaEnrolStartResponse` | Creates a PENDING TOTP factor. A `verify` challenge (user already has an authenticator) is refused (401). From a session, a user who already has an authenticator needs an MFA-verified session and a recent re-authentication. Audit: `AUTH_MFA_ENROL_STARTED`. |
+| POST | `/auth/mfa/enrol/confirm` | Public with an `enrol` challenge, or a session | `MfaEnrolConfirmRequest` | `MeResponse` | Activates the factor (revoking any earlier one). With a challenge token it also completes login (sets cookies) and is refused if an active factor already exists. Audit: `AUTH_MFA_ENROLLED`. |
+| POST | `/auth/invitation/accept` | Public, rate-limited | `AcceptInvitationRequest` | `OkResponse` | The invited person sets their own password with a single-use token (72 h, only its SHA-256 is stored). The account becomes ACTIVE; the person then signs in normally. Audit: `AUTH_INVITATION_ACCEPTED`. |
 | POST | `/auth/refresh` | Public (refresh cookie) | none | `OkResponse` | Rotates the refresh token. Reuse revokes the session. |
 | POST | `/auth/logout` | Authenticated | none | `OkResponse` | Revokes the session and clears cookies. Audit: `AUTH_LOGOUT`. |
 | GET | `/auth/me` | Authenticated | none | `MeResponse` | Permissions and grants are for navigation only. |
@@ -152,7 +153,7 @@ and `'discrepancy'` (union of linked submissions) in `onModuleInit`.
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
 | POST | `/tally/submissions` | `tally.submit` **(geo: pollingStation/body.pollingStationId when station-level)** | multipart: `file` and `metadata` (JSON string of `CreateSubmission`) | `SubmissionDetail` (201). Repeating an `idempotencyKey` returns 200 with the original. | Checks the template is APPROVED and matches the contest `officeType` and cycle, and that the station is in the approved registry. Otherwise the submission is QUARANTINED and a `FORM_VERSION_MISMATCH` case is opened. `StorageService.storeImmutable(purpose: 'RESULT_FORM')`. When the hash is a duplicate or the station + form combination already exists, set `duplicateFlag`, link `duplicateOfId`, set `isCanonical=false` and open a `DUPLICATE` case. Never reject or delete. Reference is `nextReference(tx, tenantId, 'SUB')`. Creates an `OcrExtraction` and enqueues OCR. Status `SUBMITTED`. Audit: `FILE_STORED`, `SUBMISSION_CREATED`. |
-| GET | `/tally/submissions` | `tally.view` | `SubmissionQuery` | `Paginated<SubmissionSummary>` | Scope-filtered. `view=awaiting_me` shows SECOND_REVIEW_PENDING records the caller did not submit or edit. `view=mine` shows the caller's own. |
+| GET | `/tally/submissions` | `tally.view` | `SubmissionQuery` | `Paginated<SubmissionSummary>` | Scope-filtered. `view=awaiting_me` shows SECOND_REVIEW_PENDING records the caller did not submit or edit. `view=awaiting_supervisor` shows outcomes with a verification awaiting a supervisor action, excluding records the caller took part in. `view=mine` shows the caller's own. |
 | GET | `/tally/submissions/:id` | `tally.view` **(geo: submission/params.id)** | `IdParam` | `SubmissionDetail` | `allowedActions` is computed from permissions, SoD and status. |
 | GET | `/tally/submissions/:id/source-url` | `tally.view` **(geo)**. Add `?download=1` with `tally.source.download`. | `IdParam` | `SignedUrlResponse` | Inline view by default. Audit: `FILE_SOURCE_ACCESSED` on every call. |
 | POST | `/tally/submissions/:id/transition` | depends on target: RETURNED needs `tally.capture` or `tally.verify`; EXCLUDED_FROM_AGGREGATE needs `tally.exclude` **(reauth)**; ARCHIVED needs `tally.approve` | `SubmissionTransition` | `SubmissionDetail` | Must pass `canTransitionSubmission()`. Optimistic `version`. Audit: `SUBMISSION_STATUS_CHANGED` with before/after status and reason. |
@@ -239,7 +240,8 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | --- | --- | --- | --- | --- | --- |
 | GET | `/admin/users` | `users.view` | `UserQuery` | `Paginated<UserSummary>` | |
 | GET | `/admin/users/:id` | `users.view` | `IdParam` | `UserDetail` | |
-| POST | `/admin/users` | `users.create` **(reauth)** | `CreateUser` | `UserDetail` (201) | Hashes passwords with argon2id (`AuthService.hashPassword`). Granting a role also needs `roles.assign`. Audit: `USER_CREATED`, plus `ROLE_ASSIGNED` for each assignment. |
+| POST | `/admin/users` | `users.create` **(reauth)** | `CreateUser` | `UserDetail` (201) with `invitation { token, expiresAt, acceptPath }` shown once | Creates an INVITED user. Administrators never set another person's password: `initialPassword` is refused (400). Granting a role also needs `roles.assign` (and the grantor-scope rules below). Audit: `USER_CREATED`, plus `ROLE_ASSIGNED` for each assignment. |
+| POST | `/admin/users/:id/invitation` | `users.create` **(reauth)** | `{ reason }` | `UserDetail` with a new `invitation` | INVITED users only; the previous token stops working. Audit: `USER_INVITATION_ISSUED`. |
 | PATCH | `/admin/users/:id` | `users.edit` | `UpdateUser` | `UserDetail` | Audit: `USER_UPDATED`. |
 | POST | `/admin/users/:id/status` | `users.suspend` **(reauth)** | `UserStatusChange` | `UserDetail` | Suspending revokes all sessions. A user cannot suspend themself. Audit: `USER_STATUS_CHANGED`. |
 | POST | `/admin/users/:id/reset-mfa` | `users.reset_mfa` **(reauth)** | `ResetMfa` | `UserDetail` | Revokes the factors and sessions. The user must enrol at next login. Audit: `USER_MFA_RESET`. |
@@ -262,8 +264,8 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/admin/role-assignments` | `roles.view` | `PaginationQuery & { userId?, roleId?, includeRevoked? }` | `Paginated<RoleAssignment>` | |
-| POST | `/admin/role-assignments` | `roles.assign` **(reauth)** | `CreateRoleAssignment` | `RoleAssignment` (201) | Checks the scope target exists, and `expiresAt > validFrom`. A user cannot grant a role to themself. Audit: `ROLE_ASSIGNED`. |
-| POST | `/admin/role-assignments/:id/revoke` | `roles.assign` **(reauth)** | `RevokeRoleAssignment` | `RoleAssignment` | Soft revoke (`revokedAt`, `revokedById`, reason). Audit: `ROLE_REVOKED`. |
+| POST | `/admin/role-assignments` | `roles.assign` **(reauth)** | `CreateRoleAssignment` | `RoleAssignment` (201) | Checks the scope target exists, and `expiresAt > validFrom`. A user cannot grant a role to themself. Grantor scope: an organisation-wide assignment needs an organisation-wide `roles.assign`; a geographic one must lie inside the grantor's `roles.assign` geography (and election cycle); a grantor whose `roles.assign` is not organisation-wide can only hand out permissions they hold over the same target (403 `OUT_OF_SCOPE`). Audit: `ROLE_ASSIGNED`. |
+| POST | `/admin/role-assignments/:id/revoke` | `roles.assign` **(reauth)** | `RevokeRoleAssignment` | `RoleAssignment` | The assignment must lie inside the grantor's `roles.assign` scope. Soft revoke (`revokedAt`, `revokedById`, reason). Audit: `ROLE_REVOKED`. |
 
 ### 6.4 Audit log
 

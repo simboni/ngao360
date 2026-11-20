@@ -4,7 +4,7 @@ import type { OkResponse, RoleAssignment, UserDetail, UserStatusChange } from '@
 import type { UserSession } from '@ngao360/shared';
 import { KeyRound, PauseCircle, PlayCircle, Plus, ShieldOff, UserX } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { api } from '@/lib/api-client';
@@ -19,6 +19,7 @@ type Pending =
   | { kind: 'status'; status: UserStatusChange['status'] }
   | { kind: 'mfa' }
   | { kind: 'sessions' }
+  | { kind: 'invite' }
   | { kind: 'revoke'; assignment: RoleAssignment }
   | null;
 
@@ -43,6 +44,8 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
   const [granting, setGranting] = useState(false);
   const [editName, setEditName] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  useEffect(() => setInviteLink(null), [userId]);
   const [error, setError] = useState<unknown>(null);
 
   const user = useApiQuery<UserDetail>(userId ? `user:${userId}` : null, (signal) => api.get<UserDetail>(`/admin/users/${userId}`, { signal }));
@@ -66,6 +69,10 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
     } else if (pending.kind === 'mfa') {
       await highRisk(() => api.post<UserDetail>(`/admin/users/${u.id}/reset-mfa`, { reason }));
       await after(`MFA was reset. ${u.displayName} must enrol a new authenticator at next sign-in.`);
+    } else if (pending.kind === 'invite') {
+      const res = await highRisk(() => api.post<UserDetail>(`/admin/users/${u.id}/invitation`, { reason }));
+      setInviteLink(res.invitation ? `${window.location.origin}${res.invitation.acceptPath}` : null);
+      await after('A new single-use invitation was issued; the previous link no longer works. Send it through a separate, secure channel.');
     } else if (pending.kind === 'sessions') {
       await api.post<OkResponse>(`/admin/users/${u.id}/sessions/revoke-all`, { reason });
       await after('All sessions were signed out.');
@@ -91,6 +98,8 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
       ? { ...STATUS_ACTION[pending.status], tone: pending.status === 'ACTIVE' ? ('primary' as const) : ('danger' as const) }
       : pending.kind === 'mfa'
         ? { label: 'Reset MFA', title: 'Reset two-step verification?', description: 'Their authenticator is revoked and they are signed out. They must enrol a new one at next sign-in. Confirm their identity through a separate channel first.', tone: 'danger' as const }
+        : pending.kind === 'invite'
+          ? { label: 'Issue invitation', title: 'Issue a new invitation link?', description: 'The previous link stops working. The new link is shown once; the person uses it to set their own password.', tone: 'primary' as const }
         : pending.kind === 'sessions'
           ? { label: 'Sign out everywhere', title: 'Sign out all sessions?', description: 'Every device this person is signed in on will be signed out.', tone: 'danger' as const }
           : { label: 'Revoke role', title: `Revoke ${pending.assignment.roleName}?`, description: `${scopeLabel(pending.assignment)}. The grant is kept in history as revoked.`, tone: 'danger' as const }
@@ -109,6 +118,11 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
       ) : (
         <>
           {notice ? <Notice tone="success" className="mb-4">{notice}</Notice> : null}
+          {inviteLink ? (
+            <Notice tone="info" className="mb-4" title="Invitation link (shown once)">
+              <span className="break-all font-mono text-meta">{inviteLink}</span>
+            </Notice>
+          ) : null}
           {error ? <Notice tone="danger" className="mb-4">{describeError(error)}</Notice> : null}
           {isSelf ? <Notice tone="info" className="mb-4">This is your own account. Status, MFA and role changes must be made by another administrator.</Notice> : null}
 
@@ -131,6 +145,11 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
                   </Button>
                 ) : null}
               </>
+            ) : null}
+            {can('users.create') && !isSelf && u.status === 'INVITED' ? (
+              <Button size="sm" variant="secondary" onClick={() => setPending({ kind: 'invite' })}>
+                <KeyRound className="h-4 w-4" aria-hidden /> New invitation link
+              </Button>
             ) : null}
             {can('users.reset_mfa') && !isSelf && u.mfaEnabled ? (
               <Button size="sm" variant="secondary" onClick={() => setPending({ kind: 'mfa' })}>

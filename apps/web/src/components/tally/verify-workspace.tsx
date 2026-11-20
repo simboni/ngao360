@@ -22,7 +22,7 @@ import { formatDateTime } from '@/lib/format';
 import { useTallyActions } from './action-provider';
 import { AuditDrawer } from './audit-drawer';
 import { rowLabel } from './capture-field-table';
-import { type CaptureRow, type Draft, liveValidation, parseCell, storedText } from './capture-model';
+import { blockingFailures, type CaptureRow, type Draft, liveValidation, parseCell, storedText } from './capture-model';
 import { describeError, isAccessError } from './errors';
 import { Notice } from './notice';
 import { SourceViewer } from './source-viewer';
@@ -31,7 +31,7 @@ import { SubmissionRail } from './submission-rail';
 import { tallyApi } from './tally-api';
 import { useSubmission } from './use-submission';
 import { ValidationChecklist } from './validation-checklist';
-import { CHECKLIST_LABELS, checklistComplete, compareCells, REQUIRED_CONFIRMATIONS, reentryRows, verifyBlockReason } from './verify-model';
+import { CHECKLIST_LABELS, checklistComplete, compareCells, REQUIRED_CONFIRMATIONS, reentryRows, independentValuesFor, verifyBlockReason } from './verify-model';
 
 type Mode = 'blind' | 'confirm';
 
@@ -140,13 +140,7 @@ function VerifyLayout({
       const body: CreateVerification = {
         decision,
         checklist,
-        independentValues:
-          mode === 'blind'
-            ? reentry.map((r) => {
-                const p = parseCell(r, entry[r.cell] ?? '');
-                return { fieldKey: r.fieldKey, candidateReferenceId: r.candidateReferenceId, numericValue: p.ok ? (p.numericValue ?? null) : null };
-              })
-            : [],
+        independentValues: independentValuesFor(decision, mode, reentry, entry),
         fieldComments: Object.entries(comments)
           .filter(([, c]) => c.trim())
           .map(([cell, comment]) => ({ fieldKey: cell, comment: comment.trim() })),
@@ -218,7 +212,10 @@ function VerifyLayout({
 
   const passBlockers: string[] = [];
   if (!checklistComplete(checklist)) passBlockers.push('Tick all four confirmations.');
-  if (fails.length > 0) passBlockers.push(`${fails.length} validation rule(s) fail; Pass is not possible. Return or dispute instead.`);
+  // Arithmetic failures can pass only after a supervisor resolved the arithmetic
+  // case (the server checks); other failures always block a pass.
+  const failSplit = blockingFailures(fails);
+  if (failSplit.blocking.length > 0) passBlockers.push(`${failSplit.blocking.length} validation rule(s) fail; Pass is not possible. Return or dispute instead.`);
   if (mode === 'blind' && !allEntered) passBlockers.push('Enter every figure independently from the image.');
   if (mode === 'blind' && allEntered && mismatches.length > 0) passBlockers.push(`${mismatches.length} of your figures differ from the capture. Recheck, or dispute.`);
 

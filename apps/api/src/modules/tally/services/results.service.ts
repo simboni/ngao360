@@ -34,9 +34,9 @@ import {
   type CoverageStatus,
   type StationRow,
 } from '../domain/aggregation';
-import { ENTITY, OPEN_CASE_STATUSES } from '../tally.constants';
+import { ENTITY, HOLDING_CASE_TYPES, OPEN_CASE_STATUSES } from '../tally.constants';
 import { iso, submissionSummaryInclude, toSubmissionSummary, userRef } from './mappers';
-import { caseScopeWhere } from './scope-where';
+import { caseScopeWhere, snapshotScopeWhere } from './scope-where';
 
 export type { StationCoverageRow } from '@ngao360/shared';
 import type { StationCoverageRow } from '@ngao360/shared';
@@ -130,17 +130,34 @@ export class ResultsService {
       },
       orderBy: { code: 'asc' },
     });
-    const subs = await tx.resultSubmission.findMany({
-      where: { contestId: contest.id, formNumber: stationFormNumber, pollingStation: stationWhere },
+    // Submissions keep the station row they were filed against. A later
+    // registry version creates new station rows, so records are matched to the
+    // current registry by the stable station code (within this cycle), never
+    // by row id: a received form must never be reported as missing.
+    const stationIdByCode = new Map(stations.map((st) => [st.code, st.id] as const));
+    const rawSubs = await tx.resultSubmission.findMany({
+      where: {
+        contestId: contest.id,
+        formNumber: stationFormNumber,
+        pollingStation: { electionCycleId: p.electionCycleId, code: { in: [...stationIdByCode.keys()] } },
+      },
       select: {
         id: true,
-        pollingStationId: true,
         status: true,
         isCanonical: true,
-        discrepancyLinks: { where: { case: { status: { in: OPEN_CASE_STATUSES } } }, select: { caseId: true }, take: 1 },
+        pollingStation: { select: { code: true } },
+        discrepancyLinks: {
+          where: { case: { status: { in: OPEN_CASE_STATUSES } } },
+          select: { case: { select: { varianceType: true } } },
+        },
       },
     });
-    const includedIds = subs.filter((s) => s.isCanonical && s.status === 'VERIFIED').map((s) => s.id);
+    const subs = rawSubs.map((s) => ({
+      ...s,
+      pollingStationId: s.pollingStation ? (stationIdByCode.get(s.pollingStation.code) ?? null) : null,
+      hasOpenHoldingCase: s.discrepancyLinks.some((l) => HOLDING_CASE_TYPES.includes(l.case.varianceType)),
+    }));
+    const includedIds = subs.filter((s) => s.isCanonical && s.status === 'VERIFIED' && !s.hasOpenHoldingCase).map((s) => s.id);
     const values = includedIds.length
       ? await tx.resultValue.findMany({
           where: { submissionId: { in: includedIds } },
@@ -159,6 +176,7 @@ export class ResultsService {
       status: s.status,
       isCanonical: s.isCanonical,
       hasOpenDiscrepancy: s.discrepancyLinks.length > 0,
+      hasOpenHoldingCase: s.hasOpenHoldingCase,
       values: bySub.get(s.id) ?? [],
     }));
     return {
@@ -172,20 +190,21 @@ export class ResultsService {
     };
   }
 
-  private scope(auth: AuthContext, permission: PermissionKey): PermissionScope {
-    return this.permissions.scopeFor(auth, permission);
+  /** Scope of `permission` for records of one election cycle (cycle-limited grants honoured). */
+  private scope(auth: AuthContext, permission: PermissionKey, electionCycleId?: string | null): PermissionScope {
+    return this.permissions.scopeFor(auth, permission, electionCycleId);
   }
 
   /* ---------------------------------- Live ----------------------------------- */
 
   live(auth: AuthContext, q: AggregateQuery): Promise<LiveAggregate> {
     return this.prisma.tenantTx(async (tx) => {
-      const scope = this.scope(auth, 'tally.results.view');
+      const scope = this.scope(auth, 'tally.results.view', q.electionCycleId);
       const c = await this.compute(tx, { ...q, scope });
       const caseWhere: Prisma.DiscrepancyCaseWhereInput = {
         AND: [
           { electionCycleId: q.electionCycleId, contestId: q.contestId, status: { in: OPEN_CASE_STATUSES } },
-          caseScopeWhere(this.scope(auth, 'tally.results.view')) ?? {},
+          caseScopeWhere(scope) ?? {},
         ],
       };
       const [openDiscrepancyCount, latest] = await Promise.all([
@@ -220,7 +239,7 @@ export class ResultsService {
 
   breakdown(auth: AuthContext, q: AggregateQuery & { parentUnitId?: string }): Promise<GeographyBreakdown> {
     return this.prisma.tenantTx(async (tx) => {
-      const scope = this.scope(auth, 'tally.results.view');
+      const scope = this.scope(auth, 'tally.results.view', q.electionCycleId);
       const contest = await tx.contest.findUnique({ where: { id: q.contestId }, select: { geographicUnitId: true } });
       const parentId = q.parentUnitId ?? q.geographicUnitId ?? contest?.geographicUnitId ?? null;
       const c = await this.compute(tx, { ...q, geographicUnitId: parentId, scope });
@@ -283,7 +302,7 @@ export class ResultsService {
     q: AggregateQuery & PaginationQuery & { status?: CoverageStatus },
   ): Promise<Paginated<StationCoverageRow>> {
     return this.prisma.tenantTx(async (tx) => {
-      const scope = this.scope(auth, 'tally.results.view');
+      const scope = this.scope(auth, 'tally.results.view', q.electionCycleId);
       const c = await this.compute(tx, { ...q, scope });
       let rows: StationRow[] = c.aggregate.stations;
       if (q.status) rows = rows.filter((r) => r.coverageStatus === q.status);
@@ -358,7 +377,7 @@ export class ResultsService {
    */
   createSnapshot(auth: AuthContext, body: CreateSnapshot): Promise<TallySnapshot> {
     return this.prisma.tenantTx(async (tx) => {
-      const scope = this.scope(auth, 'tally.snapshot.create');
+      const scope = this.scope(auth, 'tally.snapshot.create', body.electionCycleId);
       if (!scope.orgWide && !body.geographicUnitId) {
         throw AppException.outOfScope('Choose an area within your assignment for this snapshot');
       }
@@ -448,12 +467,8 @@ export class ResultsService {
       if (q.electionCycleId) and.push({ electionCycleId: q.electionCycleId });
       if (q.contestId) and.push({ contestId: q.contestId });
       if (q.releasedOnly) and.push({ releasedAt: { not: null } });
-      if (!scope.orgWide) {
-        const or: Prisma.TallySnapshotWhereInput[] = scope.unitIds.map((u) => ({
-          geographicUnit: { path: { contains: `/${u}/` } },
-        }));
-        and.push(or.length > 0 ? { OR: or } : { id: { in: [] } });
-      }
+      const scoped = snapshotScopeWhere(scope);
+      if (scoped) and.push(scoped);
       const where = { AND: and };
       const [total, rows] = await Promise.all([
         tx.tallySnapshot.count({ where }),
@@ -482,7 +497,8 @@ export class ResultsService {
       include: { createdBy: userRef, releasedBy: userRef, geographicUnit: { select: { path: true } } },
     });
     if (!s) throw AppException.notFound('Snapshot not found');
-    const scope = this.scope(auth, permission);
+    const scope = this.scope(auth, permission, s.electionCycleId);
+    if (!scope.held) throw AppException.forbidden(undefined, { required: [permission] });
     if (!scope.orgWide) {
       const path = s.geographicUnit?.path;
       if (!path || !scope.unitIds.some((u) => path.includes(`/${u}/`))) throw AppException.outOfScope();

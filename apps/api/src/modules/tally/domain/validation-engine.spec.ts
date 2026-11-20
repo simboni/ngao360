@@ -1,5 +1,14 @@
 import type { ValidationRules } from '@ngao360/shared';
-import { CANDIDATES, FIELD_SCHEMA_37A, RULES_37A, values } from './__fixtures__/governor-37a';
+import {
+  CANDIDATES,
+  FIELD_SCHEMA_37A,
+  FIELD_SCHEMA_37B,
+  FIELD_SCHEMA_37C,
+  RULES_37A,
+  RULES_37B,
+  RULES_37C,
+  values,
+} from './__fixtures__/governor-37a';
 import { arithmeticFailures, cellKey, type EngineInput, outcomeByCell, runValidation } from './validation-engine';
 
 const run = (v: Parameters<typeof values>[0], rules: ValidationRules = RULES_37A) =>
@@ -26,13 +35,16 @@ const CLEAN = {
   total_votes_cast: 1012,
   registered_voters: 1500,
   stamp_present: 1,
+  po_signature_present: 1,
 };
 
 describe('validation engine', () => {
   it('passes every rule for a consistent form and reports one result per rule in order', () => {
     const r = run(CLEAN);
     expect(r.results.map((x) => x.ruleKey)).toEqual(RULES_37A.rules.map((x) => x.key));
-    expect(r.summary).toEqual({ pass: 6, warning: 0, fail: 0 });
+    expect(r.summary.fail).toBe(0);
+    expect(r.summary.pass + r.summary.warning + r.summary.fail).toBe(RULES_37A.rules.length);
+    expect(byKey(r, 'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED').outcome).toBe('PASS');
     expect(r.rulesVersion).toBe(1);
     for (const res of r.results) {
       expect(res.ruleVersion).toBe(1);
@@ -55,14 +67,16 @@ describe('validation engine', () => {
     expect(r.summary.fail).toBe(1);
   });
 
-  it('reports a WARNING (not FAIL) for warning-severity rules', () => {
+  it('reports a WARNING (not FAIL) for warning-severity rules, and FAIL for the seeded votes-cast arithmetic', () => {
     const r = run({ ...CLEAN, total_votes_cast: 1600 });
     const turnout = byKey(r, 'VOTES_CAST_NOT_ABOVE_REGISTERED');
     expect(turnout.outcome).toBe('WARNING');
     expect(turnout.details).toMatchObject({ left: { value: 1600 }, right: { value: 1500 }, difference: 100 });
     expect(turnout.message).toContain('exceeds registered_voters = 1,500 by 100');
-    expect(byKey(r, 'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED').outcome).toBe('WARNING');
-    expect(r.summary.fail).toBe(0);
+    // Seeded as FAIL in the shared catalogue: it blocks a pass and counts as arithmetic.
+    expect(byKey(r, 'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED').outcome).toBe('FAIL');
+    expect(r.summary.fail).toBe(1);
+    expect(arithmeticFailures(RULES_37A, r).map((f) => f.ruleKey)).toEqual(['VOTES_CAST_EQUALS_VALID_PLUS_REJECTED']);
   });
 
   it('flags missing required values and names each missing cell', () => {
@@ -128,11 +142,55 @@ describe('validation engine', () => {
 
   it('extracts arithmetic failures and per-cell outcomes', () => {
     const r = run({ ...CLEAN, candidates: [500, 300, 201], total_votes_cast: 9999 });
-    expect(arithmeticFailures(RULES_37A, r).map((f) => f.ruleKey)).toEqual(['CANDIDATES_SUM_TO_TOTAL_VALID']);
+    expect(arithmeticFailures(RULES_37A, r).map((f) => f.ruleKey)).toEqual([
+      'CANDIDATES_SUM_TO_TOTAL_VALID',
+      'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED',
+    ]);
     const cells = outcomeByCell(r);
     expect(cells.get('total_valid_votes')).toBe('FAIL');
     expect(cells.get(cellKey('candidate_votes', CANDIDATES[2]))).toBe('FAIL');
     expect(cells.get('registered_voters')).toBe('WARNING');
     expect(cells.get('stamp_present')).toBe('PASS');
+  });
+
+  describe.each([
+    ['37B', FIELD_SCHEMA_37B, RULES_37B],
+    ['37C', FIELD_SCHEMA_37C, RULES_37C],
+  ] as const)('collation form %s (seeded rules)', (_form, schema, rules) => {
+    const runC = (v: Parameters<typeof values>[0]) =>
+      runValidation({ rules, fieldSchema: schema, values: values(v), candidateIds: [...CANDIDATES] });
+    const keyOf = (r: ReturnType<typeof runC>, key: string) => {
+      const found = r.results.find((x) => x.ruleKey === key);
+      if (!found) throw new Error(`rule ${key} missing`);
+      return found;
+    };
+
+    it('uses the collation schema and passes consistent totals', () => {
+      expect(schema.fields.some((f) => f.key === 'stations_count')).toBe(true);
+      const r = runC({ ...CLEAN, po_signature_present: undefined });
+      expect(keyOf(r, 'CANDIDATES_SUM_TO_TOTAL_VALID').outcome).toBe('PASS');
+      expect(keyOf(r, 'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED').outcome).toBe('PASS');
+      expect(r.summary.fail).toBe(0);
+    });
+
+    it('fails the candidate sum and reports it as arithmetic', () => {
+      const r = runC({ ...CLEAN, candidates: [5000, 3000, 2001], total_valid_votes: 10000, total_votes_cast: 10012 });
+      expect(keyOf(r, 'CANDIDATES_SUM_TO_TOTAL_VALID')).toMatchObject({ outcome: 'FAIL', details: { expected: 10000, actual: 10001, difference: 1 } });
+      expect(arithmeticFailures(rules, r).map((f) => f.ruleKey)).toContain('CANDIDATES_SUM_TO_TOTAL_VALID');
+    });
+
+    it('fails votes cast ≠ valid + rejected', () => {
+      const r = runC({ ...CLEAN, total_votes_cast: 1013 });
+      expect(keyOf(r, 'VOTES_CAST_EQUALS_VALID_PLUS_REJECTED').outcome).toBe('FAIL');
+      expect(arithmeticFailures(rules, r).map((f) => f.ruleKey)).toEqual(['VOTES_CAST_EQUALS_VALID_PLUS_REJECTED']);
+    });
+
+    it('never guesses when operands are missing', () => {
+      const r = runC({ candidates: [500, null, 200], total_valid_votes: 700 });
+      const sum = keyOf(r, 'CANDIDATES_SUM_TO_TOTAL_VALID');
+      expect(sum.outcome).toBe('WARNING');
+      expect(sum.details.evaluated).toBe(false);
+      expect(keyOf(r, 'CANDIDATE_VOTES_PRESENT').outcome).toBe('FAIL');
+    });
   });
 });

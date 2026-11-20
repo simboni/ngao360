@@ -60,6 +60,7 @@ d('Reference module (database)', () => {
   let ownerUser: AuthContext;
   let legalUser: AuthContext;
   let clerkUser: AuthContext;
+  let approverUser: AuthContext;
 
   const ALL = Object.values(PERMISSIONS) as PermissionKey[];
   const grant = (permission: PermissionKey, scope: Partial<PermissionGrant> = {}): PermissionGrant => ({
@@ -95,6 +96,7 @@ d('Reference module (database)', () => {
     ownerUser = authFor(await mk('owner@ref.example.org'), ALL);
     legalUser = authFor(await mk('legal@ref.example.org'), ['reference.view', 'forms.view', 'forms.approve']);
     clerkUser = authFor(await mk('clerk@ref.example.org'), ['reference.view', 'forms.view', 'forms.configure']);
+    approverUser = authFor(await mk('approver@ref.example.org'), ALL);
 
     const config = new AppConfig({
       APP_DATABASE_URL: APP_URL,
@@ -200,9 +202,13 @@ d('Reference module (database)', () => {
   });
 
   it('approves a registry version with a reason and makes it immutable', async () => {
-    const approved = await as(ownerUser, () => registry.approve(ownerUser, r1, 'Checked against the synthetic source'));
-    expect(approved).toMatchObject({ status: 'APPROVED', approvedById: ownerUser.userId, stationCount: 153 });
-    await expect(as(ownerUser, () => registry.approve(ownerUser, r1, 'again'))).rejects.toMatchObject({ code: 'IMMUTABLE_RECORD' });
+    // Maker-checker: whoever imported the station list cannot approve it.
+    await expect(as(ownerUser, () => registry.approve(ownerUser, r1, 'Self-approval attempt'))).rejects.toMatchObject({
+      code: 'SEPARATION_OF_DUTIES',
+    });
+    const approved = await as(approverUser, () => registry.approve(approverUser, r1, 'Checked against the synthetic source'));
+    expect(approved).toMatchObject({ status: 'APPROVED', approvedById: approverUser.userId, stationCount: 153 });
+    await expect(as(approverUser, () => registry.approve(approverUser, r1, 'again'))).rejects.toMatchObject({ code: 'IMMUTABLE_RECORD' });
     await expect(as(ownerUser, () => registry.import(ownerUser, r1, csvFile('bungoma-synthetic-2027-r2-amendment.csv'), { dryRun: true }))).rejects.toMatchObject({
       code: 'IMMUTABLE_RECORD',
     });
@@ -224,7 +230,7 @@ d('Reference module (database)', () => {
     const oldWard = await owner.geographicUnit.findFirstOrThrow({ where: { tenantId, type: 'WARD', officialCode: 'SYN-C04-W02', sourceVersion: 'SYN-R1' } });
     expect(oldWard.officialName).toBe('West Ward 2 (synthetic)');
 
-    await as(ownerUser, () => registry.approve(ownerUser, r2, 'Amendment approved'));
+    await as(approverUser, () => registry.approve(approverUser, r2, 'Amendment approved'));
     expect((await owner.registryVersion.findUniqueOrThrow({ where: { id: r1 } })).status).toBe('SUPERSEDED');
     const list = await as(ownerUser, () => stations.list(ownerUser, { electionCycleId: cycleId, page: 1, pageSize: 10, order: 'asc' }));
     expect(list.total).toBe(154);
@@ -350,6 +356,15 @@ d('Reference module (database)', () => {
     await as(clerkUser, () => templates.decide(clerkUser, v2.id, { decision: 'SUBMIT_FOR_APPROVAL', reason: 'v2' }));
     await as(legalUser, () => templates.decide(legalUser, v2.id, { decision: 'APPROVE', reason: 'v2 approved' }));
     expect((await as(legalUser, () => templates.get(v1.id))).approvalState).toBe('RETIRED');
+
+    // Maker-checker also covers editors: someone who changed the draft cannot approve it.
+    const v3 = await as(clerkUser, () => templates.create(clerkUser, body));
+    await as(legalUser, () => templates.update(legalUser, v3.id, { title: `${def.title} (edited by approver)` }));
+    await as(clerkUser, () => templates.decide(clerkUser, v3.id, { decision: 'SUBMIT_FOR_APPROVAL', reason: 'v3' }));
+    await expect(as(legalUser, () => templates.decide(legalUser, v3.id, { decision: 'APPROVE', reason: 'Approving my own edit' }))).rejects.toMatchObject({
+      code: 'SEPARATION_OF_DUTIES',
+    });
+    await as(approverUser, () => templates.decide(approverUser, v3.id, { decision: 'APPROVE', reason: 'Independent approval of v3' }));
     const history = await owner.auditEvent.findMany({ where: { tenantId, entityType: 'FormTemplate', entityId: v1.id }, orderBy: { seq: 'asc' } });
     expect(history.map((h) => h.action)).toEqual([
       'form_template.created',

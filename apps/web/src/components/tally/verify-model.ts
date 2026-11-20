@@ -3,7 +3,7 @@
  * check (separation of duties, completeness, mismatch detection); these only
  * explain the outcome to the reviewer before they submit.
  */
-import type { MeResponse, SubmissionDetail, VerificationChecklist } from '@ngao360/shared';
+import type { MeResponse, SubmissionDetail, VerificationChecklist, VerificationDecision } from '@ngao360/shared';
 import { type CaptureRow, type Draft, parseCell } from './capture-model';
 
 /** Cells a reviewer must re-enter in blind mode: every candidate-vote cell and every required numeric field. */
@@ -73,4 +73,27 @@ export const CHECKLIST_LABELS: Record<keyof VerificationChecklist, string> = {
 
 export function checklistComplete(c: VerificationChecklist): boolean {
   return REQUIRED_CONFIRMATIONS.every((k) => c[k]);
+}
+
+/**
+ * Re-entered values to send with a decision in blind mode. A PASS always sends
+ * every re-keyed figure (the API compares them with the capture). A RETURN or
+ * DISPUTE sends them only when every figure was entered and parses: blank cells
+ * are never sent as null, which the API would treat as a disagreement.
+ */
+export function independentValuesFor(
+  decision: VerificationDecision,
+  mode: 'blind' | 'confirm',
+  rows: readonly CaptureRow[],
+  draft: Draft,
+): Array<{ fieldKey: string; candidateReferenceId: string | null; numericValue: number | null }> {
+  if (mode !== 'blind') return [];
+  const parsed = rows.map((r) => ({ r, p: parseCell(r, draft[r.cell] ?? '') }));
+  const complete = parsed.every(({ p }) => p.ok && p.numericValue !== null && p.numericValue !== undefined);
+  if (decision !== 'PASS' && !complete) return [];
+  return parsed.map(({ r, p }) => ({
+    fieldKey: r.fieldKey,
+    candidateReferenceId: r.candidateReferenceId,
+    numericValue: p.ok ? (p.numericValue ?? null) : null,
+  }));
 }

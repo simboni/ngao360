@@ -219,3 +219,19 @@ export function liveValidation(rules: ValidationRules | null | undefined, rows: 
 export function unconfirmedRequired(rows: readonly CaptureRow[]): CaptureRow[] {
   return rows.filter((r) => r.required && !r.observationOnly && (!r.value?.confirmedBy || (r.value.numericValue === null && r.value.textValue === null)));
 }
+
+/** Rule types that check figures add up (or stay within a total) rather than that they were entered. */
+export const ARITHMETIC_RULE_TYPES: ReadonlySet<string> = new Set(['SUM_EQUALS', 'FIELDS_SUM_EQUALS', 'LESS_OR_EQUAL']);
+
+/**
+ * Failed checks that block sending a record forward. Arithmetic failures on
+ * figures entered exactly as printed do not block: the record goes to second
+ * review held by an arithmetic case (blueprint 8.5). The API decides finally.
+ */
+export function blockingFailures<T extends { outcome: string; type: string }>(checks: readonly T[]): { blocking: T[]; arithmetic: T[] } {
+  const fails = checks.filter((c) => c.outcome === 'FAIL');
+  return {
+    blocking: fails.filter((c) => !ARITHMETIC_RULE_TYPES.has(c.type)),
+    arithmetic: fails.filter((c) => ARITHMETIC_RULE_TYPES.has(c.type)),
+  };
+}

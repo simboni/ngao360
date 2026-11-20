@@ -80,6 +80,9 @@ export class CaptureService {
    */
   async save(auth: AuthContext, id: string, body: SaveCapture): Promise<SubmissionDetail> {
     return this.prisma.tenantTx(async (tx) => {
+      // Serialise with submit-for-review: values cannot change between its
+      // validation and its status change.
+      await tx.$queryRaw`SELECT id FROM result_submissions WHERE id = ${id}::uuid FOR UPDATE`;
       const sub = await tx.resultSubmission.findUnique({
         where: { id },
         include: {
@@ -280,6 +283,7 @@ export class CaptureService {
    */
   async submitForReview(auth: AuthContext, id: string, reason?: string): Promise<SubmissionDetail> {
     return this.prisma.tenantTx(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM result_submissions WHERE id = ${id}::uuid FOR UPDATE`;
       const sub = await tx.resultSubmission.findUnique({
         where: { id },
         include: {
@@ -305,14 +309,19 @@ export class CaptureService {
           unconfirmed,
         });
       }
-      const { run } = await this.validation.runAndStore(tx, sub.id, auth.userId, { openCases: false });
-      const fails = run.results.filter((r) => r.outcome === 'FAIL');
-      if (fails.length > 0) {
+      const { run, arithmetic } = await this.validation.runAndStore(tx, sub.id, auth.userId, { openCases: false });
+      const arithmeticKeys = new Set(arithmetic.map((a) => a.ruleKey));
+      // Missing or out-of-range entries must be fixed by the capturer. Figures
+      // that are entered as printed but do not add up are not the capturer's to
+      // change (blueprint 8.5): the record goes forward, held by an arithmetic case.
+      const blocking = run.results.filter((r) => r.outcome === 'FAIL' && !arithmeticKeys.has(r.ruleKey));
+      if (blocking.length > 0) {
         throw AppException.validation('Resolve the failed checks before sending for second review', {
-          failed: fails.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, message: f.message })),
+          failed: blocking.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, message: f.message })),
         });
       }
       await this.workflow.transition(tx, sub, 'SECOND_REVIEW_PENDING', reason ?? 'Sent for independent second review');
+      if (arithmetic.length > 0) await this.validation.holdForArithmetic(tx, sub.id, auth.userId, arithmetic);
       return this.submissions.detailTx(tx, auth, sub.id);
     });
   }

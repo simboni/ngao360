@@ -22,7 +22,7 @@ import {
   type SodViolation,
   type SubmissionParticipants,
 } from '../domain/separation-of-duties';
-import { ENTITY, OPEN_CASE_STATUSES } from '../tally.constants';
+import { ENTITY, HOLDING_CASE_TYPES, OPEN_CASE_STATUSES } from '../tally.constants';
 
 export interface OpenCaseInput {
   tenantId: string;
@@ -160,6 +160,77 @@ export class TallyWorkflowService {
     return created;
   }
 
+  /** Open holding cases linked to a submission (see HOLDING_CASE_TYPES), optionally ignoring one case. */
+  async openHoldingCases(
+    tx: TenantTx,
+    submissionId: string,
+    exceptCaseId?: string,
+  ): Promise<Array<{ id: string; reference: string; varianceType: DiscrepancyType }>> {
+    return tx.discrepancyCase.findMany({
+      where: {
+        status: { in: OPEN_CASE_STATUSES },
+        varianceType: { in: [...HOLDING_CASE_TYPES] },
+        links: { some: { submissionId } },
+        ...(exceptCaseId ? { id: { not: exceptCaseId } } : {}),
+      },
+      select: { id: true, reference: true, varianceType: true },
+    });
+  }
+
+  /** Throws CONFLICT while an open holding case is linked to the submission. */
+  async assertNoOpenHoldingCase(tx: TenantTx, submissionId: string, action: string): Promise<void> {
+    const open = await this.openHoldingCases(tx, submissionId);
+    if (open.length > 0) {
+      throw AppException.conflict(
+        `Resolve discrepancy case ${open.map((c) => c.reference).join(', ')} before you ${action}.`,
+        { openCases: open },
+      );
+    }
+  }
+
+  /**
+   * Resolve open cases of `type` linked to a submission as part of another
+   * reasoned decision (e.g. a supervisor rejecting a disputed verification).
+   * Audited like a manual resolution.
+   */
+  async resolveLinkedCases(
+    tx: TenantTx,
+    auth: AuthContext,
+    submissionId: string,
+    type: DiscrepancyType,
+    resolution: string,
+    data: Record<string, unknown>,
+  ): Promise<string[]> {
+    const cases = await tx.discrepancyCase.findMany({
+      where: { varianceType: type, status: { in: OPEN_CASE_STATUSES }, links: { some: { submissionId } } },
+      select: { id: true, status: true },
+    });
+    const now = new Date();
+    for (const c of cases) {
+      const r = await tx.discrepancyCase.updateMany({
+        where: { id: c.id, status: { in: OPEN_CASE_STATUSES } },
+        data: { status: 'RESOLVED', resolution, resolvedById: auth.userId, resolvedAt: now },
+      });
+      if (r.count !== 1) throw AppException.conflict('This case was changed by someone else. Reload and try again.');
+      await tx.discrepancyCaseAction.create({
+        data: { tenantId: auth.tenantId, caseId: c.id, actorId: auth.userId, action: 'RESOLVED', note: resolution, data: data as Prisma.InputJsonValue },
+      });
+      await this.audit.record(
+        {
+          tenantId: auth.tenantId,
+          action: AUDIT_ACTIONS.DISCREPANCY_RESOLVED,
+          entityType: ENTITY.DISCREPANCY,
+          entityId: c.id,
+          before: { status: c.status },
+          after: { status: 'RESOLVED', ...data },
+          reason: resolution,
+        },
+        tx,
+      );
+    }
+    return cases.map((c) => c.id);
+  }
+
   /** Open case of a type already linked to the submission, if any. */
   async findOpenCase(tx: TenantTx, submissionId: string, type: DiscrepancyType): Promise<{ id: string } | null> {
     return tx.discrepancyCase.findFirst({
@@ -196,12 +267,30 @@ export class TallyWorkflowService {
       select: {
         submitterId: true,
         valueChanges: { select: { actorId: true } },
-        values: { select: { confirmedById: true } },
-        verifications: { select: { reviewerId: true } },
+        values: { select: { id: true, confirmedById: true } },
+        verifications: { select: { reviewerId: true, supervisorId: true } },
+        discrepancyLinks: { select: { case: { select: { resolvedById: true } } } },
       },
     });
     if (!sub) throw AppException.notFound('Submission not found');
-    return participantsOf(sub);
+    // Confirmations and declaration edits are only fully recorded in the
+    // append-only audit stream (value rows keep the latest confirmer only).
+    const audit = await tx.auditEvent.findMany({
+      where: {
+        action: AUDIT_ACTIONS.RESULT_VALUE_CHANGED,
+        entityId: { in: [submissionId, ...sub.values.map((v) => v.id)] },
+      },
+      select: { actorId: true },
+      distinct: ['actorId'],
+    });
+    return participantsOf({
+      submitterId: sub.submitterId,
+      valueChanges: sub.valueChanges,
+      values: sub.values,
+      valueAuditActorIds: audit.map((a) => a.actorId),
+      verifications: sub.verifications,
+      resolvedCases: sub.discrepancyLinks.map((l) => l.case),
+    });
   }
 
   sod(violation: SodViolation | null): void {
@@ -229,11 +318,12 @@ export class TallyWorkflowService {
     if (!scopeAllows(scope, location)) throw AppException.outOfScope();
   }
 
-  /** Geography of a submission (station location or tally-centre unit path). */
+  /** Geography and election cycle of a submission (station location or tally-centre unit path). */
   async submissionLocation(tx: TenantTx, submissionId: string): Promise<GeoLocation | null> {
     const s = await tx.resultSubmission.findUnique({
       where: { id: submissionId },
       select: {
+        electionCycleId: true,
         pollingStation: {
           select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
         },
@@ -246,16 +336,36 @@ export class TallyWorkflowService {
       return {
         unitIds: [p.countyId, p.constituencyId, p.wardId, p.pollingCentreId].filter((v): v is string => !!v),
         stationId: p.id,
+        electionCycleId: s.electionCycleId,
       };
     }
-    return { unitIds: s.geographicUnit ? pathToUnitIds(s.geographicUnit.path) : [], stationId: null };
+    return {
+      unitIds: s.geographicUnit ? pathToUnitIds(s.geographicUnit.path) : [],
+      stationId: null,
+      electionCycleId: s.electionCycleId,
+    };
   }
 
-  /** Union of linked submissions' geography (the 'discrepancy' geo resolver). */
+  /**
+   * OUT_OF_SCOPE unless the submission is inside the caller's grant of
+   * `permission` (geography and election cycle). Throws NOT_FOUND when the
+   * submission does not exist; never skips the check.
+   */
+  async assertSubmissionInScope(tx: TenantTx, auth: AuthContext, permission: PermissionKey, submissionId: string): Promise<void> {
+    const loc = await this.submissionLocation(tx, submissionId);
+    if (!loc) throw AppException.notFound('Submission not found');
+    this.assertInScope(auth, permission, loc);
+  }
+
+  /**
+   * Union of linked submissions' geography (the 'discrepancy' geo resolver,
+   * used for read access: a case is visible when any linked record is).
+   * Changes to a case check every affected submission separately.
+   */
   async caseLocation(tx: TenantTx, caseId: string): Promise<GeoLocation | null> {
     const c = await tx.discrepancyCase.findUnique({
       where: { id: caseId },
-      select: { links: { select: { submissionId: true } } },
+      select: { electionCycleId: true, links: { select: { submissionId: true } } },
     });
     if (!c) return null;
     const unitIds = new Set<string>();
@@ -266,7 +376,7 @@ export class TallyWorkflowService {
       loc.unitIds.forEach((u) => unitIds.add(u));
       stationId = stationId ?? loc.stationId;
     }
-    return { unitIds: [...unitIds], stationId };
+    return { unitIds: [...unitIds], stationId, electionCycleId: c.electionCycleId };
   }
 }
 

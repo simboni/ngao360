@@ -480,6 +480,16 @@ export class SubmissionsService {
         { values: { none: { confirmedById: auth.userId } } },
       );
     }
+    if (q.view === 'awaiting_supervisor') {
+      and.push(
+        { status: { in: ['SECOND_REVIEW_PENDING', 'VERIFIED', 'RETURNED', 'DISPUTED'] } },
+        { verifications: { some: { supervisorAction: null } } },
+        { submitterId: { not: auth.userId } },
+        { valueChanges: { none: { actorId: auth.userId } } },
+        { values: { none: { confirmedById: auth.userId } } },
+        { verifications: { none: { reviewerId: auth.userId } } },
+      );
+    }
     const where: Prisma.ResultSubmissionWhereInput = { AND: and };
     const sortable = new Set(['createdAt', 'updatedAt', 'reference', 'status', 'submittedAt']);
     const sortKey = q.sort && sortable.has(q.sort) ? q.sort : 'updatedAt';
@@ -557,14 +567,7 @@ export class SubmissionsService {
       ...(s.duplicateOfId ? [s.duplicateOfId] : []),
     ]);
 
-    const participants = {
-      submitterId: s.submitterId,
-      editorIds: new Set([
-        ...s.valueChanges.map((c) => c.actorId),
-        ...s.values.map((v) => v.confirmedById).filter((v): v is string => !!v),
-      ]),
-      verifierIds: new Set(s.verifications.map((v) => v.reviewerId)),
-    };
+    const participants = await this.workflow.participants(tx, s.id);
     const lastVerification = s.verifications[s.verifications.length - 1];
 
     return {
@@ -611,6 +614,8 @@ export class SubmissionsService {
   async sourceUrl(auth: AuthContext, id: string, download: boolean): Promise<SignedUrlResponse> {
     if (download) this.workflow.requirePermission(auth, 'tally.source.download');
     return this.prisma.tenantTx(async (tx) => {
+      // The guard checked tally.view geography; a download needs tally.source.download over this record.
+      if (download) await this.workflow.assertSubmissionInScope(tx, auth, 'tally.source.download', id);
       const s = await tx.resultSubmission.findUnique({ where: { id }, include: { sourceFile: true } });
       if (!s) throw AppException.notFound('Submission not found');
       const { url, expiresAt } = await this.storage.signedUrl(s.sourceFile, download ? 'attachment' : 'inline');
@@ -636,19 +641,30 @@ export class SubmissionsService {
    */
   async transition(auth: AuthContext, id: string, body: SubmissionTransition): Promise<SubmissionDetail> {
     const to: SubmissionStatus = body.to;
+    // The permission that authorises this particular change. The route guard
+    // only proves that *some* of its permissions covers the record, so the
+    // geography of this permission is checked again below.
+    let permission: 'tally.capture' | 'tally.verify' | 'tally.exclude' | 'tally.approve';
     switch (to) {
       case 'RETURNED':
         if (!auth.permissions.has('tally.capture') && !auth.permissions.has('tally.verify')) {
           throw AppException.forbidden(undefined, { required: ['tally.capture', 'tally.verify'], anyOf: true });
         }
+        permission = auth.permissions.has('tally.verify') ? 'tally.verify' : 'tally.capture';
         break;
       case 'EXCLUDED_FROM_AGGREGATE':
         this.workflow.requirePermission(auth, 'tally.exclude');
         this.workflow.requireReauth(auth);
+        permission = 'tally.exclude';
         break;
       case 'ARCHIVED':
+        this.workflow.requirePermission(auth, 'tally.approve');
+        this.workflow.requireReauth(auth);
+        permission = 'tally.approve';
+        break;
       case 'SECOND_REVIEW_PENDING':
         this.workflow.requirePermission(auth, 'tally.approve');
+        permission = 'tally.approve';
         break;
       default:
         throw AppException.validation(
@@ -661,11 +677,35 @@ export class SubmissionsService {
         select: { id: true, tenantId: true, status: true, version: true },
       });
       if (!s) throw AppException.notFound('Submission not found');
+      if (to === 'RETURNED') {
+        // Either permission may authorise a return, but only within its own geography.
+        const loc = await this.workflow.submissionLocation(tx, id);
+        if (!loc) throw AppException.notFound('Submission not found');
+        const ok = (['tally.verify', 'tally.capture'] as const).some((p) => {
+          if (!auth.permissions.has(p)) return false;
+          try {
+            this.workflow.assertInScope(auth, p, loc);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (!ok) throw AppException.outOfScope();
+      } else {
+        await this.workflow.assertSubmissionInScope(tx, auth, permission, id);
+      }
       if (to === 'EXCLUDED_FROM_AGGREGATE' || to === 'ARCHIVED' || to === 'SECOND_REVIEW_PENDING') {
         this.workflow.sod(supervisorViolation(auth.userId, await this.workflow.participants(tx, id)));
       }
+      if (to === 'ARCHIVED' && s.status === 'VERIFIED') {
+        throw AppException.validation('A verified record is excluded from the aggregate with a reason, not archived. Use "Exclude from aggregate".');
+      }
       if (to === 'SECOND_REVIEW_PENDING' && !['EXCLUDED_FROM_AGGREGATE', 'DISPUTED'].includes(s.status)) {
         throw AppException.invalidTransition(s.status, to);
+      }
+      if (to === 'SECOND_REVIEW_PENDING' && s.status === 'DISPUTED') {
+        // A held record goes back to review through the case's reasoned resolution.
+        await this.workflow.assertNoOpenHoldingCase(tx, id, 'sending this record back for review');
       }
       await this.workflow.transition(tx, s, to, body.reason);
       return this.detailTx(tx, auth, id);
@@ -675,13 +715,25 @@ export class SubmissionsService {
   /** POST /tally/submissions/:id/designate-canonical */
   async designateCanonical(auth: AuthContext, id: string, body: DesignateCanonical): Promise<SubmissionDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.setCanonical(tx, auth, id, body.reason);
+      await this.workflow.assertSubmissionInScope(tx, auth, 'tally.approve', id);
+      await this.setCanonical(tx, auth, id, body.reason, { allowDemoteVerified: false });
       return this.detailTx(tx, auth, id);
     });
   }
 
   /** Make `id` the canonical record of its duplicate group; others are unset first (partial unique index). */
-  async setCanonical(tx: TenantTx, auth: AuthContext, id: string, reason: string): Promise<void> {
+  /**
+   * Demoting a VERIFIED canonical record removes its station from verified
+   * totals, so outside discrepancy resolution (`allowDemoteVerified: false`)
+   * that is refused: it must be decided on the DUPLICATE case with a reason.
+   */
+  async setCanonical(
+    tx: TenantTx,
+    auth: AuthContext,
+    id: string,
+    reason: string,
+    opts: { allowDemoteVerified: boolean },
+  ): Promise<void> {
     const s = await tx.resultSubmission.findUnique({ where: { id } });
     if (!s) throw AppException.notFound('Submission not found');
     if (s.status === 'ARCHIVED' || s.status === 'EXCLUDED_FROM_AGGREGATE') {
@@ -703,10 +755,20 @@ export class SubmissionsService {
           { duplicateOfId: s.id },
         ],
       },
-      select: { id: true, version: true },
+      select: { id: true, version: true, status: true, reference: true },
     });
+    const verifiedDemoted = group.filter((g) => g.status === 'VERIFIED');
+    if (verifiedDemoted.length > 0 && !opts.allowDemoteVerified) {
+      throw AppException.conflict(
+        `${verifiedDemoted.map((g) => g.reference).join(', ')} is verified and counted. Decide which record is canonical on the duplicate discrepancy case, with a reason.`,
+      );
+    }
     for (const g of group) {
-      await tx.resultSubmission.update({ where: { id: g.id }, data: { isCanonical: false, version: { increment: 1 } } });
+      const r = await tx.resultSubmission.updateMany({
+        where: { id: g.id, version: g.version, isCanonical: true },
+        data: { isCanonical: false, version: { increment: 1 } },
+      });
+      if (r.count !== 1) throw AppException.conflict('These submissions were changed by someone else. Reload and try again.');
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -720,7 +782,11 @@ export class SubmissionsService {
         tx,
       );
     }
-    await tx.resultSubmission.update({ where: { id: s.id }, data: { isCanonical: true, version: { increment: 1 } } });
+    const r = await tx.resultSubmission.updateMany({
+      where: { id: s.id, version: s.version, isCanonical: false },
+      data: { isCanonical: true, version: { increment: 1 } },
+    });
+    if (r.count !== 1) throw AppException.conflict('This submission was changed by someone else. Reload and try again.');
     await this.audit.record(
       {
         tenantId: auth.tenantId,

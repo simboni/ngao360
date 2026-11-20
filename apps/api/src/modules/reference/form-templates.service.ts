@@ -173,6 +173,15 @@ export class FormTemplatesService {
       if (req.decision === 'APPROVE' && current.createdById === auth.userId) {
         throw AppException.separationOfDuties('A form template must be approved by someone other than the person who created it');
       }
+      // ...nor by anyone who edited its fields or rules (taken from the append-only audit stream).
+      if (req.decision === 'APPROVE') {
+        const edited = await tx.auditEvent.count({
+          where: { entityType: 'FormTemplate', entityId: id, action: AUDIT_ACTIONS.FORM_TEMPLATE_UPDATED, actorId: auth.userId },
+        });
+        if (edited > 0) {
+          throw AppException.separationOfDuties('You edited this form template, so a different person must approve it');
+        }
+      }
       const now = new Date();
       if (req.decision === 'APPROVE') {
         const previous = await tx.formTemplate.findMany({

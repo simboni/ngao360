@@ -168,8 +168,12 @@ export const SubmissionQuerySchema = PaginationQuerySchema.extend({
   pollingStationId: UuidSchema.optional(),
   sourceType: SubmissionSourceTypeSchema.optional(),
   duplicateOnly: z.coerce.boolean().optional(),
-  /** `mine` = submitted by current user; `awaiting_me` = verification queue excluding own. */
-  view: z.enum(['all', 'mine', 'awaiting_me']).default('all'),
+  /**
+   * `mine` = submitted by current user; `awaiting_me` = verification queue
+   * excluding own; `awaiting_supervisor` = verification outcomes with no
+   * supervisor action yet, excluding records the caller took part in.
+   */
+  view: z.enum(['all', 'mine', 'awaiting_me', 'awaiting_supervisor']).default('all'),
 });
 export type SubmissionQuery = z.infer<typeof SubmissionQuerySchema>;
 

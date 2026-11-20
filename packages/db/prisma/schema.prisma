@@ -369,6 +369,13 @@ model User {
   lastLoginAt             DateTime?  @map("last_login_at") @db.Timestamptz(3)
   failedLoginCount        Int        @default(0) @map("failed_login_count")
   lockedUntil             DateTime?  @map("locked_until") @db.Timestamptz(3)
+  /// Consecutive wrong TOTP codes; reaching MFA_MAX_FAILURES sets mfaLockedUntil.
+  failedMfaCount          Int        @default(0) @map("failed_mfa_count")
+  mfaLockedUntil          DateTime?  @map("mfa_locked_until") @db.Timestamptz(3)
+  /// SHA-256 of the single-use invitation token (the raw token is shown once).
+  invitationTokenHash     String?    @unique @map("invitation_token_hash")
+  invitationExpiresAt     DateTime?  @map("invitation_expires_at") @db.Timestamptz(3)
+  invitedById             String?    @map("invited_by_id") @db.Uuid
   passwordChangedAt       DateTime?  @map("password_changed_at") @db.Timestamptz(3)
   privacyNoticeVersion    String?    @map("privacy_notice_version")
   privacyNoticeAcceptedAt DateTime?  @map("privacy_notice_accepted_at") @db.Timestamptz(3)
@@ -376,6 +383,8 @@ model User {
   updatedAt               DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invitedBy          User?            @relation("UserInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitedUsers       User[]           @relation("UserInviter")
   roleAssignments    RoleAssignment[] @relation("AssignmentUser")
   grantedAssignments RoleAssignment[] @relation("AssignmentGrantedBy")
   revokedAssignments RoleAssignment[] @relation("AssignmentRevokedBy")

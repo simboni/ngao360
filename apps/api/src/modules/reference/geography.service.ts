@@ -15,7 +15,7 @@ import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionService } from '../../rbac/permission.service';
-import { type PermissionScope, pathToUnitIds } from '../../rbac/scope';
+import { geographyOf, type PermissionScope, pathToUnitIds } from '../../rbac/scope';
 import { dateOnly, pageArgs, sortArgs, toGeographicUnit } from './reference.common';
 
 const WITH_CHILD_COUNT = { _count: { select: { children: true } } } as const;
@@ -25,7 +25,8 @@ const WITH_CHILD_COUNT = { _count: { select: { children: true } } } as const;
  * their descendants (by materialised path), plus their ancestors so the
  * county → constituency → ward drill-down still has a starting point.
  */
-export async function unitScopeWhere(tx: TenantTx, scope: PermissionScope): Promise<Prisma.GeographicUnitWhereInput> {
+export async function unitScopeWhere(tx: TenantTx, full: PermissionScope): Promise<Prisma.GeographicUnitWhereInput> {
+  const scope = geographyOf(full);
   if (scope.orgWide) return {};
   const ancestorIds = new Set<string>();
   if (scope.unitIds.length > 0) {

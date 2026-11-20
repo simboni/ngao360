@@ -64,6 +64,14 @@ export class AdminController {
     return this.users.create(auth, dto);
   }
 
+  @RequirePermission('users.create')
+  @RequireReauth()
+  @HttpCode(200)
+  @Post('users/:id/invitation')
+  reissueInvitation(@CurrentAuth() auth: AuthContext, @Param() p: IdParamDto, @Body() dto: ReasonDto): Promise<UserDetail> {
+    return this.users.reissueInvitation(auth, p.id, dto.reason);
+  }
+
   @RequirePermission('users.edit')
   @Patch('users/:id')
   updateUser(@CurrentAuth() auth: AuthContext, @Param() p: IdParamDto, @Body() dto: UpdateUserDto): Promise<UserDetail> {

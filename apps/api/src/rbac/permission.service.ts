@@ -97,8 +97,11 @@ export class PermissionService {
     return auth.permissions.has(permission);
   }
 
-  /** Effective geography for a permission; use to filter list queries. */
-  scopeFor(auth: AuthContext, permission: PermissionKey): PermissionScope {
-    return scopeFromGrants(auth.grants, permission);
+  /**
+   * Effective geography for a permission; use to filter list queries. Pass the
+   * target's election cycle to get the area that applies to that cycle only.
+   */
+  scopeFor(auth: AuthContext, permission: PermissionKey, electionCycleId?: string | null): PermissionScope {
+    return scopeFromGrants(auth.grants, permission, electionCycleId);
   }
 }

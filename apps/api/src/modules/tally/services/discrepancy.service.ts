@@ -23,7 +23,7 @@ import { AppException } from '../../../common/http/app-exception';
 import { PermissionService } from '../../../rbac/permission.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { closureViolation, supervisorViolation } from '../domain/separation-of-duties';
-import { ENTITY, OPEN_CASE_STATUSES } from '../tally.constants';
+import { ENTITY, HOLDING_CASE_TYPES, OPEN_CASE_STATUSES } from '../tally.constants';
 import { caseSummaryInclude, iso, toCaseSummary, userRef } from './mappers';
 import { caseScopeWhere } from './scope-where';
 import { SubmissionsService } from './submissions.service';
@@ -35,8 +35,6 @@ const MANUAL_TRANSITIONS: Partial<Record<DiscrepancyStatus, DiscrepancyStatus[]>
   ESCALATED: ['UNDER_REVIEW'],
 };
 
-/** Case types that hold their linked submissions from the verified aggregate (blueprint 8.5). */
-const HOLDING_TYPES = new Set(['ARITHMETIC', 'REVIEWER_DISAGREEMENT']);
 
 @Injectable()
 export class DiscrepancyService {
@@ -115,12 +113,24 @@ export class DiscrepancyService {
     };
   }
 
+  /**
+   * Load a case for a change. Every linked submission must be inside the
+   * caller's grant of `permission` (geography and cycle): a ward-level user
+   * cannot act on a case that also links forms outside their ward. Read access
+   * (the 'discrepancy' geo resolver) stays "any linked record".
+   */
   private async loadInScope(tx: TenantTx, auth: AuthContext, id: string, permission: 'tally.discrepancy.manage' | 'tally.discrepancy.resolve') {
     const c = await tx.discrepancyCase.findUnique({ where: { id }, include: { links: true } });
     if (!c) throw AppException.notFound('Discrepancy case not found');
-    const loc = await this.workflow.caseLocation(tx, id);
-    if (loc) this.workflow.assertInScope(auth, permission, loc);
+    if (c.links.length === 0) throw AppException.outOfScope('This case has no linked records to check your access against');
+    for (const l of c.links) await this.workflow.assertSubmissionInScope(tx, auth, permission, l.submissionId);
     return c;
+  }
+
+  /** Conditional status change: fails with CONFLICT if another request changed the case first. */
+  private async setStatus(tx: TenantTx, id: string, from: DiscrepancyStatus, data: Prisma.DiscrepancyCaseUncheckedUpdateManyInput): Promise<void> {
+    const r = await tx.discrepancyCase.updateMany({ where: { id, status: from }, data });
+    if (r.count !== 1) throw AppException.conflict('This case was changed by someone else. Reload and try again.');
   }
 
   /** POST /tally/discrepancies (manual case). */
@@ -134,8 +144,7 @@ export class DiscrepancyService {
         throw AppException.validation('One or more linked submissions were not found');
       }
       for (const s of subs) {
-        const loc = await this.workflow.submissionLocation(tx, s.id);
-        if (loc) this.workflow.assertInScope(auth, 'tally.discrepancy.manage', loc);
+        await this.workflow.assertSubmissionInScope(tx, auth, 'tally.discrepancy.manage', s.id);
       }
       const cycles = new Set(subs.map((s) => s.electionCycleId));
       if (cycles.size !== 1) throw AppException.validation('Linked submissions must belong to one election cycle');
@@ -152,7 +161,9 @@ export class DiscrepancyService {
         links: body.links,
         openedById: auth.userId,
       });
-      if (HOLDING_TYPES.has(body.varianceType)) {
+      // Arithmetic and disagreement cases also move the record to DISPUTED; the
+      // other holding types keep it out of the aggregate without a status change.
+      if (body.varianceType === 'ARITHMETIC' || body.varianceType === 'REVIEWER_DISAGREEMENT') {
         for (const l of body.links) {
           await this.workflow.hold(tx, l.submissionId, `Held from the verified aggregate by case ${created.reference}`);
         }
@@ -224,7 +235,7 @@ export class DiscrepancyService {
       if (!(MANUAL_TRANSITIONS[c.status] ?? []).includes(body.to)) {
         throw AppException.invalidTransition(c.status, body.to);
       }
-      await tx.discrepancyCase.update({ where: { id }, data: { status: body.to } });
+      await this.setStatus(tx, id, c.status, { status: body.to });
       await tx.discrepancyCaseAction.create({
         data: {
           tenantId: auth.tenantId,
@@ -262,9 +273,6 @@ export class DiscrepancyService {
       const c = await this.loadInScope(tx, auth, id, 'tally.discrepancy.resolve');
       this.assertOpen(c.status);
       const linked = new Set(c.links.map((l) => l.submissionId));
-      for (const sid of [...linked]) {
-        this.workflow.sod(supervisorViolation(auth.userId, await this.workflow.participants(tx, sid)));
-      }
       if (body.canonicalSubmissionId && !linked.has(body.canonicalSubmissionId)) {
         throw AppException.validation('The canonical record must be one of the linked submissions');
       }
@@ -272,10 +280,41 @@ export class DiscrepancyService {
       for (const sid of exclude) {
         if (!linked.has(sid)) throw AppException.validation('Only linked submissions can be excluded');
       }
-      if (exclude.size > 0) this.workflow.requirePermission(auth, 'tally.exclude');
       if (body.canonicalSubmissionId && exclude.has(body.canonicalSubmissionId)) {
         throw AppException.validation('The canonical record cannot also be excluded');
       }
+      // Exclusion needs tally.exclude over each excluded record, not just somewhere.
+      for (const sid of exclude) await this.workflow.assertSubmissionInScope(tx, auth, 'tally.exclude', sid);
+      if (body.canonicalSubmissionId) {
+        await this.workflow.assertSubmissionInScope(tx, auth, 'tally.approve', body.canonicalSubmissionId);
+      }
+
+      // Separation of duties applies to the records this decision is about. For
+      // duplicate and cross-stage cases that is the compared sources plus any
+      // record being excluded or made canonical; RELATED links (and, for
+      // cross-stage cases, every station record in the area) are context only.
+      const decided = new Set<string>([...exclude, ...(body.canonicalSubmissionId ? [body.canonicalSubmissionId] : [])]);
+      for (const l of c.links) {
+        if (c.varianceType === 'CROSS_STAGE_MISMATCH') {
+          if (l.role === 'SOURCE_B') decided.add(l.submissionId);
+        } else if (c.varianceType === 'DUPLICATE') {
+          if (l.role === 'SOURCE_A' || l.role === 'SOURCE_B') decided.add(l.submissionId);
+        } else {
+          decided.add(l.submissionId);
+        }
+      }
+      for (const sid of decided) {
+        this.workflow.sod(supervisorViolation(auth.userId, await this.workflow.participants(tx, sid)));
+      }
+
+      // Claim the case first so two concurrent resolutions cannot both apply effects.
+      const now = new Date();
+      await this.setStatus(tx, id, c.status, {
+        status: 'RESOLVED',
+        resolution: body.resolution,
+        resolvedById: auth.userId,
+        resolvedAt: now,
+      });
 
       const effects: Array<Record<string, unknown>> = [];
       const reason = `Discrepancy ${c.reference} resolved: ${body.resolution}`.slice(0, 2000);
@@ -295,7 +334,7 @@ export class DiscrepancyService {
         effects.push({ submissionId: sid, effect: 'EXCLUDED' });
       }
       if (body.canonicalSubmissionId) {
-        await this.submissions.setCanonical(tx, auth, body.canonicalSubmissionId, reason);
+        await this.submissions.setCanonical(tx, auth, body.canonicalSubmissionId, reason, { allowDemoteVerified: true });
         effects.push({ submissionId: body.canonicalSubmissionId, effect: 'CANONICAL' });
       }
       for (const sid of linked) {
@@ -304,8 +343,15 @@ export class DiscrepancyService {
           where: { id: sid },
           select: { id: true, tenantId: true, status: true, version: true, formTemplate: { select: { approvalState: true } } },
         });
-        if (s.status === 'DISPUTED') {
-          // Held records need a fresh independent review; never straight to VERIFIED.
+        if (s.status === 'DISPUTED' && HOLDING_CASE_TYPES.includes(c.varianceType)) {
+          // Only release records this case was holding, and only when no other
+          // open holding case still holds them. Held records need a fresh
+          // independent review; never straight to VERIFIED.
+          const others = await this.workflow.openHoldingCases(tx, sid, c.id);
+          if (others.length > 0) {
+            effects.push({ submissionId: sid, effect: 'STILL_HELD', heldBy: others.map((o) => o.reference) });
+            continue;
+          }
           await this.workflow.transition(tx, s, 'SECOND_REVIEW_PENDING', reason);
           effects.push({ submissionId: sid, effect: 'RETURNED_TO_SECOND_REVIEW' });
         } else if (s.status === 'QUARANTINED' && c.varianceType === 'FORM_VERSION_MISMATCH' && s.formTemplate.approvalState === 'APPROVED') {
@@ -314,11 +360,6 @@ export class DiscrepancyService {
         }
       }
 
-      const now = new Date();
-      await tx.discrepancyCase.update({
-        where: { id },
-        data: { status: 'RESOLVED', resolution: body.resolution, resolvedById: auth.userId, resolvedAt: now },
-      });
       await tx.discrepancyCaseAction.create({
         data: {
           tenantId: auth.tenantId,
@@ -350,10 +391,7 @@ export class DiscrepancyService {
       const c = await this.loadInScope(tx, auth, id, 'tally.discrepancy.resolve');
       if (c.status !== 'RESOLVED') throw AppException.invalidTransition(c.status, 'CLOSED');
       this.workflow.sod(closureViolation(auth.userId, c.resolvedById));
-      await tx.discrepancyCase.update({
-        where: { id },
-        data: { status: 'CLOSED', closureApproverId: auth.userId, closedAt: new Date() },
-      });
+      await this.setStatus(tx, id, 'RESOLVED', { status: 'CLOSED', closureApproverId: auth.userId, closedAt: new Date() });
       await tx.discrepancyCaseAction.create({
         data: { tenantId: auth.tenantId, caseId: id, actorId: auth.userId, action: 'CLOSED', note: body.closureNote },
       });

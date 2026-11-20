@@ -42,7 +42,8 @@ export const NAV_GROUPS: NavGroup[] = [
     module: 'tally',
     items: [
       { label: 'Form inbox', href: '/tally/inbox', icon: Inbox, anyOf: ['tally.submit', 'tally.capture', 'tally.verify', 'tally.approve'] },
-      { label: 'Verification queue', href: '/tally/inbox?view=awaiting_me', icon: ClipboardCheck, anyOf: ['tally.verify', 'tally.approve'] },
+      { label: 'Verification queue', href: '/tally/inbox?view=awaiting_me', icon: ClipboardCheck, anyOf: ['tally.verify'] },
+      { label: 'Supervisor queue', href: '/tally/inbox?view=awaiting_supervisor', icon: ClipboardCheck, anyOf: ['tally.approve'] },
       { label: 'Parallel tally', href: '/tally/results', icon: BarChart3, anyOf: ['tally.results.view'] },
       { label: 'Discrepancies', href: '/tally/discrepancies', icon: AlertTriangle, anyOf: ['tally.discrepancy.view'] },
     ],

@@ -329,7 +329,7 @@ d('NGAO TALLY API (integration)', () => {
     expect(res.body.code).toBe('FORBIDDEN');
   });
 
-  it('captures values, runs validation with exact fields, and blocks review on a FAIL', async () => {
+  it('captures values and runs validation with exact fields, never altering what was entered', async () => {
     const vals = goodValues(600, 400);
     vals[2] = { ...vals[2]!, numericValue: 1004 }; // total valid ≠ 600 + 400
     const res = await http('clerk').put(`/tally/submissions/${subs.s1}/values`).send({ values: vals });
@@ -341,9 +341,8 @@ d('NGAO TALLY API (integration)', () => {
     expect(fail.details).toMatchObject({ expected: 1004, actual: 1000, difference: -4 });
     // The engine never alters values: the wrong total is still stored as entered.
     expect(res.body.values.find((v: { fieldKey: string }) => v.fieldKey === 'total_valid_votes').numericValue).toBe(1004);
-
-    const submit = await http('clerk').post(`/tally/submissions/${subs.s1}/submit-for-review`).send({});
-    expect(submit.status).toBe(400);
+    // Capturing alone never moves the record forward.
+    expect(res.body.status).toBe('DATA_ENTRY_REVIEWED');
   });
 
   it('requires a reason to change a value and records old, new, actor, time and reason', async () => {
@@ -434,7 +433,24 @@ d('NGAO TALLY API (integration)', () => {
     expect(prior.status).toBe(403);
     expect(prior.body.code).toBe('SEPARATION_OF_DUTIES');
 
-    const third = await http('verifier2').post(`/tally/submissions/${subs.s1}/verifications`).send({ decision: 'PASS', checklist });
+    // The supervisor's decision resolved the disagreement case: it is not left open while the record is re-verified.
+    const resolved = await http('supervisor').get(`/tally/discrepancies?submissionId=${subs.s1}&varianceType=REVIEWER_DISAGREEMENT`);
+    expect(resolved.body.items[0].status).toBe('RESOLVED');
+
+    // A third check must re-enter every figure independently.
+    const confirmOnly = await http('verifier2').post(`/tally/submissions/${subs.s1}/verifications`).send({ decision: 'PASS', checklist });
+    expect(confirmOnly.status).toBe(400);
+    const third = await http('verifier2')
+      .post(`/tally/submissions/${subs.s1}/verifications`)
+      .send({
+        decision: 'PASS',
+        checklist,
+        independentValues: [
+          { fieldKey: 'candidate_votes', candidateReferenceId: cand[0], numericValue: 600 },
+          { fieldKey: 'candidate_votes', candidateReferenceId: cand[1], numericValue: 400 },
+          { fieldKey: 'total_valid_votes', candidateReferenceId: null, numericValue: 1000 },
+        ],
+      });
     expect(third.status).toBe(201);
     expect(third.body.round).toBe(2);
     const d2 = await http('verifier2').get(`/tally/submissions/${subs.s1}`);
