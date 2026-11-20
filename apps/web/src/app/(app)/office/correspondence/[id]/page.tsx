@@ -1,4 +1,6 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { CorrespondenceDetail } from '@/components/office/correspondence/correspondence-detail';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Correspondence item' };
 
@@ -6,12 +8,10 @@ export const metadata = { title: 'Correspondence item' };
 export default async function CorrespondenceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Correspondence item"
-      screen="S23 Correspondence detail"
-      description={`Item ${id}: summary, attachments, assignment, deadline and status history.`}
-      breadcrumbs={[{ label: 'Office' }, { label: 'Correspondence', href: '/office/correspondence' }, { label: 'Item' }]}
-      anyOf={['office.correspondence.view']}
-    />
+    <RequirePagePermission anyOf={['office.correspondence.view']}>
+      <Suspense>
+        <CorrespondenceDetail id={id} />
+      </Suspense>
+    </RequirePagePermission>
   );
 }

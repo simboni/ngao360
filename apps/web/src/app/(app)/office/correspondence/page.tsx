@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { CorrespondenceInbox } from '@/components/office/correspondence/correspondence-inbox';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Correspondence' };
 
-/** S23 Correspondence inbox. API §9. Owner: correspondence/appointments agent (components/office/correspondence). */
+/** S23 Correspondence inbox. API §9. */
 export default function CorrespondencePage() {
   return (
-    <ModulePlaceholder
-      title="Correspondence"
-      screen="S23 Correspondence inbox"
-      description="Incoming and outgoing letters: reference, sender, recipient, category, assigned officer and response deadline."
-      breadcrumbs={[{ label: 'Office' }, { label: 'Correspondence' }]}
-      anyOf={['office.correspondence.view']}
-    />
+    <RequirePagePermission anyOf={['office.correspondence.view']}>
+      <Suspense>
+        <CorrespondenceInbox />
+      </Suspense>
+    </RequirePagePermission>
   );
 }
