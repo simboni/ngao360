@@ -184,3 +184,35 @@ Requests from module agents for changes outside the files they own. Append below
    - Exports are generated synchronously (201). `TALLY_EXPORT_QUEUE` is not used yet.
      Candidate shares are percentages (0 to 100, two decimals) of verified valid votes.
      Candidates are always listed in ballot order.
+
+## Admin module (from the admin agent)
+
+1. **Re-export the admin helpers from the shared root.** Add to `packages/shared/src/index.ts`:
+   ```ts
+   export * from './admin';
+   ```
+   Until then the API and web import through `@ngao360/shared/dist/admin`. After the change, switch
+   those imports to `@ngao360/shared`.
+
+2. **API contract additions (docs/API_CONTRACT.md §6–7).** Implemented, backwards-compatible supersets:
+   - `GET /dashboard/summary` accepts optional `contestId` and returns `DashboardSummaryExtended`
+     (`@ngao360/shared/dist/admin`): each KPI adds `denominator`, `definition`, `href`, `breakdown`
+     and `availability`; `recentActivity` items add `entityId`, `actor` and `reason`; plus
+     `priorityQueue`, `electionCycle`, `registryVersion`, `contest`, `contests`, `generatedAt`,
+     `includesTally` and `scoped`. Callers without `audit.view` see only their own recent activity.
+   - `GET /admin/roles/:id/effective-access` adds `highRiskCount`, `mfaRequired`, `sodConflicts` and `notes`.
+   - `GET /admin/audit-events`: `action` is a prefix match (`role.` finds every role event); `q`
+     searches reason, entity id and action; `order=asc` reverses the `seq desc` default. A `from`
+     after `to` returns 400. Exports are capped at `AUDIT_EXPORT_MAX_ROWS` (50,000) rows.
+   - Extra separation-of-duties rules, all returning `SEPARATION_OF_DUTIES`: nobody edits a role they
+     hold, revokes their own assignment, changes their own status or resets their own MFA; and a
+     person never holds `roles.configure`/`roles.assign` together with a result-changing permission
+     (`tally.capture`, `tally.verify`, `tally.approve`, `tally.exclude`, `tally.discrepancy.resolve`),
+     whether in one role (400) or across roles (400). The last active organisation-wide holder of
+     `roles.assign` cannot be suspended (409).
+
+3. **Invitation completion (auth).** `POST /admin/users` without `initialPassword` creates an
+   `INVITED` user, but there is no endpoint for an invited user to set a password, and no
+   invitation e-mail. Proposed: `POST /auth/invitations/accept { token, password }` with a
+   single-use, 72-hour token (hash stored on a new `user_invitations` table with `tenant_id`, RLS
+   and an audit event), plus `POST /admin/users/:id/resend-invitation` (`users.create`, reauth).

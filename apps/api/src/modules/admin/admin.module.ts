@@ -1,17 +1,26 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../../auth/auth.module';
+import { AdminController } from './admin.controller';
+import { AuditLogService } from './audit-log.service';
+import { DashboardController } from './dashboard.controller';
+import { DashboardService } from './dashboard.service';
+import { NotificationsService } from './notifications.service';
+import { RolesService } from './roles.service';
+import { UsersService } from './users.service';
 
 /**
- * ADMIN module (owned by the admin module agent; edit only within
- * apps/api/src/modules/admin/).
+ * ADMIN module: users (invite, suspend, reset MFA, sessions), roles and the
+ * permission matrix, role assignments with geography scope and expiry, the
+ * audit log with integrity check and audited export, the dashboard summary and
+ * own notifications. Endpoints: docs/API_CONTRACT.md §6–7.
  *
- * Scope: users (invite, suspend, reset MFA), roles + permission matrix, role
- * assignments with geography scope and expiry, audit log viewer/export,
- * dashboard summary and notifications. Endpoints: docs/API_CONTRACT.md §6–7.
+ * Prisma, audit, RBAC and storage are global modules; AuthModule provides
+ * AuthService.hashPassword.
  */
 @Module({
-  imports: [],
-  controllers: [],
-  providers: [],
+  imports: [AuthModule],
+  controllers: [AdminController, DashboardController],
+  providers: [UsersService, RolesService, AuditLogService, DashboardService, NotificationsService],
   exports: [],
 })
 export class AdminModule {}
