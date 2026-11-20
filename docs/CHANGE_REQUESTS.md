@@ -89,3 +89,98 @@ Requests from module agents for changes outside the files they own. Append below
      "2027 General Election". New demo users: `lead@`, `coordinator@` (Synthetic Constituency
      North) and `finance@demo.example.org`.
    - The synthetic registry has 153 stations (it was 16).
+
+## Tally module (from the tally agent)
+
+1. **Route OCR queue jobs through the pluggable provider.** `apps/api/src/queue/ocr.processor.ts`
+   still marks every extraction `NOT_CONFIGURED`. `TallyModule` exports `TallyOcrService`,
+   whose `process(tenantId, extractionId)` runs the configured provider (`OCR_PROVIDER=none|stub`)
+   and writes only `ocrValue`/`ocrConfidence` drafts. Replace the body of `OcrProcessor.process`
+   with:
+   ```ts
+   await this.moduleRef.get(TallyOcrService, { strict: false }).process(job.data.tenantId, job.data.extractionId);
+   ```
+   (inject `ModuleRef` from `@nestjs/core`). With `QUEUES_ENABLED=false` the tally module
+   already runs the provider in process after the submission commits.
+
+2. **Audit action for OCR drafts.** Add to `AUDIT_ACTIONS` in
+   `packages/shared/src/schemas/admin.ts`:
+   ```ts
+   OCR_RECORDED: 'tally.ocr.recorded',
+   ```
+   The tally module writes this literal today (`OCR_RECORDED_ACTION` in
+   `apps/api/src/modules/tally/ocr/ocr.service.ts`); switch to the constant once added.
+
+3. **Shared schema for `GET /tally/results/stations` rows.** The contract type
+   `SubmissionSummary & { pollingStationId, coverageStatus }` cannot describe MISSING stations,
+   which have no submission but must stay visible. The API returns this shape (type
+   `StationCoverageRow` in `apps/api/src/modules/tally/services/results.service.ts`). Add to
+   `packages/shared/src/schemas/tally.ts` and reference it in `docs/API_CONTRACT.md` §5.6:
+   ```ts
+   export const StationCoverageStatusSchema = z.enum(['MISSING', 'RECEIVED', 'VERIFIED', 'FLAGGED', 'EXCLUDED']);
+   export const StationCoverageRowSchema = SubmissionSummarySchema.extend({
+     id: UuidSchema.nullable(),
+     reference: z.string().nullable(),
+     formNumber: z.string().nullable(),
+     formLevel: FormLevelSchema.nullable(),
+     formTemplateVersion: z.number().int().nullable(),
+     status: SubmissionStatusSchema.nullable(),
+     sourceType: SubmissionSourceTypeSchema.nullable(),
+     isCanonical: z.boolean().nullable(),
+     duplicateFlag: z.boolean().nullable(),
+     submitter: UserRefSchema.nullable(),
+     submittedAt: IsoDateTimeSchema.nullable(),
+     createdAt: IsoDateTimeSchema.nullable(),
+     updatedAt: IsoDateTimeSchema.nullable(),
+     pollingStationId: UuidSchema,
+     coverageStatus: StationCoverageStatusSchema,
+     /** Votes by candidate id for VERIFIED (included) stations only; null otherwise, never zero-filled. */
+     candidateVotes: z.record(z.number().int()).nullable(),
+   });
+   export type StationCoverageRow = z.infer<typeof StationCoverageRowSchema>;
+   ```
+
+4. **`OCR_PROVIDER` configuration.** Add `OCR_PROVIDER: z.enum(['none', 'stub']).default('none')`
+   to `apps/api/src/config/config.schema.ts`, and `OCR_PROVIDER=none` to `.env.example` and
+   `docs/DEVELOPMENT.md`. The tally module reads `process.env.OCR_PROVIDER` directly until then.
+   `stub` is for development only: it writes synthetic low-confidence drafts.
+
+5. **API contract clarifications for §5 (docs/API_CONTRACT.md).** Please record these
+   behaviours, which the tally module implements:
+   - `POST /tally/submissions`: a template problem (not APPROVED, wrong office or cycle) moves
+     the record to QUARANTINED and opens `FORM_VERSION_MISMATCH`. A station problem (not in
+     the approved registry, wrong cycle, inactive, outside the contest area) or a tally-centre
+     level mismatch opens a `METADATA` case and keeps the original metadata; it does not
+     quarantine. `imageQuality` POOR or ILLEGIBLE opens an `IMAGE_QUALITY` case. Station
+     geography is checked in the service, because guards run before multipart parsing.
+   - `POST /tally/submissions/:id/transition` also accepts `to: SECOND_REVIEW_PENDING` from
+     DISPUTED or EXCLUDED_FROM_AGGREGATE with `tally.approve` (re-review). Other targets
+     return 400 and point to the dedicated endpoint. Optimistic concurrency uses the stored
+     row `version`. `SubmissionTransitionSchema` has no client `version` field; add an optional
+     `expectedVersion` if the UI needs stale-write detection.
+   - `PUT /values`: BOOLEAN_OBSERVATION fields accept `numericValue` 0/1 or `textValue`
+     yes/no/true/false, and are stored as 0/1. Saving moves SUBMITTED, OCR_COMPLETE or
+     RETURNED to DATA_ENTRY_REVIEWED. Validation re-runs without opening cases. Only
+     `POST /validate` opens an `ARITHMETIC` case, and it holds the record (DISPUTED) only when
+     the record is SECOND_REVIEW_PENDING or VERIFIED.
+   - Verification: when `independentValues` is non-empty, this is independent re-entry mode,
+     and it must include every candidate-vote cell and every required numeric field.
+     Otherwise it is confirm mode. PASS needs all four checklist confirmations and no FAIL
+     result. Mismatch keys are `fieldKey` or `fieldKey:candidateReferenceId`. A mismatch moves
+     the record to DISPUTED, whatever the decision, and opens an ESCALATED
+     `REVIEWER_DISAGREEMENT` case. After `THIRD_CHECK_REQUESTED`, the next reviewer must not
+     have reviewed the record before. Only the latest round can receive a supervisor action;
+     its geography is checked in the service.
+   - Discrepancy resolution sends DISPUTED linked records back to SECOND_REVIEW_PENDING
+     (never straight to VERIFIED). It releases QUARANTINED records to SUBMITTED when their
+     template is now APPROVED. Excluding records also needs `tally.exclude`. The resolver must
+     not be the submitter, a value editor or a verifier of any linked record. Manual case
+     transitions also allow ESCALATED → UNDER_REVIEW.
+   - Cross-stage comparison runs automatically when a collation-level form (e.g. 37B, 37C)
+     becomes VERIFIED. It compares the form with the verified station-level aggregate for the
+     tally centre's area and opens `CROSS_STAGE_MISMATCH` (HIGH when coverage is complete, LOW
+     otherwise), linking the collation form as SOURCE_B and the included station forms as
+     SOURCE_A.
+   - Exports are generated synchronously (201). `TALLY_EXPORT_QUEUE` is not used yet.
+     Candidate shares are percentages (0 to 100, two decimals) of verified valid votes.
+     Candidates are always listed in ballot order.
