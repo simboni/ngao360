@@ -277,6 +277,14 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     expect(me.body.permissions).not.toContain('tally.verify');
   });
 
+  it('refuses to capture an IEBC certificate (37D is reference-only)', async () => {
+    expect(tpl['37D']).toBeDefined();
+    const f = DATA.stationForms[0]!;
+    const res = await upload('clerk', { formTemplateId: tpl['37D'], tallyCentreId: null, pollingStationId: stationIds[f.stationCode] }, f.file);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_FAILED');
+  });
+
   it('clerk uploads a synthetic 37A image, captures values and submits for second review', async () => {
     const f = DATA.stationForms[0]!;
     const id = await uploadAndCapture(f);

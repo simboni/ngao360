@@ -15,7 +15,8 @@ import request from 'supertest';
 
 const OWNER_URL = process.env.TEST_DATABASE_URL;
 const APP_URL = process.env.TEST_APP_DATABASE_URL;
-const d = OWNER_URL && APP_URL && process.env.JWT_ACCESS_SECRET ? describe : describe.skip;
+const d = OWNER_URL && APP_URL ? describe : describe.skip;
+const TEST_JWT_SECRET = 'reference-http-test-secret-reference-http-test-secret';
 
 const FIXTURE = resolve(__dirname, '../../../../../fixtures/registry/bungoma-synthetic-2027-r1.csv');
 const CSRF = { 'x-ngao-client': 'web' };
@@ -43,6 +44,10 @@ d('Reference module (HTTP)', () => {
       STORAGE_LOCAL_ROOT: storageRoot,
       RATE_LIMIT_MAX: '10000',
       AUTH_RATE_LIMIT_MAX: '1000',
+      // Config needs these; turbo does not pass .env values through, so set test-only ones.
+      JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET ?? TEST_JWT_SECRET,
+      JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET ?? `${TEST_JWT_SECRET}-refresh`,
+      MFA_ENCRYPTION_KEY: process.env.MFA_ENCRYPTION_KEY ?? Buffer.alloc(32, 5).toString('base64'),
     });
 
     owner = createPrismaClient({ url: OWNER_URL!, log: [] });

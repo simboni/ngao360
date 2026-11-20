@@ -8,6 +8,7 @@ import {
   type DesignateCanonical,
   type DiscrepancyLinkRole,
   FORM_SERIES,
+  isCapturableFormLevel,
   type Paginated,
   type SignedUrlResponse,
   type SubmissionDetail,
@@ -153,6 +154,12 @@ export class SubmissionsService {
       ]);
     }
     if (!template) throw AppException.validation('Unknown form template', [{ path: 'formTemplateId', message: 'Not found' }]);
+    if (!isCapturableFormLevel(template.formLevel)) {
+      throw AppException.validation(
+        `Form ${template.formNumber} is an IEBC certificate. Certificates are reference-only official documents; NGAO TALLY never captures them.`,
+        [{ path: 'formTemplateId', message: 'Certificates cannot be captured' }],
+      );
+    }
 
     const stationLevel = template.formLevel === 'POLLING_STATION';
     if (stationLevel && !meta.pollingStationId) {
