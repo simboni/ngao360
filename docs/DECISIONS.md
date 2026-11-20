@@ -6,3 +6,7 @@
 - First end-to-end rehearsal contest: County Governor (Forms 37A / 37B / 37C). Data model and form-template registry must support all six positions (34–39 series).
 - All demo data is synthetic (candidates, stations, totals). No real voter data.
 - The parallel tally is never labelled official; no winner/elected/declared language.
+
+## Update (2026-11-20)
+- Pilot customer: a County Governor (campaign + governor's office). Governor contest (37A/B/C) is the primary end-to-end flow; NGAO360 Office is the next environment to build after the tally MVP.
+- Demo/pilot data: past public election data (2022 General Election) may be used for the demo and pilot, imported through the registry/form-import paths and labelled as historical 2022 data, never as live or official results. Synthetic data remains the default seed for automated tests.
