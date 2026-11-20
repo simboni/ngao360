@@ -22,6 +22,7 @@ import { SYSTEM_ROLES, type SystemRoleKey } from '@ngao360/shared';
 import { provisionSystemRoles, syncPermissionCatalogue } from '../provisioning';
 import { sealSecret } from '../security';
 import { seedFormTemplates } from './form-templates';
+import { seedField } from './field';
 import { seedOffice } from './office';
 import { approveSeedRegistry, seedReferenceData } from './reference-data';
 
@@ -195,6 +196,16 @@ async function main() {
     `  form templates: ${templates.created.length ? `created ${templates.created.join(', ')}` : 'no changes'}` +
       (templates.unchanged ? ` (${templates.unchanged} unchanged)` : ''),
   );
+
+  /* ---------- Field and election operations (demo tenant, synthetic Bungoma) ---------- */
+  await seedField(prisma, {
+    tenantId: tenant.id,
+    ref,
+    roleIds,
+    passwordHash,
+    mfaRoles,
+    applyDemoMfa: (tenantId, userId) => applyDemoMfa(tenantId, userId),
+  });
 
   /* ------------- NGAO360 Office: synthetic County Governor's office (Bungoma) ------------- */
   await seedOffice(prisma, {

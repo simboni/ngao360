@@ -80,6 +80,8 @@ export const FieldReportTemplateSchemaSchema = z
     }
   });
 export type FieldReportTemplateSchema = z.infer<typeof FieldReportTemplateSchemaSchema>;
+/** Request-side shape (defaults such as `required: false` optional). */
+export type FieldReportTemplateSchemaInput = z.input<typeof FieldReportTemplateSchemaSchema>;
 
 /** Words that mark a question as asking for data the product must not collect (blueprint 15.2). */
 const FORBIDDEN_QUESTION_WORDS = [/\bvoted for\b/i, /\bwho .* vote\b/i, /\bethnic/i, /\btribe\b/i, /\breligio/i, /\bid (card )?number\b/i, /\bpolitical (preference|support)\b/i];

@@ -57,7 +57,7 @@ Organisation code **`demo`**. The password for every account is `SEED_DEMO_PASSW
 | `ops@demo.example.org` | Operations director | Organisation | none |
 | `lead@demo.example.org` | Department lead | Organisation | none |
 | `coordinator@demo.example.org` | Coordinator | Synthetic Constituency North | none |
-| `agent1@`, `agent2@demo.example.org` | Polling agent | One station each | none |
+| `agent1@`, `agent2@demo.example.org` | Polling agent (mobile field app `/m`; agent records AGT-2027-000001/2, chief agents of the first two stations) | One station each (by station code) | none |
 | `clerk@`, `clerk2@demo.example.org` | Data-entry clerk | Organisation | none |
 | `verifier@demo.example.org` | Results verifier | Organisation | TOTP |
 | `verifier.north@demo.example.org` | Results verifier | Synthetic Constituency North | TOTP |
@@ -65,6 +65,14 @@ Organisation code **`demo`**. The password for every account is `SEED_DEMO_PASSW
 | `legal@demo.example.org` | Legal/compliance officer (approves form templates) | Organisation | TOTP |
 | `finance@demo.example.org` | Finance officer | Organisation | TOTP |
 | `comms@demo.example.org` | Communications editor | Organisation | none |
+| `field@demo.example.org` | Field coordinator (may reveal agent personal data, audited) | Organisation | TOTP |
+| `field.north@demo.example.org` | Field coordinator | Synthetic Constituency North (2027 cycle) | TOTP |
+| `planner@demo.example.org` | Deployment planner | Organisation | none |
+| `incidents@demo.example.org` | Incident desk officer | Organisation | none |
+| `commander@demo.example.org` | War Room commander | Organisation | TOTP |
+| `observer@demo.example.org` | War Room observer | Organisation | none |
+
+The `demo` tenant also has the `field` module on with synthetic field data: 120 agents, about 100 deployments with deliberate gaps (uncovered stations), readiness checklists in mixed states, two active report templates, 30 field reports, 25 incidents across severities and statuses and War Room station statuses. The field screens are route stubs until the field modules are built (docs/STATUS.md).
 
 Other tenants: `platform` (`operator@platform.example.org`, platform operator) and `other` (`owner@other.example.org`, used to test cross-tenant isolation).
 
