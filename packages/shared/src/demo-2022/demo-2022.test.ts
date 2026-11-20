@@ -335,3 +335,38 @@ describe('simulated governor layer (property tests over seeded random configs)',
     expect(() => generateGovernorLayer(parse(t as never))).toThrow(/capacity/);
   });
 });
+
+describe('review fixes', () => {
+  it('refuses constituencyTotals with a duplicated code (a DemoConfigError, not a generator crash)', () => {
+    const o = clone(syntheticConfig()) as { governor: { constituencyTotals: unknown } };
+    // Sums still match the county totals, so only the duplicate check catches it.
+    o.governor.constituencyTotals = [
+      { constituencyCode: '001', candidateVotes: [1500, 1000, 250], rejected: 30, source: PLACEHOLDER, verified: false },
+      { constituencyCode: '001', candidateVotes: [1500, 1000, 250], rejected: 30, source: PLACEHOLDER, verified: false },
+    ];
+    expect(() => parse(o as never)).toThrow(DemoConfigError);
+    expect(() => parse(o as never)).toThrow(/Duplicate constituency code\(s\) in constituencyTotals: 001/);
+    expect(() => parse(o as never)).toThrow(/missing: 002/);
+  });
+
+  it('the layer fingerprint ignores source strings, notes and verified flags but follows figures, seed and ballot names', () => {
+    const base = parse(syntheticConfig());
+    const fp = generateGovernorLayer(base).fingerprint;
+
+    const sourced = clone(syntheticConfig()) as { governor: { candidates: Array<{ votes: { source: string; verified: boolean; note?: string } }>; rejected: { source: string; verified: boolean } } };
+    for (const c of sourced.governor.candidates) {
+      c.votes.source = 'Kenya Gazette Notice (synthetic test reference)';
+      c.votes.verified = true;
+      c.votes.note = 'documented';
+    }
+    sourced.governor.rejected = { ...sourced.governor.rejected, source: 'Kenya Gazette Notice (synthetic test reference)', verified: true };
+    expect(generateGovernorLayer(parse(sourced as never)).fingerprint).toBe(fp);
+
+    expect(generateGovernorLayer(parse(syntheticConfig({ votes: [3001, 2000, 499] }))).fingerprint).not.toBe(fp);
+    expect(generateGovernorLayer(parse(syntheticConfig({ seed: 'other' }))).fingerprint).not.toBe(fp);
+
+    const named = clone(sourced) as unknown as { governor: { candidates: Array<{ name: unknown }> } };
+    named.governor.candidates.forEach((c, i) => (c.name = { value: `Synthetic Person ${i}`, source: 'Kenya Gazette Notice (synthetic test reference)', verified: true }));
+    expect(generateGovernorLayer(parse(named as never)).fingerprint).not.toBe(fp);
+  });
+});

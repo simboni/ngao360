@@ -89,7 +89,7 @@ export const DemoConfigSchema = z
         key: z.string().regex(/^[a-z0-9-]{3,40}$/),
         title: z.string().min(3).max(200),
         electionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        /** Seed for the deterministic generator; change it for a different simulated layer. */
+        /** Seed for the deterministic generator; a different seed is a different simulated layer (build it in a new demo organisation). */
         seed: z.string().min(1).max(100),
         tenantSlug: z.string().regex(/^[a-z0-9][a-z0-9-]{2,62}$/),
         tenantName: z.string().min(3).max(200),
@@ -205,8 +205,19 @@ export const DemoConfigSchema = z
     const ct = c.governor.constituencyTotals;
     if (ct) {
       const codes = new Set(c.constituencies.map((k) => k.code));
-      if (ct.length !== codes.size || !ct.every((t) => codes.has(t.constituencyCode))) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['governor', 'constituencyTotals'], message: 'Give one entry per configured constituency' });
+      const given = new Set(ct.map((t) => t.constituencyCode));
+      if (given.size !== ct.length) {
+        const dup = ct.map((t) => t.constituencyCode).filter((code, i, all) => all.indexOf(code) !== i);
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['governor', 'constituencyTotals'], message: `Duplicate constituency code(s) in constituencyTotals: ${[...new Set(dup)].join(', ')}` });
+      }
+      const missing = [...codes].filter((code) => !given.has(code));
+      const unknown = [...given].filter((code) => !codes.has(code));
+      if (ct.length !== codes.size || missing.length || unknown.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['governor', 'constituencyTotals'],
+          message: `Give exactly one entry per configured constituency${missing.length ? ` (missing: ${missing.join(', ')})` : ''}${unknown.length ? ` (not configured: ${unknown.join(', ')})` : ''}`,
+        });
       }
       c.governor.candidates.forEach((cand, i) => {
         const sum = ct.reduce((s, t) => s + (t.candidateVotes[i] ?? 0), 0);

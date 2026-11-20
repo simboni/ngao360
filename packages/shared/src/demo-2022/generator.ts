@@ -252,7 +252,7 @@ export function generateGovernorLayer(config: DemoConfig, opts: { seed?: string 
   });
 
   return {
-    fingerprint: hashHex(`${seed}|${JSON.stringify(config.constituencies)}|${JSON.stringify(config.governor)}|${JSON.stringify(config.simulation)}`),
+    fingerprint: layerFingerprint(config, seed),
     seed,
     candidates: config.governor.candidates.map((c, i) => ({
       ballotOrder: i + 1,
@@ -274,5 +274,35 @@ export function sumStations(layer: SimulatedGovernorLayer, codes: Iterable<strin
   return sumFigures(
     layer.results37A.filter((r) => want.has(r.stationCode)),
     layer.candidates.length,
+  );
+}
+
+/** Provenance-only keys: changing a source string, note or verified flag does not change the generated figures. */
+const PROVENANCE_KEYS = new Set(['source', 'note', 'notes', 'verified']);
+
+function withoutProvenance(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutProvenance);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(
+      Object.entries(v as Record<string, unknown>)
+        .filter(([k]) => !PROVENANCE_KEYS.has(k))
+        .map(([k, x]) => [k, withoutProvenance(x)]),
+    );
+  }
+  return v;
+}
+
+/**
+ * Fingerprint of everything that shapes the simulated layer: the seed, the
+ * constituencies and wards, the figures, the simulation settings and the
+ * candidate names shown on the ballot. Source strings, notes and verified flags
+ * are left out, so documenting a source does not count as a different layer
+ * (a verified name does, because it replaces the neutral label on screen).
+ */
+export function layerFingerprint(config: DemoConfig, seed = config.dataset.seed): string {
+  const governor = withoutProvenance(config.governor) as Record<string, unknown>;
+  const ballot = config.governor.candidates.map((c) => [candidateDisplayName(c), c.partyLabel]);
+  return hashHex(
+    `${seed}|${config.county.code.value}|${JSON.stringify(config.constituencies)}|${JSON.stringify(governor)}|${JSON.stringify(ballot)}|${JSON.stringify(config.simulation)}`,
   );
 }

@@ -92,6 +92,7 @@ d('2022 34A local-file importer (synthetic fixtures)', () => {
     expect(r.unparsable.find((u) => u.file === 'notes.txt')!.reason).toMatch(/1_34_A/);
     expect(r.knownStationFiles).toBe(4);
     expect(r.unknownStationCodes).toEqual(['039002000399901']);
+    expect(r.otherCounty).toEqual([]);
     expect(r.ingested).toEqual([]);
     expect(r.draftRegistryVersion).toBeNull();
     expect(await presidential()).toHaveLength(0);
@@ -177,18 +178,72 @@ d('2022 34A local-file importer (synthetic fixtures)', () => {
     expect(r.alreadyImported).toHaveLength(4);
   });
 
-  it('--redacted skips the display hold', async () => {
+  it('--redacted still holds the scan: the declaration is audited and only a different person can release it', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'ngao-34a-redacted-'));
     try {
       const { writeFileSync } = await import('node:fs');
+      const { SubmissionsService } = await import('../src/modules/tally/services/submissions.service');
+      const { DisplayHoldsService } = await import('../src/modules/tally/services/display-holds.service');
       writeFileSync(join(tmp, '1_34_A_039002000400101_KIT00042_20220809_210000.png'), readFileSync(join(DIR, '1_34_A_039001000100101_KIT1_20221340_181500.png')));
       const r = await imp.import34A(app, { ...opts, dir: tmp, redacted: true });
       expect(r.ingested).toHaveLength(1);
-      expect(r.ingested[0]!.held).toBe(false);
+      expect(r.ingested[0]).toMatchObject({ held: true, redactionDeclared: true });
       const sub = (await presidential()).find((s) => s.pollingStation!.code === '039002000400101')!;
-      expect(await owner.storedFileDisplayHold.count({ where: { storedFileId: sub.sourceFileId } })).toBe(0);
+      const hold = await owner.storedFileDisplayHold.findFirstOrThrow({ where: { storedFileId: sub.sourceFileId } });
+      expect(hold.redactedFileId).toBeNull();
+      const clerk = await ctx.authFor(app, demo.tenantId, email('clerk1'));
+      const declared = await owner.auditEvent.findMany({ where: { tenantId: demo.tenantId, action: 'file.display_hold.redaction_declared', entityId: sub.sourceFileId } });
+      expect(declared).toHaveLength(1);
+      expect(declared[0]!.actorId).toBe(clerk.userId);
+      expect(declared[0]!.reason).toContain(email('clerk1'));
+
+      // Not displayable on the declaration alone.
+      await expect(ctx.actAs(clerk, () => ctx.svc(app, SubmissionsService).sourceUrl(clerk, sub.id, false))).rejects.toMatchObject({ code: 'NOT_FOR_DISPLAY_UNTIL_REDACTED' });
+      // The declarer (who also uploaded it) cannot release the hold.
+      await expect(ctx.actAs(clerk, () => ctx.svc(app, DisplayHoldsService).confirmDeclaredRedaction(clerk, sub.id, 'I checked my own upload'))).rejects.toMatchObject({ code: 'SEPARATION_OF_DUTIES' });
+      // A different person confirms with a reason; viewers get a re-encoded copy, the original is unchanged.
+      const supervisor = await ctx.authFor(app, demo.tenantId, email('supervisor'));
+      const done = await ctx.actAs(supervisor, () => ctx.svc(app, DisplayHoldsService).confirmDeclaredRedaction(supervisor, sub.id, 'Checked: no names or signatures visible'));
+      const url = await ctx.actAs(clerk, () => ctx.svc(app, SubmissionsService).sourceUrl(clerk, sub.id, false));
+      expect(url).toMatchObject({ redactedCopy: true, sha256: done.redactedSha256 });
+      const released = await owner.auditEvent.findFirstOrThrow({ where: { tenantId: demo.tenantId, action: 'file.display_hold.redacted_copy_attached', entityId: sub.sourceFileId } });
+      expect(released.actorId).toBe(supervisor.userId);
+      expect(released.reason).toMatch(/Checked: no names or signatures visible/);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it('a scan that was not declared redacted cannot be released by confirmation; a redacted copy is needed', async () => {
+    const { DisplayHoldsService } = await import('../src/modules/tally/services/display-holds.service');
+    const supervisor = await ctx.authFor(app, demo.tenantId, email('supervisor'));
+    const sub = (await presidential()).find((s) => s.pollingStation!.code === '039002000399901')!;
+    await expect(ctx.actAs(supervisor, () => ctx.svc(app, DisplayHoldsService).confirmDeclaredRedaction(supervisor, sub.id, 'Trying to skip the redaction'))).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('skips and reports station codes from another county instead of filing them under this county', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'ngao-34a-county-'));
+    try {
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(join(tmp, '1_34_A_040001000100101_KIT00077_20220809_210000.png'), readFileSync(join(DIR, 'scan_0001.png')));
+      const drafts = await owner.registryVersion.count({ where: { tenantId: demo.tenantId, status: 'DRAFT' } });
+      const r = await imp.import34A(app, { ...opts, dir: tmp });
+      expect(r.otherCounty).toEqual([{ file: '1_34_A_040001000100101_KIT00077_20220809_210000.png', stationCode: '040001000100101', countyCode: '040' }]);
+      expect(r.unknownStationCodes).toEqual([]);
+      expect(r.ingested).toEqual([]);
+      expect(r.draftRegistryVersion).toBeNull();
+      expect(await owner.registryVersion.count({ where: { tenantId: demo.tenantId, status: 'DRAFT' } })).toBe(drafts);
+      expect(await owner.pollingStation.count({ where: { tenantId: demo.tenantId, code: '040001000100101' } })).toBe(0);
+      expect(imp.formatImportReport(r)).toMatch(/other county/);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an organisation that is not a historical demo, and non-synthetic accounts', async () => {
+    const plainSlug = `plain-${randomUUID().slice(0, 8)}`;
+    await owner.tenant.create({ data: { slug: plainSlug, name: 'Synthetic ordinary organisation', displayName: 'Synthetic ordinary organisation', type: 'CAMPAIGN' } });
+    await expect(imp.import34A(app, { ...opts, tenantSlug: plainSlug, asEmail: `clerk1@${plainSlug}.example.org`, dryRun: true })).rejects.toBeInstanceOf(ctx.NotHistoricalDemoError);
+    await expect(imp.import34A(app, { ...opts, asEmail: 'someone@elsewhere.example.com', dryRun: true })).rejects.toBeInstanceOf(ctx.NotHistoricalDemoError);
   });
 });

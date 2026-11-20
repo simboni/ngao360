@@ -17,6 +17,7 @@ import type { INestApplicationContext } from '@nestjs/common';
 import { createPrismaClient, type PrismaClient, withTenant } from '@ngao360/db';
 import {
   HISTORICAL_DEMO_LABEL,
+  HISTORICAL_DEMO_NOTICE,
   PARALLEL_TALLY_BANNER,
   PARALLEL_TALLY_DISCLAIMER,
   sumStations,
@@ -225,5 +226,46 @@ d('2022 historical demo (synthetic small config)', () => {
     expect(await count()).toEqual(before);
     expect(again.snapshotId).toBe(result.snapshotId);
     expect([...again.verifiedStationCodes].sort()).toEqual([...result.verifiedStationCodes].sort());
+  });
+
+  describe('review fixes', () => {
+    it('never takes over an existing ordinary organisation via --tenant (no relabel, rename or synthetic owners)', async () => {
+      const victimSlug = `real-org-${randomUUID().slice(0, 8)}`;
+      const victim = await owner.tenant.create({ data: { slug: victimSlug, name: 'Synthetic ordinary organisation', displayName: 'Synthetic ordinary organisation', type: 'CAMPAIGN' } });
+      await expect(demo.buildBungomaDemo(app, { config, ownerDb: owner, password: 'Demo-2022-Password-Test', tenantSlug: victimSlug, concurrency: 3 })).rejects.toBeInstanceOf(demo.DemoTenantConflictError);
+      const after = await owner.tenant.findUniqueOrThrow({ where: { id: victim.id } });
+      expect(after).toMatchObject({ historicalDemo: false, name: 'Synthetic ordinary organisation' });
+      expect(await owner.user.count({ where: { tenantId: victim.id } })).toBe(0);
+      expect(await owner.electionCycle.count({ where: { tenantId: victim.id } })).toBe(0);
+      // The CLI helpers refuse to act in it either.
+      await expect(ctx.resolveDemoTenant(app, victimSlug)).rejects.toBeInstanceOf(ctx.NotHistoricalDemoError);
+    });
+
+    it('acts only as synthetic demo users of a demo organisation (no MFA-bypassing impersonation of real accounts)', async () => {
+      await owner.user.create({ data: { tenantId: result.tenantId, email: 'person@elsewhere.example.com', displayName: 'Synthetic invited person', passwordHash: 'x', status: 'ACTIVE' } });
+      await expect(ctx.authFor(app, result.tenantId, 'person@elsewhere.example.com')).rejects.toBeInstanceOf(ctx.NotHistoricalDemoError);
+    });
+
+    it('refuses to re-run with a config that gives a different simulated layer; source-only edits keep the same layer', async () => {
+      const changed = JSON.parse(JSON.stringify(config)) as typeof config;
+      changed.dataset.seed = `${config.dataset.seed}-changed`;
+      await expect(demo.buildBungomaDemo(app, { config: changed, ownerDb: owner, password: 'Demo-2022-Password-Test', tenantSlug: slug, concurrency: 3 })).rejects.toBeInstanceOf(demo.DemoLayerMismatchError);
+      const registries = await owner.registryVersion.findMany({ where: { tenantId: result.tenantId, version: { startsWith: demo.SIM_REGISTRY_PREFIX } } });
+      expect(registries.map((r) => r.version)).toEqual([demo.simulatedRegistryVersion(result.layer)]);
+
+      const sourced = JSON.parse(JSON.stringify(config)) as typeof config;
+      sourced.governor.rejected = { ...sourced.governor.rejected, note: 'documented source (synthetic test)' };
+      const { generateGovernorLayer } = await import('@ngao360/shared');
+      expect(generateGovernorLayer(sourced).fingerprint).toBe(result.layer.fingerprint);
+    });
+
+    it('labels the audit-log CSV export with the unofficial banner, disclaimer, demo label and notice', async () => {
+      const { AuditLogService } = await import('../src/modules/admin/audit-log.service');
+      const ownerUser = await asUser('owner');
+      await ctx.actAs(ownerUser, () => ctx.svc(app, AuditLogService).export(ownerUser, { action: 'tally.snapshot.created' } as never));
+      const file = await owner.storedFile.findFirstOrThrow({ where: { tenantId: result.tenantId, purpose: 'EXPORT', originalFilename: { startsWith: 'audit-export-' } }, orderBy: { createdAt: 'desc' } });
+      const text = readFileSync(join(storageRoot, file.storageKey), 'utf8');
+      for (const line of [PARALLEL_TALLY_BANNER, PARALLEL_TALLY_DISCLAIMER, HISTORICAL_DEMO_LABEL, HISTORICAL_DEMO_NOTICE]) expect(text).toContain(`# ${line}`);
+    });
   });
 });

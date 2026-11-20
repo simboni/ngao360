@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SYSTEM_ROLES } from '../roles';
+import { HISTORICAL_DEMO_LABEL, HISTORICAL_DEMO_NOTICE, PARALLEL_TALLY_BANNER, PARALLEL_TALLY_DISCLAIMER } from '../disclaimer';
 import { auditEventsToCsv, computeEffectiveAccess, csvField, findRoleSodConflicts } from './index';
 
 describe('role separation of duties', () => {
@@ -51,5 +52,17 @@ describe('audit CSV', () => {
     expect(lines[0]).toMatch(/^# NGAO360 audit export/);
     expect(lines[1]).toBe('seq,occurred_at,actor_id,actor_name,actor_type,action,entity_type,entity_id,reason,source_ip,user_agent,request_id,before_hash,after_hash,event_hash');
     expect(csv).toContain('"line\nbreak"');
+  });
+
+  it('carries the unofficial banner, disclaimer, demo label and notice for a labelled organisation', () => {
+    const row = { seq: '1', occurredAt: '2027-08-10T10:00:00.000Z', actorId: null, actorName: null, actorType: 'SYSTEM', action: 'submission.verified', entityType: 'ResultSubmission', entityId: 'x', reason: null, sourceIp: null, userAgent: null, requestId: null, beforeHash: null, afterHash: 'h', eventHash: 'e' };
+    const csv = auditEventsToCsv([row], { exportedAt: '2027-08-10T10:00:00.000Z', exportedBy: 'Synthetic Admin', filters: 'none', dataLabel: HISTORICAL_DEMO_LABEL });
+    const comments = csv.split('\r\n').filter((l) => l.startsWith('# '));
+    expect(comments).toContain(`# ${PARALLEL_TALLY_BANNER}`);
+    expect(comments).toContain(`# ${PARALLEL_TALLY_DISCLAIMER}`);
+    expect(comments).toContain(`# ${HISTORICAL_DEMO_LABEL}`);
+    expect(comments).toContain(`# ${HISTORICAL_DEMO_NOTICE}`);
+    // Without a label nothing extra is printed.
+    expect(auditEventsToCsv([row], { exportedAt: 'x', exportedBy: 'y', filters: 'z' })).not.toContain(HISTORICAL_DEMO_LABEL);
   });
 });

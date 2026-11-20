@@ -255,6 +255,8 @@ export const AUDIT_ACTIONS = {
   FILE_DISPLAY_HOLD_CREATED: 'file.display_hold.created',
   /** A redacted copy was attached to a held image; viewers now get the copy, the original is unchanged. */
   FILE_REDACTED_COPY_ATTACHED: 'file.display_hold.redacted_copy_attached',
+  /** An operator declared an imported scan already redacted; it stays held until a second person confirms. */
+  FILE_REDACTION_DECLARED: 'file.display_hold.redaction_declared',
   SUBMISSION_CREATED: 'tally.submission.created',
   SUBMISSION_STATUS_CHANGED: 'tally.submission.status_changed',
   SUBMISSION_CANONICAL_DESIGNATED: 'tally.submission.canonical_designated',

@@ -7,7 +7,7 @@
  * PDF). Files are stored immutably with purpose EXPORT.
  */
 import type { StoredFile, TenantTx } from '@ngao360/db';
-import type { ExportFormat, SensitivityLevel } from '@ngao360/shared';
+import { exportLabelLines, type ExportFormat, type SensitivityLevel } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { tenantDataLabel } from '../../../common/provenance/data-label';
 import type { StorageService } from '../../../storage/storage.service';
@@ -101,7 +101,7 @@ export async function storeExport(
   // A historical demo organisation labels every export (docs/DEMO_2022.md).
   const label = await tenantDataLabel(tx, auth.tenantId);
   const labelled: ExportHeader = label
-    ? { ...h, dataLabel: label.label, extraLines: [...(h.extraLines ?? []), label.notice] }
+    ? { ...h, dataLabel: label.label, extraLines: [...(h.extraLines ?? []), ...exportLabelLines(label.label, label.notes).filter((l) => l !== label.label)] }
     : h;
   const doc = buildDocument(labelled, tables);
   const buffer = renderDocument(doc, format, labelled);

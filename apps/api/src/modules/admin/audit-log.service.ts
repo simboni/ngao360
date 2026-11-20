@@ -110,7 +110,7 @@ export class AuditLogService {
             afterHash: e.afterHash,
             eventHash: e.eventHash,
           })),
-          { exportedAt, exportedBy: auth.displayName, filters, dataLabel: (await tenantDataLabel(tx, auth.tenantId))?.label ?? null },
+          { exportedAt, exportedBy: auth.displayName, filters, ...(await auditLabel(tx, auth.tenantId)) },
         );
         const stored = await this.storage.storeImmutable(
           {
@@ -141,4 +141,10 @@ export class AuditLogService {
     const signed = await this.storage.signedUrl(file, 'attachment');
     return { url: signed.url, expiresAt: signed.expiresAt.toISOString(), sha256: file.sha256 };
   }
+}
+
+/** Demo label and provenance notes for the audit CSV header (null for an unlabelled organisation). */
+async function auditLabel(tx: Parameters<typeof tenantDataLabel>[0], tenantId: string): Promise<{ dataLabel: string | null; provenanceNotes: string | null }> {
+  const l = await tenantDataLabel(tx, tenantId);
+  return { dataLabel: l?.label ?? null, provenanceNotes: l?.notes ?? null };
 }

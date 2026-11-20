@@ -7,6 +7,7 @@
  * `schemas/dashboard.ts`; it never changes their shapes.
  */
 import { z } from 'zod';
+import { exportLabelLines } from '../disclaimer';
 import { AuditEventSchema } from '../schemas/admin';
 import { DataProvenanceSchema } from '../enums';
 import { IsoDateTimeSchema, UuidSchema } from '../schemas/common';
@@ -234,10 +235,11 @@ export interface AuditCsvRow {
 
 export function auditEventsToCsv(
   rows: readonly AuditCsvRow[],
-  header: { exportedAt: string; exportedBy: string; filters: string; dataLabel?: string | null },
+  header: { exportedAt: string; exportedBy: string; filters: string; dataLabel?: string | null; provenanceNotes?: string | null },
 ): string {
   const lines = [
-    ...(header.dataLabel ? [`# ${header.dataLabel}`] : []),
+    // A labelled (historical demo) organisation: unofficial banner and disclaimer, then the demo label and notice.
+    ...(header.dataLabel ? exportLabelLines(header.dataLabel, header.provenanceNotes).map((l) => `# ${l.replace(/[\r\n]+/g, ' ')}`) : []),
     `# NGAO360 audit export; exported ${header.exportedAt} by ${header.exportedBy}; filters: ${header.filters}`,
     AUDIT_CSV_COLUMNS.join(','),
   ];

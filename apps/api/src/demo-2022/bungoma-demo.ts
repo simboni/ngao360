@@ -118,6 +118,19 @@ const CHECKLIST = {
   legible: true,
 };
 
+export const SIM_REGISTRY_PREFIX = 'SIM-2022-';
+export const simulatedRegistryVersion = (layer: SimulatedGovernorLayer) => `${SIM_REGISTRY_PREFIX}${layer.fingerprint.slice(0, 10)}`;
+
+/** `--tenant` names an existing organisation that is not a historical demo. */
+export class DemoTenantConflictError extends Error {
+  override readonly name = 'DemoTenantConflictError';
+}
+
+/** The demo organisation was built from a different simulated layer than the current config. */
+export class DemoLayerMismatchError extends Error {
+  override readonly name = 'DemoLayerMismatchError';
+}
+
 /** Deterministic UUID (v4 layout) from a key, so re-runs replay the same idempotency keys. */
 export function stableUuid(key: string): string {
   const h = createHash('sha256').update(`ngao360-demo-2022:${key}`).digest('hex');
@@ -150,11 +163,21 @@ export async function buildBungomaDemo(app: INestApplicationContext, opts: Build
   /* -------------------------------- 1. Provision (owner role) ------------------------------- */
   const db = opts.ownerDb;
   await syncPermissionCatalogue(db);
-  const tenant = await db.tenant.upsert({
-    where: { slug },
-    create: { slug, name: config.dataset.tenantName, displayName: config.dataset.tenantName, type: 'CAMPAIGN', historicalDemo: true },
-    update: { name: config.dataset.tenantName, displayName: config.dataset.tenantName, historicalDemo: true },
-  });
+  // Only ever create a NEW organisation or refresh one that is already a historical demo. An
+  // existing ordinary organisation is never relabelled, renamed or given synthetic owner accounts
+  // (the demo label cannot be removed again, and the demo users share a known password).
+  const existingTenant = await db.tenant.findUnique({ where: { slug }, select: { id: true, historicalDemo: true } });
+  if (existingTenant && !existingTenant.historicalDemo) {
+    throw new DemoTenantConflictError(
+      `Organisation "${slug}" already exists and is not a historical demo organisation. The demo command never takes over an existing organisation; pass --tenant <new slug>.`,
+    );
+  }
+  const tenant =
+    existingTenant ??
+    (await db.tenant.create({
+      data: { slug, name: config.dataset.tenantName, displayName: config.dataset.tenantName, type: 'CAMPAIGN', historicalDemo: true },
+      select: { id: true, historicalDemo: true },
+    }));
   const tenantId = tenant.id;
   const roleIds = await provisionSystemRoles(db, tenantId);
   const passwordHash = await argon2.hash(opts.password, { type: argon2.argon2id });
@@ -222,9 +245,23 @@ export async function buildBungomaDemo(app: INestApplicationContext, opts: Build
   }
   const cycleId = cycle.id;
 
-  // Registry: import by the registry officer, approval by the owner (maker-checker).
+  // A cycle is built from exactly one simulated layer. Submissions, the governor contest and the
+  // snapshot are keyed by station and cycle, so re-running with a different layer would keep the
+  // old figures and candidates under a new registry: refuse instead.
   const registry = svc(app, RegistryService);
-  const version = `SIM-2022-${layer.fingerprint.slice(0, 10)}`;
+  const version = simulatedRegistryVersion(layer);
+  const otherLayers = await read((tx) =>
+    tx.registryVersion.findMany({ where: { electionCycleId: cycleId, version: { startsWith: SIM_REGISTRY_PREFIX, not: version } }, select: { version: true } }),
+  );
+  if (otherLayers.length) {
+    throw new DemoLayerMismatchError(
+      `Organisation "${slug}" was built from a different simulated layer (${otherLayers.map((v) => v.version).join(', ')}; this config gives ${version}). ` +
+        'Changing the seed, figures, constituencies, simulation settings or candidate names needs a new organisation: pass --tenant <new slug>. ' +
+        'Changing only source strings, notes or verified flags keeps the same layer.',
+    );
+  }
+
+  // Registry: import by the registry officer, approval by the owner (maker-checker).
   let rv = await read((tx) => tx.registryVersion.findFirst({ where: { electionCycleId: cycleId, version } }));
   if (!rv) {
     requirePermission(as.registrar!, 'reference.import');

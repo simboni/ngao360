@@ -25,6 +25,7 @@ import {
   type SignedUrlResponse,
   type UpdateDeployment,
   canTransitionDeployment,
+  exportLabelLines,
   shiftsOverlap,
 } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
@@ -757,7 +758,7 @@ export class DeploymentService {
       };
       const demoLabel = await cycleOrTenantDataLabel(tx, auth.tenantId, cycle.id);
       const lines = [
-        ...(demoLabel ? [`# ${demoLabel.label}. ${demoLabel.notice}`] : []),
+        ...(demoLabel ? exportLabelLines(demoLabel.label, demoLabel.notes).map((l) => `# ${l}`) : []),
         `# ${DATA_PROVENANCE_LABELS[cycle.dataProvenance]}. Internal deployment roster for ${cycle.name}. Contact values are masked.`,
         'station_code,station_name,role,shift,status,agent_reference,agent_name,phone_masked',
         ...rows.map((d) =>

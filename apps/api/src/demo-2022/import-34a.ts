@@ -12,10 +12,15 @@
  *   new codes) that needs the existing maker-checker approval by a different
  *   person; the importer never approves it, and their files wait for a re-run.
  * - Ingests each file through the tally intake service (SHA-256, immutable
- *   storage, duplicate detection) as a presidential 34A submission. Unless
- *   `--redacted` is passed, every image is stored with a "not for display until
- *   redacted" hold first (in the same transaction as storage), because real
- *   scans show officers' and agents' names and signatures.
+ *   storage, duplicate detection) as a presidential 34A submission. EVERY image
+ *   is stored with a "not for display until redacted" hold first (in the same
+ *   transaction as storage), because real scans show officers' and agents'
+ *   names and signatures. `--redacted` only records the operator's declaration
+ *   (audited, naming the declarer); a different person with tally.approve
+ *   releases the hold with `pnpm demo:redact-34a`.
+ * - Works only in an organisation marked as a historical demo, in a
+ *   HISTORICAL_DEMO cycle, acting as its synthetic demo users. Station codes
+ *   from another county than the demo registry's are reported and skipped.
  * - Idempotent: a re-run replays the same idempotency keys and reports files
  *   as already imported; different scans of the same station are flagged as
  *   potential duplicates by intake, never discarded.
@@ -28,12 +33,12 @@ import type { TenantTx } from '@ngao360/db';
 import { HISTORICAL_DEMO_LABEL, KENYA_COUNTIES, parse34AFileName, type Parsed34AFileName, toCsv } from '@ngao360/shared';
 import type { AuthContext } from '../auth/auth.types';
 import { RegistryService } from '../modules/reference/registry.service';
-import { DisplayHoldsService } from '../modules/tally/services/display-holds.service';
+import { declaredRedactedReason, DisplayHoldsService } from '../modules/tally/services/display-holds.service';
 import { SubmissionsService } from '../modules/tally/services/submissions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { stableUuid } from './bungoma-demo';
-import { actAs, authFor, requirePermission, resolveTenant, svc } from './demo-context';
+import { actAs, authFor, requirePermission, resolveDemoTenant, svc } from './demo-context';
 
 export const DRAFT_VERSION_PREFIX = '34A-CODES-';
 
@@ -50,13 +55,16 @@ export interface Import34AOptions {
   dir: string;
   tenantSlug: string;
   dryRun: boolean;
-  /** The operator declares the files are already redacted (no display hold). */
+  /**
+   * The operator declares the files are already redacted. The declaration is
+   * audited; the files stay held until a different person confirms it.
+   */
   redacted: boolean;
   /** Submitter (needs tally.submit). */
   asEmail: string;
   /** Creates the draft registry version for unknown codes (needs reference.import). */
   registrarEmail?: string;
-  /** Election cycle name; defaults to the latest HISTORICAL_DEMO / HISTORICAL cycle. */
+  /** Election cycle name; defaults to the latest HISTORICAL_DEMO cycle. */
   cycleName?: string;
   log?: (line: string) => void;
 }
@@ -69,11 +77,13 @@ export interface Import34AReport {
   filesSeen: number;
   parsed: number;
   unparsable: Array<{ file: string; reason: string }>;
+  /** Parsed names whose county segment is not the demo registry's county (skipped). */
+  otherCounty: Array<{ file: string; stationCode: string; countyCode: string }>;
   knownStationFiles: number;
   unknownStationCodes: string[];
   awaitingRegistryApproval: Array<{ file: string; stationCode: string }>;
   draftRegistryVersion: { id: string; version: string; created: boolean; stationCount: number } | null;
-  ingested: Array<{ file: string; stationCode: string; reference: string; sha256: string; possibleDuplicate: boolean; held: boolean }>;
+  ingested: Array<{ file: string; stationCode: string; reference: string; sha256: string; possibleDuplicate: boolean; held: boolean; redactionDeclared: boolean }>;
   alreadyImported: Array<{ file: string; stationCode: string; reference: string }>;
   /** Dry run: files whose SHA-256 is already stored (would be replayed or flagged). */
   alreadyStoredHashes: number;
@@ -95,7 +105,7 @@ const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
 export async function import34A(app: INestApplicationContext, opts: Import34AOptions): Promise<Import34AReport> {
   const log = opts.log ?? (() => undefined);
-  const tenant = await resolveTenant(app, opts.tenantSlug);
+  const tenant = await resolveDemoTenant(app, opts.tenantSlug);
   const prisma = svc(app, PrismaService);
   const read = <T>(fn: (tx: TenantTx) => Promise<T>) => prisma.withTenant(tenant.id, fn);
   const submitter = await authFor(app, tenant.id, opts.asEmail);
@@ -103,13 +113,13 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
 
   const cycle = await read((tx) =>
     tx.electionCycle.findFirst({
-      where: opts.cycleName ? { name: opts.cycleName } : { dataProvenance: { in: ['HISTORICAL_DEMO', 'HISTORICAL'] } },
+      where: opts.cycleName ? { name: opts.cycleName } : { dataProvenance: 'HISTORICAL_DEMO' },
       orderBy: { createdAt: 'desc' },
     }),
   );
-  if (!cycle) throw new Error('No historical election cycle found in this organisation (run pnpm demo:2022-bungoma first, or pass --cycle)');
-  if (cycle.dataProvenance !== 'HISTORICAL_DEMO' && cycle.dataProvenance !== 'HISTORICAL') {
-    throw new Error(`Cycle "${cycle.name}" is ${cycle.dataProvenance}; 2022 scans go into a HISTORICAL_DEMO or HISTORICAL cycle only`);
+  if (!cycle) throw new Error('No historical demo election cycle found in this organisation (run pnpm demo:2022-bungoma first, or pass --cycle)');
+  if (cycle.dataProvenance !== 'HISTORICAL_DEMO') {
+    throw new Error(`Cycle "${cycle.name}" is ${cycle.dataProvenance}; 2022 scans go into a HISTORICAL_DEMO cycle only`);
   }
   const contest = await read((tx) => tx.contest.findFirst({ where: { electionCycleId: cycle.id, officeType: 'PRESIDENT' } }));
   const template = await read((tx) => tx.formTemplate.findFirst({ where: { electionCycleId: cycle.id, formNumber: '34A', approvalState: 'APPROVED' }, orderBy: { version: 'desc' } }));
@@ -123,6 +133,7 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
     filesSeen: 0,
     parsed: 0,
     unparsable: [],
+    otherCounty: [],
     knownStationFiles: 0,
     unknownStationCodes: [],
     awaitingRegistryApproval: [],
@@ -152,8 +163,18 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
   const stations = new Map(
     (await read((tx) => tx.pollingStation.findMany({ where: { registryVersionId: approved.id }, select: { id: true, code: true } }))).map((s) => [s.code, s.id]),
   );
-  const known = parsed.filter((p) => stations.has(p.name.stationCode));
-  const unknown = parsed.filter((p) => !stations.has(p.name.stationCode));
+  // The demo covers the county (or counties) of its approved registry; a code from another county
+  // would be filed under this county's constituencies and wards, so it is reported and skipped.
+  const counties = new Set(
+    (await read((tx) => tx.geographicUnit.findMany({ where: { electionCycleId: cycle.id, type: 'COUNTY' }, select: { officialCode: true } }))).map((u) => u.officialCode),
+  );
+  const inCounty = parsed.filter((p) => {
+    if (counties.has(p.name.countyCode)) return true;
+    report.otherCounty.push({ file: p.rel, stationCode: p.name.stationCode, countyCode: p.name.countyCode });
+    return false;
+  });
+  const known = inCounty.filter((p) => stations.has(p.name.stationCode));
+  const unknown = inCounty.filter((p) => !stations.has(p.name.stationCode));
   report.knownStationFiles = known.length;
   report.unknownStationCodes = [...new Set(unknown.map((u) => u.name.stationCode))].sort();
   report.awaitingRegistryApproval = unknown.map((u) => ({ file: u.rel, stationCode: u.name.stationCode }));
@@ -196,20 +217,21 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
         report.alreadyImported.push({ file: p.rel, stationCode: p.name.stationCode, reference: existing.reference });
         continue;
       }
-      let held = false;
-      if (!opts.redacted) {
-        // Store the original and its display hold atomically, before any submission can point at it.
-        held = await actAs(submitter, () =>
-          prisma.tenantTx(async (tx) => {
-            const { file } = await storage.storeImmutable(
-              { tenantId: tenant.id, uploadedById: submitter.userId, buffer, declaredMimeType: mimetype, originalFilename: originalname, purpose: 'RESULT_FORM' },
-              tx,
-            );
-            await holds.holdInTx(tx, submitter, file.id);
-            return true;
-          }),
-        );
-      }
+      // Store the original and its display hold atomically, before any submission can point at it.
+      // A declared-redacted file is held too; only a second person releases it (pnpm demo:redact-34a).
+      const held = await actAs(submitter, () =>
+        prisma.tenantTx(async (tx) => {
+          const { file } = await storage.storeImmutable(
+            { tenantId: tenant.id, uploadedById: submitter.userId, buffer, declaredMimeType: mimetype, originalFilename: originalname, purpose: 'RESULT_FORM' },
+            tx,
+          );
+          const hold = await holds.holdInTx(tx, submitter, file.id, opts.redacted ? declaredRedactedReason(submitter.email) : undefined);
+          if (opts.redacted && hold.created) {
+            await holds.recordDeclarationInTx(tx, submitter, file.id, hold.id, `${submitter.email} declared ${originalname} already redacted (names and signatures removed) at import`);
+          }
+          return true;
+        }),
+      );
       const res = await actAs(submitter, () =>
         submissions.create(
           submitter,
@@ -224,7 +246,7 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
             declaration: {
               sourceCopyNotes:
                 `2022 historical 34A imported from a local file (${originalname}); KIEMS serial ${p.name.kiemsSerial}, captured ${p.name.capturedAt} per the file name. ` +
-                (opts.redacted ? 'Operator declared the file already redacted.' : 'Not for display until redacted.'),
+                (opts.redacted ? `${submitter.email} declared the file already redacted; not for display until a second person confirms.` : 'Not for display until redacted.'),
             },
           },
           { buffer, mimetype, originalname, size: buffer.length },
@@ -234,7 +256,7 @@ export async function import34A(app: INestApplicationContext, opts: Import34AOpt
         report.alreadyImported.push({ file: p.rel, stationCode: p.name.stationCode, reference: res.detail.reference });
         continue;
       }
-      report.ingested.push({ file: p.rel, stationCode: p.name.stationCode, reference: res.detail.reference, sha256: hash, possibleDuplicate: res.detail.duplicateFlag, held });
+      report.ingested.push({ file: p.rel, stationCode: p.name.stationCode, reference: res.detail.reference, sha256: hash, possibleDuplicate: res.detail.duplicateFlag, held, redactionDeclared: opts.redacted });
     } catch (err) {
       report.failed.push({ file: p.rel, error: err instanceof Error ? err.message : String(err) });
     }
@@ -282,8 +304,9 @@ async function ensureDraftVersion(
       },
     }),
   );
-  const wardByCode = new Map(rows.map((r) => [r.ward.officialCode, { constituency: r.constituency.officialCode, name: r.ward.officialName }]));
-  const constituencyByCode = new Map(rows.map((r) => [r.constituency.officialCode, r.constituency.officialName]));
+  // Keyed by county + code: the same code segment in another county is a different unit.
+  const wardByCode = new Map(rows.map((r) => [`${r.county.officialCode}|${r.ward.officialCode}`, { constituency: r.constituency.officialCode, name: r.ward.officialName }]));
+  const constituencyByCode = new Map(rows.map((r) => [`${r.county.officialCode}|${r.constituency.officialCode}`, r.constituency.officialName]));
   const centreByCode = new Map(rows.filter((r) => r.pollingCentre).map((r) => [r.pollingCentre!.officialCode, r.pollingCentre!.officialName]));
   const csvRows: Array<Array<string | number | null>> = rows.map((r) => [
     r.county.officialCode,
@@ -304,7 +327,7 @@ async function ensureDraftVersion(
     const county = KENYA_COUNTIES.find((c) => c.code === code.slice(0, 3))!;
     const k = code.slice(3, 6);
     const w = code.slice(6, 10);
-    const ward = wardByCode.get(w);
+    const ward = wardByCode.get(`${county.code}|${w}`);
     // A ward code already used under another constituency gets a qualified code, so nothing is re-parented.
     const wardCode = ward && ward.constituency !== k ? `${k}-${w}` : w;
     const centre = code.slice(0, 13);
@@ -312,7 +335,7 @@ async function ensureDraftVersion(
       county.code,
       county.name,
       k,
-      constituencyByCode.get(k) ?? `Constituency ${k} (from 34A file names, unverified)`,
+      constituencyByCode.get(`${county.code}|${k}`) ?? `Constituency ${k} (from 34A file names, unverified)`,
       wardCode,
       ward && ward.constituency === k ? ward.name : `Ward ${w} (from 34A file names, unverified)`,
       centre,
@@ -350,13 +373,14 @@ async function ensureDraftVersion(
 export function formatImportReport(r: Import34AReport): string {
   const lines = [
     `${r.dryRun ? 'DRY RUN (nothing written)' : 'Import'}: ${r.directory} → ${r.tenant} / ${r.cycle}`,
-    `  files seen: ${r.filesSeen}, parsed: ${r.parsed}, unparsable: ${r.unparsable.length}`,
+    `  files seen: ${r.filesSeen}, parsed: ${r.parsed}, unparsable: ${r.unparsable.length}, other county (skipped): ${r.otherCounty.length}`,
     `  station codes in the approved registry: ${r.knownStationFiles} file(s); unknown codes: ${r.unknownStationCodes.length}`,
   ];
   for (const u of r.unparsable) lines.push(`    unparsable: ${u.file} (${u.reason})`);
+  for (const o of r.otherCounty) lines.push(`    other county: ${o.file} (county ${o.countyCode} is not in this demo's registry)`);
   if (r.dryRun) lines.push(`  already stored (same SHA-256): ${r.alreadyStoredHashes}`);
   else {
-    lines.push(`  ingested: ${r.ingested.length} (held for redaction: ${r.ingested.filter((i) => i.held).length}, flagged as possible duplicates: ${r.ingested.filter((i) => i.possibleDuplicate).length})`);
+    lines.push(`  ingested: ${r.ingested.length} (held for redaction: ${r.ingested.filter((i) => i.held).length}, declared redacted and awaiting a second person: ${r.ingested.filter((i) => i.redactionDeclared).length}, flagged as possible duplicates: ${r.ingested.filter((i) => i.possibleDuplicate).length})`);
     lines.push(`  already imported (re-run): ${r.alreadyImported.length}`);
     if (r.failed.length) for (const f of r.failed) lines.push(`    failed: ${f.file}: ${f.error}`);
   }

@@ -45,14 +45,32 @@ export function svc<T>(app: INestApplicationContext, type: Type<T>): T {
   return app.get(type, { strict: false });
 }
 
+/** The tools only ever act in an organisation marked as a historical demo. */
+export class NotHistoricalDemoError extends Error {
+  override readonly name = 'NotHistoricalDemoError';
+}
+
+/** Synthetic demo users live under `<local>@<slug>.example.org` (see bungoma-demo DEMO_USERS). */
+export const isSyntheticDemoEmail = (slug: string, email: string) => email.toLowerCase().endsWith(`@${slug.toLowerCase()}.example.org`);
+
 /**
- * Build the AuthContext of a user of the tenant from their live role
- * assignments (same loader as the request guard). The tool is a local
- * operator action, so it counts as a completed MFA and re-authentication.
+ * Build the AuthContext of a SYNTHETIC demo user of a historical demo
+ * organisation from their live role assignments (same loader as the request
+ * guard). The route guard (and its MFA and re-authentication checks) is not
+ * in the path, so this is refused for any organisation that is not a
+ * historical demo and for any account that is not one of the synthetic demo
+ * users: real people sign in through the app with their own MFA.
  */
 export async function authFor(app: INestApplicationContext, tenantId: string, email: string): Promise<AuthContext> {
   const prisma = svc(app, PrismaService);
   const permissions = svc(app, PermissionService);
+  const tenant = await prisma.client.tenant.findUnique({ where: { id: tenantId }, select: { slug: true, historicalDemo: true } });
+  if (!tenant?.historicalDemo) {
+    throw new NotHistoricalDemoError(`The demo tools only act in a historical demo organisation; "${tenant?.slug ?? tenantId}" is not one`);
+  }
+  if (!isSyntheticDemoEmail(tenant.slug, email)) {
+    throw new NotHistoricalDemoError(`The demo tools only act as the synthetic demo users (…@${tenant.slug}.example.org), not as ${email}`);
+  }
   return prisma.withTenant(tenantId, async (tx) => {
     const user = await tx.user.findFirst({ where: { email: email.toLowerCase() }, select: { id: true, email: true, displayName: true, status: true } });
     if (!user || user.status !== 'ACTIVE') throw new Error(`No active user ${email} in this organisation`);
@@ -85,11 +103,13 @@ export function requirePermission(auth: AuthContext, ...keys: PermissionKey[]): 
   if (missing.length) throw AppException.forbidden(`${auth.email} lacks ${missing.join(', ')}`, { required: missing });
 }
 
-export async function resolveTenant(app: INestApplicationContext, slug: string): Promise<{ id: string; slug: string; historicalDemo: boolean }> {
+/** A historical demo organisation by its code; any other organisation is refused. */
+export async function resolveDemoTenant(app: INestApplicationContext, slug: string): Promise<{ id: string; slug: string; historicalDemo: true }> {
   const prisma = svc(app, PrismaService);
   const t = await prisma.client.tenant.findUnique({ where: { slug }, select: { id: true, slug: true, historicalDemo: true } });
   if (!t) throw new Error(`No organisation with code "${slug}"`);
-  return t;
+  if (!t.historicalDemo) throw new NotHistoricalDemoError(`Organisation "${slug}" is not a historical demo organisation; the demo tools never write to it`);
+  return { id: t.id, slug: t.slug, historicalDemo: true };
 }
 
 /** Minimal `--flag value` / `--switch` parser for the CLIs. */
