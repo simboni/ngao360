@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type AgentDetail, completeness, findForbiddenTallyLanguage, type FieldLocation, type IncidentEvent, WAR_ROOM_LABEL } from '@ngao360/shared';
+import { Activity } from 'lucide-react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AccreditationBadge, IncidentStatusBadge, SeverityBadge } from '../common/field-badges';
 import { auditActionLabel, buildTimeline, compareIncidentPriority, completenessText, formatAge, pairAssignments, stationLabel } from '../common/field-model';
@@ -217,7 +218,7 @@ describe('War Room', () => {
   it('panels say unofficial and internal and refuse to show numbers when unavailable', () => {
     const envelope = { label: WAR_ROOM_LABEL, asOf: '2027-08-09T10:00:00Z', completeness: completeness(153, 0), available: false };
     const html = renderToStaticMarkup(
-      <Panel id="p" title="Tally verification" icon={() => null} envelope={envelope}>
+      <Panel id="p" title="Tally verification" icon={Activity} envelope={envelope}>
         <span>42</span>
       </Panel>,
     );

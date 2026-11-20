@@ -327,6 +327,10 @@ function AgentHistory({ id }: { id: string }) {
   );
 }
 
+function uniqueById<T extends { id: string }>(rows: T[]): T[] {
+  return [...new Map(rows.map((r) => [r.id, r])).values()];
+}
+
 /**
  * Field reports and incidents at the agent's stations. The contract has no
  * author/agent filter yet (docs/CHANGE_REQUESTS.md, Field web), so records are
@@ -339,12 +343,12 @@ function StationActivity({ agent }: { agent: AgentDetail }) {
   const canReports = can('field.reports.view');
   const canIncidents = can('field.incidents.view');
   const reports = useAsync(
-    async () => (await Promise.all(codes.map((c) => fieldApi.reports({ pollingStationCode: c, pageSize: 20 })))).flatMap((p) => p.items),
+    async () => uniqueById((await Promise.all(codes.map((c) => fieldApi.reports({ pollingStationCode: c, pageSize: 20 })))).flatMap((p) => p.items)),
     [codes.join(',')],
     canReports && codes.length > 0,
   );
   const incidents = useAsync(
-    async () => (await Promise.all(codes.map((c) => fieldApi.incidents({ pollingStationCode: c, pageSize: 20 })))).flatMap((p) => p.items),
+    async () => uniqueById((await Promise.all(codes.map((c) => fieldApi.incidents({ pollingStationCode: c, pageSize: 20 })))).flatMap((p) => p.items)),
     [codes.join(',')],
     canIncidents && codes.length > 0,
   );

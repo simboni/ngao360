@@ -406,10 +406,10 @@ function StationGrid({
                   <span className="sr-only">Select</span>
                 </th>
               ) : null}
-              <th scope="col" className="px-3 py-2 text-left">Station</th>
-              <th scope="col" className="px-3 py-2 text-left">Coverage</th>
+              <th scope="col" className="min-w-[200px] px-3 py-2 text-left">Station</th>
+              <th scope="col" className="whitespace-nowrap px-3 py-2 text-left">Coverage</th>
               {DEPLOYMENT_ROLES.map((r) => (
-                <th key={r} scope="col" className="px-3 py-2 text-left">
+                <th key={r} scope="col" className="min-w-[160px] whitespace-nowrap px-3 py-2 text-left">
                   {DEPLOYMENT_ROLE_LABELS[r]}
                 </th>
               ))}
@@ -454,11 +454,11 @@ function StationGrid({
                     </td>
                   ) : null}
                   <td className="px-3 py-2.5">
-                    <p className="font-medium text-ink">{s.pollingStationCode}</p>
+                    <p className="whitespace-nowrap font-medium text-ink">{s.pollingStationCode}</p>
                     <p className="text-meta text-slate">{s.pollingStationName}</p>
                     <p className="text-meta text-slate">{s.ward ?? ''}</p>
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="whitespace-nowrap px-3 py-2.5">
                     {s.covered ? (
                       <span className="inline-flex items-center gap-1 text-meta font-medium text-success">
                         <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Covered

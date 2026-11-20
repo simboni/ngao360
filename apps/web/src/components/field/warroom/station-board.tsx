@@ -92,7 +92,7 @@ export function StationBoard({
       <div className="p-4">
         {loading && !list ? <p className="text-meta text-slate">Loading stations…</p> : null}
         {list && list.items.length === 0 ? <p className="py-6 text-center text-slate">No stations match this filter.</p> : null}
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 min-[2200px]:grid-cols-6">
+        <ul aria-label="Stations" className="grid max-h-[75vh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 min-[2200px]:grid-cols-6">
           {(list?.items ?? []).map((row) => {
             const code = row.location.station?.code ?? '';
             return (

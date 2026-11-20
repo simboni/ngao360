@@ -470,3 +470,40 @@ Applied directly to `docs/API_CONTRACT.md` §9–13 in the review-fix pass (see 
    (200) or, for a PDF with a clean scan only, a 302 to a download.
 5. Portal privacy notice `office-portal-2026-11-v2`; portal HEIC photos are refused.
 
+
+## Field: desktop web (S13–S16, incident desk; from the field web agent)
+
+Built against API_CONTRACT §16–21 in `apps/web/src/app/(app)/field/**`, `app/(app)/warroom/page.tsx`
+and `apps/web/src/components/field/{common,agents,deployment,readiness,incidents,warroom}/**`. No
+shared schema or migration was changed. Requests:
+
+1. **Dashboard mount (admin UI owns the dashboard).** Mount `<FieldDashboardCard />` from
+   `@/components/field/field-dashboard-card` in the command centre, below the KPI row. It renders
+   nothing unless the `field` module is on and the user holds `field.readiness.view` or
+   `field.incidents.view`; it reads `GET /field/readiness/summary` and `GET /field/incidents?view=open`
+   only, and links to `/warroom` when the tally module is also on.
+2. **Incident assignee lookup.** There is no field endpoint listing who may be assigned. The assign
+   and escalate dialogs offer the caller, assignees seen on open incidents and, for `users.view`
+   holders only, `/admin/users`. Proposed: `GET /field/incidents/:id/assignable-users`
+   (`field.incidents.assign`, geo) returning `UserRef[]` of active users holding
+   `field.incidents.triage` over the incident location (mirrors `/office/cases/:id/assignable-officers`).
+3. **Agent activity filters.** S13 shows reports and incidents at the agent's (first five) station
+   codes because `FieldReportQuery` / `IncidentQuery` have no author filter. Proposed: optional
+   `authorUserId` on `FieldReportQuery` and `reporterUserId` on `IncidentQuery` (only for callers with
+   the matching view permission), or `GET /field/agents/:id/activity`.
+4. **Coverage slots carry no agent id.** `StationCoverageSlot.slots[]` has `agentDisplayName` only, so
+   the planner's client-side double-booking precheck matches by name and is a warning; the server's
+   409 `details.conflicts` stays authoritative. Proposed: add `agentId` to each slot.
+5. **War Room timeline.** There is no event feed; the timeline is built from `lastCheckInAt` /
+   `lastFieldReportAt` of the station rows in view and the open-incident queue. Proposed:
+   `GET /warroom/timeline?since=` (`warroom.view`, scope by code) returning check-in, field-report,
+   incident and station-status events with `WAR_ROOM_LABEL`.
+6. **Initial severity in the incident detail.** `IncidentDetail` has `reportedCategory` but no
+   `initialSeverity`; the original-report card shows the reported category only and the triage
+   change appears in the timeline. Proposed: add `initialSeverity` to `IncidentSummarySchema`.
+7. **Election cycle without deployment or readiness view.** Screens learn the field cycle from
+   `GET /field/deployments/coverage` or `/field/readiness/summary`, else the latest ACTIVE cycle from
+   `/reference/election-cycles`. A tiny `GET /field/cycle` (any field view permission) returning the
+   resolved cycle and its `dataProvenance` would remove the guess and give observers the provenance
+   label without `reference.view`. Geography filters likewise need `reference.view`
+   (War Room observers lack it, so they see their whole scope without filters).
