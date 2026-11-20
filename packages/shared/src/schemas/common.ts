@@ -60,6 +60,10 @@ export const ERROR_CODES = {
   SEPARATION_OF_DUTIES: 'SEPARATION_OF_DUTIES',
   IMMUTABLE_RECORD: 'IMMUTABLE_RECORD',
   RATE_LIMITED: 'RATE_LIMITED',
+  /** The tenant has switched the module off (tenant module activation). */
+  MODULE_DISABLED: 'MODULE_DISABLED',
+  /** A public-portal anti-abuse check failed (honeypot, captcha). The message stays generic. */
+  ABUSE_CHECK_FAILED: 'ABUSE_CHECK_FAILED',
   CSRF_HEADER_MISSING: 'CSRF_HEADER_MISSING',
   INTERNAL: 'INTERNAL',
 } as const;

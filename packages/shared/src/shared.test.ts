@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as enums from './enums';
+import * as office from './office/enums';
 import {
   ALL_PERMISSION_KEYS,
   PERMISSION_DEFINITIONS,
@@ -116,6 +117,33 @@ describe('enum parity with Prisma schema', () => {
     ['IncidentStatus', enums.INCIDENT_STATUSES],
     ['IncidentPriority', enums.INCIDENT_PRIORITIES],
     ['NotificationChannel', enums.NOTIFICATION_CHANNELS],
+    // NGAO360 Office
+    ['ContactPreference', office.CONTACT_PREFERENCES],
+    ['VerificationStatus', office.VERIFICATION_STATUSES],
+    ['CorrespondenceDirection', office.CORRESPONDENCE_DIRECTIONS],
+    ['CorrespondenceChannel', office.CORRESPONDENCE_CHANNELS],
+    ['CorrespondenceCategory', office.CORRESPONDENCE_CATEGORIES],
+    ['CorrespondenceStatus', office.CORRESPONDENCE_STATUSES],
+    ['AppointmentSource', office.APPOINTMENT_SOURCES],
+    ['AppointmentStatus', office.APPOINTMENT_STATUSES],
+    ['MeetingStatus', office.MEETING_STATUSES],
+    ['ActionItemStatus', office.ACTION_ITEM_STATUSES],
+    ['CaseCategory', office.CASE_CATEGORIES],
+    ['CaseSource', office.CASE_SOURCES],
+    ['CasePriority', office.CASE_PRIORITIES],
+    ['CaseStatus', office.CASE_STATUSES],
+    ['CaseClosureReason', office.CASE_CLOSURE_REASONS],
+    ['CaseEventType', office.CASE_EVENT_TYPES],
+    ['CaseEventVisibility', office.CASE_EVENT_VISIBILITIES],
+    ['CaseEventActorType', office.CASE_EVENT_ACTOR_TYPES],
+    ['ReferralStatus', office.REFERRAL_STATUSES],
+    ['InstitutionType', office.INSTITUTION_TYPES],
+    ['ProjectCategory', office.PROJECT_CATEGORIES],
+    ['CommitmentSource', office.COMMITMENT_SOURCES],
+    ['FundingSource', office.FUNDING_SOURCES],
+    ['ProjectStatus', office.PROJECT_STATUSES],
+    ['MilestoneStatus', office.MILESTONE_STATUSES],
+    ['ProjectEvidenceType', office.PROJECT_EVIDENCE_TYPES],
   ];
   it.each(pairs)('%s matches', (name, values) => {
     expect(prismaEnums.get(name)).toEqual([...values]);

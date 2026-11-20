@@ -2,6 +2,10 @@ import type { PermissionKey, PermissionModule } from '@ngao360/shared';
 import {
   AlertTriangle,
   BarChart3,
+  CalendarClock,
+  FolderKanban,
+  LifeBuoy,
+  Mail,
   ClipboardCheck,
   FileStack,
   Inbox,
@@ -46,6 +50,18 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Supervisor queue', href: '/tally/inbox?view=awaiting_supervisor', icon: ClipboardCheck, anyOf: ['tally.approve'] },
       { label: 'Parallel tally', href: '/tally/results', icon: BarChart3, anyOf: ['tally.results.view'] },
       { label: 'Discrepancies', href: '/tally/discrepancies', icon: AlertTriangle, anyOf: ['tally.discrepancy.view'] },
+    ],
+  },
+  {
+    // NGAO360 Office (blueprint 2.2). Hidden unless the tenant has the office module on
+    // and the user holds an office permission (canAccessModule checks both).
+    label: 'Office',
+    module: 'office',
+    items: [
+      { label: 'Correspondence', href: '/office/correspondence', icon: Mail, anyOf: ['office.correspondence.view'] },
+      { label: 'Appointments', href: '/office/appointments', icon: CalendarClock, anyOf: ['office.appointments.view', 'office.meetings.view'] },
+      { label: 'Citizen cases', href: '/office/cases', icon: LifeBuoy, anyOf: ['office.cases.view'] },
+      { label: 'Projects', href: '/office/projects', icon: FolderKanban, anyOf: ['office.projects.view'] },
     ],
   },
   {

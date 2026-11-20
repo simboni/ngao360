@@ -259,6 +259,9 @@ enum StoredFilePurpose {
   EXPORT
   REFERENCE_IMPORT
   OTHER
+  CORRESPONDENCE
+  CASE_EVIDENCE
+  PROJECT_EVIDENCE
 }
 
 enum MalwareScanStatus {
@@ -300,6 +303,270 @@ enum NotificationChannel {
   IN_APP
   EMAIL
   SMS
+}
+
+// ---------------------------------------------------------------------------
+// NGAO360 Office enums (packages/shared/src/office/enums.ts)
+// ---------------------------------------------------------------------------
+
+enum ContactPreference {
+  NONE
+  PHONE
+  SMS
+  EMAIL
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING_VERIFICATION
+  VERIFIED
+  DISPUTED
+}
+
+enum CorrespondenceDirection {
+  INCOMING
+  OUTGOING
+}
+
+enum CorrespondenceChannel {
+  POST
+  HAND_DELIVERY
+  EMAIL
+  COURIER
+  INTERNAL_MEMO
+  OTHER
+}
+
+enum CorrespondenceCategory {
+  GENERAL
+  INVITATION
+  PETITION
+  COMPLAINT
+  REQUEST_FOR_SUPPORT
+  GOVERNMENT_CIRCULAR
+  INTERGOVERNMENTAL
+  LEGAL
+  MEDIA
+  FINANCE
+  OTHER
+}
+
+enum CorrespondenceStatus {
+  DRAFT
+  RECEIVED
+  ASSIGNED
+  IN_PROGRESS
+  RESPONDED
+  SENT
+  FILED
+  ARCHIVED
+}
+
+enum AppointmentSource {
+  WALK_IN
+  PHONE
+  EMAIL
+  LETTER
+  REFERRAL
+  OTHER
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  RESCHEDULED
+  DECLINED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  HELD
+  CANCELLED
+}
+
+enum ActionItemStatus {
+  OPEN
+  DONE
+  CANCELLED
+}
+
+enum CaseCategory {
+  WATER_SANITATION
+  ROADS_TRANSPORT
+  HEALTH
+  EDUCATION_BURSARY
+  AGRICULTURE_LIVESTOCK
+  LAND_HOUSING
+  TRADE_MARKETS
+  ENVIRONMENT_WASTE
+  SOCIAL_SUPPORT
+  PUBLIC_SERVICE_COMPLAINT
+  SECURITY_REFERRAL
+  OTHER
+}
+
+enum CaseSource {
+  PORTAL
+  WALK_IN
+  PHONE
+  LETTER
+  EMAIL
+  SMS
+  OUTREACH
+}
+
+enum CasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// Blueprint 9.2 stages
+enum CaseStatus {
+  SUBMITTED
+  TRIAGE
+  ASSIGNED
+  IN_PROGRESS
+  REFERRED
+  RESOLUTION_PROPOSED
+  CITIZEN_FEEDBACK
+  CLOSED
+  REOPENED
+}
+
+enum CaseClosureReason {
+  RESOLVED
+  REFERRED_OUT
+  DUPLICATE
+  OUT_OF_JURISDICTION
+  NO_RESPONSE_FROM_REQUESTER
+  WITHDRAWN
+  ABUSIVE_OR_SPAM
+}
+
+enum CaseEventType {
+  SUBMITTED
+  STATUS_CHANGED
+  ASSIGNED
+  NOTE
+  PUBLIC_UPDATE
+  CONTACT_ATTEMPT
+  EVIDENCE_ADDED
+  REFERRED
+  REFERRAL_UPDATED
+  RESOLUTION_PROPOSED
+  CITIZEN_FEEDBACK
+  CLOSED
+  REOPENED
+}
+
+enum CaseEventVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum CaseEventActorType {
+  STAFF
+  REQUESTER
+  SYSTEM
+}
+
+enum ReferralStatus {
+  SENT
+  ACKNOWLEDGED
+  RESPONDED
+  NO_RESPONSE
+  CLOSED
+}
+
+enum InstitutionType {
+  COUNTY_DEPARTMENT
+  COUNTY_ENTITY
+  COUNTY_ASSEMBLY
+  NATIONAL_MINISTRY
+  NATIONAL_AGENCY
+  STATE_CORPORATION
+  CONSTITUENCY_FUND
+  DEVELOPMENT_PARTNER
+  NON_GOVERNMENTAL
+  CONTRACTOR
+  OTHER
+}
+
+enum ProjectCategory {
+  WATER_SANITATION
+  ROADS_INFRASTRUCTURE
+  HEALTH
+  EDUCATION
+  AGRICULTURE
+  TRADE_MARKETS
+  ENERGY
+  ENVIRONMENT
+  SOCIAL_SERVICES
+  YOUTH_SPORTS
+  HOUSING_URBAN
+  ICT
+  OTHER
+}
+
+enum CommitmentSource {
+  MANIFESTO_PLEDGE
+  PUBLIC_STATEMENT
+  COUNTY_INTEGRATED_DEVELOPMENT_PLAN
+  ANNUAL_DEVELOPMENT_PLAN
+  COUNTY_BUDGET
+  NATIONAL_BUDGET
+  CONSTITUENCY_FUND
+  DEVELOPMENT_PARTNER_AGREEMENT
+  CITIZEN_REQUEST
+  OTHER
+}
+
+enum FundingSource {
+  COUNTY_GOVERNMENT
+  NATIONAL_GOVERNMENT
+  CONSTITUENCY_FUND
+  DEVELOPMENT_PARTNER
+  PUBLIC_PRIVATE_PARTNERSHIP
+  OTHER
+  NOT_YET_IDENTIFIED
+}
+
+// Blueprint 9.3 status list
+enum ProjectStatus {
+  PROPOSED
+  COMMITTED
+  APPROVED
+  FUNDED
+  PROCUREMENT
+  ONGOING
+  DELAYED
+  COMPLETED
+  VERIFIED_COMPLETED
+  CANCELLED
+}
+
+enum MilestoneStatus {
+  PLANNED
+  IN_PROGRESS
+  DONE
+  DELAYED
+  CANCELLED
+}
+
+enum ProjectEvidenceType {
+  PHOTO
+  INSPECTION_REPORT
+  COMPLETION_CERTIFICATE
+  HANDOVER_DOCUMENT
+  PAYMENT_RECORD
+  CONTRACT_DOCUMENT
+  MEETING_MINUTES
+  OTHER_DOCUMENT
 }
 
 // ============================================================================
@@ -353,6 +620,22 @@ model Tenant {
   incidents            Incident[]
   notifications        Notification[]
   referenceSequences   ReferenceSequence[]
+
+  modules                   TenantModule[]
+  institutions              Institution[]
+  correspondence            Correspondence[]
+  correspondenceAttachments CorrespondenceAttachment[]
+  appointments              Appointment[]
+  meetings                  Meeting[]
+  meetingActionItems        MeetingActionItem[]
+  meetingDecisions          MeetingDecision[]
+  citizenCases              CitizenCase[]
+  citizenCaseContacts       CitizenCaseContact[]
+  caseEvents                CaseEvent[]
+  caseReferrals             CaseReferral[]
+  projects                  Project[]
+  projectMilestones         ProjectMilestone[]
+  projectEvidence           ProjectEvidence[]
 
   @@map("tenants")
 }
@@ -413,6 +696,34 @@ model User {
   registryImports         RegistryImport[]        @relation("RegistryImporter")
   reportedIncidents       Incident[]              @relation("IncidentReporter")
   assignedIncidents       Incident[]              @relation("IncidentAssignee")
+
+  // NGAO360 Office
+  updatedModules             TenantModule[]             @relation("ModuleUpdater")
+  assignedCorrespondence     Correspondence[]           @relation("CorrespondenceAssignee")
+  createdCorrespondence      Correspondence[]           @relation("CorrespondenceCreator")
+  correspondenceAttachments  CorrespondenceAttachment[] @relation("CorrespondenceAttachmentAdder")
+  assignedAppointments       Appointment[]              @relation("AppointmentAssignee")
+  createdAppointments        Appointment[]              @relation("AppointmentCreator")
+  ownedMeetings              Meeting[]                  @relation("MeetingOwner")
+  minutedMeetings            Meeting[]                  @relation("MeetingMinutesRecorder")
+  meetingActionItems         MeetingActionItem[]        @relation("MeetingActionOwner")
+  meetingDecisions           MeetingDecision[]          @relation("MeetingDecisionRecorder")
+  assignedCases              CitizenCase[]              @relation("CaseAssignee")
+  triagedCases               CitizenCase[]              @relation("CaseTriager")
+  resolvedCases              CitizenCase[]              @relation("CaseResolutionProposer")
+  closedCases                CitizenCase[]              @relation("CaseCloser")
+  createdCases               CitizenCase[]              @relation("CaseCreator")
+  caseEvents                 CaseEvent[]                @relation("CaseEventActor")
+  caseReferrals              CaseReferral[]             @relation("CaseReferrer")
+  trackedProjects            Project[]                  @relation("ProjectTrackingOfficer")
+  createdProjects            Project[]                  @relation("ProjectCreator")
+  reportedProjectCompletions Project[]                  @relation("ProjectCompletionReporter")
+  verifiedProjectCompletions Project[]                  @relation("ProjectCompletionVerifier")
+  verifiedProjectExpenditure Project[]                  @relation("ProjectExpenditureVerifier")
+  publishedProjects          Project[]                  @relation("ProjectPublisher")
+  verifiedMilestones         ProjectMilestone[]         @relation("MilestoneVerifier")
+  uploadedProjectEvidence    ProjectEvidence[]          @relation("EvidenceUploader")
+  verifiedProjectEvidence    ProjectEvidence[]          @relation("EvidenceVerifier")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -719,6 +1030,16 @@ model GeographicUnit {
   snapshots              TallySnapshot[]
   incidents              Incident[]
 
+  // NGAO360 Office locations (down to ward level)
+  casesAtUnit            CitizenCase[] @relation("CaseUnit")
+  casesInCounty          CitizenCase[] @relation("CaseCounty")
+  casesInConstituency    CitizenCase[] @relation("CaseConstituency")
+  casesInWard            CitizenCase[] @relation("CaseWard")
+  projectsAtUnit         Project[]     @relation("ProjectUnit")
+  projectsInCounty       Project[]     @relation("ProjectCounty")
+  projectsInConstituency Project[]     @relation("ProjectConstituency")
+  projectsInWard         Project[]     @relation("ProjectWard")
+
   @@unique([tenantId, electionCycleId, type, officialCode, sourceVersion])
   @@index([tenantId, electionCycleId, type])
   @@index([tenantId, parentId])
@@ -898,6 +1219,10 @@ model StoredFile {
   registryVersions RegistryVersion[]
   registryImports  RegistryImport[]
   exports          TallyExport[]
+
+  correspondenceAttachments CorrespondenceAttachment[]
+  caseEvents                CaseEvent[]
+  projectEvidence           ProjectEvidence[]
 
   @@unique([tenantId, sha256])
   @@map("stored_files")
@@ -1287,4 +1612,545 @@ model Notification {
 
   @@index([tenantId, userId, readAt])
   @@map("notifications")
+}
+
+// ============================================================================
+// Tenant module activation
+// ============================================================================
+
+/// Per-tenant module switch (packages/shared/src/modules.ts). A missing row means the
+/// module's default applies. Switching a module off hides it; it never deletes data.
+model TenantModule {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  /// 'tally' | 'office' (CHECK constraint in the migration).
+  moduleKey   String   @map("module_key")
+  enabled     Boolean
+  /// Module configuration, e.g. OfficeModuleConfig for 'office'.
+  config      Json     @default("{}")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  updatedBy User?  @relation("ModuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@id([tenantId, moduleKey])
+  @@map("tenant_modules")
+}
+
+// ============================================================================
+// NGAO360 Office (blueprint 9). Separate tables and permissions from campaign
+// and tally data (blueprint 15.2). Records are never deleted (DB triggers).
+// ============================================================================
+
+/// Registry of responsible bodies (county departments, national agencies, funds…).
+model Institution {
+  id              String          @id @default(uuid()) @db.Uuid
+  tenantId        String          @map("tenant_id") @db.Uuid
+  name            String
+  shortName       String?         @map("short_name")
+  type            InstitutionType
+  parentId        String?         @map("parent_id") @db.Uuid
+  contactEmail    String?         @map("contact_email")
+  contactPhone    String?         @map("contact_phone")
+  physicalAddress String?         @map("physical_address")
+  mandate         String?
+  isActive        Boolean         @default(true) @map("is_active")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  parent         Institution?   @relation("InstitutionHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children       Institution[]  @relation("InstitutionHierarchy")
+  referrals      CaseReferral[]
+  responsibleFor Project[]      @relation("ProjectResponsibleInstitution")
+  implementing   Project[]      @relation("ProjectImplementingAgency")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, type])
+  @@map("institutions")
+}
+
+/// S23 correspondence register (incoming and outgoing).
+model Correspondence {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  tenantId              String                  @map("tenant_id") @db.Uuid
+  reference             String
+  direction             CorrespondenceDirection
+  channel               CorrespondenceChannel
+  category              CorrespondenceCategory
+  sensitivity           SensitivityLevel        @default(INTERNAL)
+  subject               String
+  senderName            String?                 @map("sender_name")
+  senderOrganisation    String?                 @map("sender_organisation")
+  recipientName         String?                 @map("recipient_name")
+  recipientOrganisation String?                 @map("recipient_organisation")
+  externalReference     String?                 @map("external_reference")
+  documentDate          DateTime?               @map("document_date") @db.Date
+  receivedAt            DateTime?               @map("received_at") @db.Timestamptz(3)
+  sentAt                DateTime?               @map("sent_at") @db.Timestamptz(3)
+  responseDueDate       DateTime?               @map("response_due_date") @db.Date
+  status                CorrespondenceStatus
+  assignedToId          String?                 @map("assigned_to_id") @db.Uuid
+  summary               String?
+  linkedCaseId          String?                 @map("linked_case_id") @db.Uuid
+  inReplyToId           String?                 @map("in_reply_to_id") @db.Uuid
+  createdById           String                  @map("created_by_id") @db.Uuid
+  version               Int                     @default(0)
+  createdAt             DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant       Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignedTo   User?                      @relation("CorrespondenceAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdBy    User                       @relation("CorrespondenceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  linkedCase   CitizenCase?               @relation(fields: [linkedCaseId], references: [id], onDelete: Restrict)
+  inReplyTo    Correspondence?            @relation("CorrespondenceReplies", fields: [inReplyToId], references: [id], onDelete: Restrict)
+  replies      Correspondence[]           @relation("CorrespondenceReplies")
+  attachments  CorrespondenceAttachment[]
+  appointments Appointment[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, direction, status])
+  @@index([tenantId, assignedToId, status])
+  @@index([tenantId, responseDueDate])
+  @@map("correspondence")
+}
+
+/// Scans and documents attached to correspondence. Append-only (never removed).
+model CorrespondenceAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @map("tenant_id") @db.Uuid
+  correspondenceId String   @map("correspondence_id") @db.Uuid
+  storedFileId     String   @map("stored_file_id") @db.Uuid
+  label            String?
+  addedById        String   @map("added_by_id") @db.Uuid
+  addedAt          DateTime @default(now()) @map("added_at") @db.Timestamptz(3)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  correspondence Correspondence @relation(fields: [correspondenceId], references: [id], onDelete: Restrict)
+  storedFile     StoredFile     @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  addedBy        User           @relation("CorrespondenceAttachmentAdder", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@unique([correspondenceId, storedFileId])
+  @@index([tenantId, correspondenceId])
+  @@map("correspondence_attachments")
+}
+
+/// Appointment requests and the office diary.
+model Appointment {
+  id                     String            @id @default(uuid()) @db.Uuid
+  tenantId               String            @map("tenant_id") @db.Uuid
+  reference              String
+  source                 AppointmentSource
+  requesterName          String            @map("requester_name")
+  requesterOrganisation  String?           @map("requester_organisation")
+  contactPhone           String?           @map("contact_phone")
+  contactEmail           String?           @map("contact_email")
+  contactPreference      ContactPreference @default(PHONE) @map("contact_preference")
+  purpose                String
+  preferredStart         DateTime?         @map("preferred_start") @db.Timestamptz(3)
+  preferredEnd           DateTime?         @map("preferred_end") @db.Timestamptz(3)
+  confirmedStart         DateTime?         @map("confirmed_start") @db.Timestamptz(3)
+  confirmedEnd           DateTime?         @map("confirmed_end") @db.Timestamptz(3)
+  venue                  String?
+  assignedOffice         String?           @map("assigned_office")
+  assignedToId           String?           @map("assigned_to_id") @db.Uuid
+  status                 AppointmentStatus @default(REQUESTED)
+  outcome                String?
+  outcomeRecordedAt      DateTime?         @map("outcome_recorded_at") @db.Timestamptz(3)
+  followUpRequired       Boolean           @default(false) @map("follow_up_required")
+  followUpDate           DateTime?         @map("follow_up_date") @db.Date
+  followUpNotes          String?           @map("follow_up_notes")
+  privacyNoticeVersion   String            @map("privacy_notice_version")
+  linkedCaseId           String?           @map("linked_case_id") @db.Uuid
+  linkedCorrespondenceId String?           @map("linked_correspondence_id") @db.Uuid
+  createdById            String            @map("created_by_id") @db.Uuid
+  version                Int               @default(0)
+  createdAt              DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant               Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignedTo           User?           @relation("AppointmentAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdBy            User            @relation("AppointmentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  linkedCase           CitizenCase?    @relation(fields: [linkedCaseId], references: [id], onDelete: Restrict)
+  linkedCorrespondence Correspondence? @relation(fields: [linkedCorrespondenceId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status, confirmedStart])
+  @@index([tenantId, assignedToId])
+  @@map("appointments")
+}
+
+/// Office meetings (kept lean: agenda and participants as JSON, minutes as text).
+model Meeting {
+  id                  String           @id @default(uuid()) @db.Uuid
+  tenantId            String           @map("tenant_id") @db.Uuid
+  title               String
+  scheduledStart      DateTime         @map("scheduled_start") @db.Timestamptz(3)
+  scheduledEnd        DateTime?        @map("scheduled_end") @db.Timestamptz(3)
+  venue               String?
+  onlineLink          String?          @map("online_link")
+  status              MeetingStatus    @default(SCHEDULED)
+  sensitivity         SensitivityLevel @default(INTERNAL)
+  /// MeetingAgendaItem[]
+  agenda              Json             @default("[]")
+  /// MeetingParticipant[]
+  participants        Json             @default("[]")
+  minutes             String?
+  minutesRecordedById String?          @map("minutes_recorded_by_id") @db.Uuid
+  minutesRecordedAt   DateTime?        @map("minutes_recorded_at") @db.Timestamptz(3)
+  ownerId             String           @map("owner_id") @db.Uuid
+  version             Int              @default(0)
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  owner           User                @relation("MeetingOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  minutesRecorder User?               @relation("MeetingMinutesRecorder", fields: [minutesRecordedById], references: [id], onDelete: Restrict)
+  actionItems     MeetingActionItem[]
+  decisions       MeetingDecision[]
+
+  @@index([tenantId, scheduledStart])
+  @@map("meetings")
+}
+
+model MeetingActionItem {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  meetingId   String           @map("meeting_id") @db.Uuid
+  description String
+  ownerId     String?          @map("owner_id") @db.Uuid
+  ownerName   String?          @map("owner_name")
+  dueDate     DateTime?        @map("due_date") @db.Date
+  status      ActionItemStatus @default(OPEN)
+  completedAt DateTime?        @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Restrict)
+  owner   User?   @relation("MeetingActionOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, meetingId])
+  @@index([tenantId, ownerId, status])
+  @@map("meeting_action_items")
+}
+
+/// Decision log. Append-only: a change is a new decision that supersedes the earlier one.
+model MeetingDecision {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  meetingId    String   @map("meeting_id") @db.Uuid
+  decision     String
+  rationale    String?
+  supersedesId String?  @map("supersedes_id") @db.Uuid
+  recordedById String   @map("recorded_by_id") @db.Uuid
+  recordedAt   DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  meeting      Meeting           @relation(fields: [meetingId], references: [id], onDelete: Restrict)
+  supersedes   MeetingDecision?  @relation("DecisionSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy MeetingDecision[] @relation("DecisionSupersedes")
+  recordedBy   User              @relation("MeetingDecisionRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, meetingId])
+  @@map("meeting_decisions")
+}
+
+/// S25 citizen case. Requester contact lives in citizen_case_contacts (separate
+/// table, separate permission), never in this row.
+model CitizenCase {
+  id                     String             @id @default(uuid()) @db.Uuid
+  tenantId               String             @map("tenant_id") @db.Uuid
+  /// Internal sequential reference, e.g. CASE-2026-000123.
+  reference              String
+  /// Random reference given to the requester, e.g. BGM-7K3F-9Q2X.
+  publicReference        String             @map("public_reference")
+  /// SHA-256 of the tracking code shown once to the requester (null for staff-recorded cases until issued).
+  trackingCodeHash       String?            @map("tracking_code_hash")
+  source                 CaseSource
+  category               CaseCategory
+  priority               CasePriority       @default(MEDIUM)
+  sensitivity            SensitivityLevel   @default(INTERNAL)
+  title                  String
+  description            String
+  /// Lowest unit given (ward, constituency or county); ancestors are denormalised below.
+  geographicUnitId       String?            @map("geographic_unit_id") @db.Uuid
+  countyId               String?            @map("county_id") @db.Uuid
+  constituencyId         String?            @map("constituency_id") @db.Uuid
+  wardId                 String?            @map("ward_id") @db.Uuid
+  locationDescription    String?            @map("location_description")
+  privacyNoticeVersion   String             @map("privacy_notice_version")
+  consentToContact       Boolean            @default(false) @map("consent_to_contact")
+  status                 CaseStatus         @default(SUBMITTED)
+  assigneeId             String?            @map("assignee_id") @db.Uuid
+  triagedById            String?            @map("triaged_by_id") @db.Uuid
+  triagedAt              DateTime?          @map("triaged_at") @db.Timestamptz(3)
+  nextReviewDate         DateTime?          @map("next_review_date") @db.Date
+  resolutionSummary      String?            @map("resolution_summary")
+  resolutionProposedById String?            @map("resolution_proposed_by_id") @db.Uuid
+  resolutionProposedAt   DateTime?          @map("resolution_proposed_at") @db.Timestamptz(3)
+  closureReason          CaseClosureReason? @map("closure_reason")
+  closureNote            String?            @map("closure_note")
+  closedById             String?            @map("closed_by_id") @db.Uuid
+  closedAt               DateTime?          @map("closed_at") @db.Timestamptz(3)
+  duplicateOfId          String?            @map("duplicate_of_id") @db.Uuid
+  /// Null for portal submissions.
+  createdById            String?            @map("created_by_id") @db.Uuid
+  submittedAt            DateTime           @default(now()) @map("submitted_at") @db.Timestamptz(3)
+  version                Int                @default(0)
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant               Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  geographicUnit       GeographicUnit?     @relation("CaseUnit", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  county               GeographicUnit?     @relation("CaseCounty", fields: [countyId], references: [id], onDelete: Restrict)
+  constituency         GeographicUnit?     @relation("CaseConstituency", fields: [constituencyId], references: [id], onDelete: Restrict)
+  ward                 GeographicUnit?     @relation("CaseWard", fields: [wardId], references: [id], onDelete: Restrict)
+  assignee             User?               @relation("CaseAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  triagedBy            User?               @relation("CaseTriager", fields: [triagedById], references: [id], onDelete: Restrict)
+  resolutionProposedBy User?               @relation("CaseResolutionProposer", fields: [resolutionProposedById], references: [id], onDelete: Restrict)
+  closedBy             User?               @relation("CaseCloser", fields: [closedById], references: [id], onDelete: Restrict)
+  createdBy            User?               @relation("CaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  duplicateOf          CitizenCase?        @relation("CaseDuplicates", fields: [duplicateOfId], references: [id], onDelete: Restrict)
+  duplicates           CitizenCase[]       @relation("CaseDuplicates")
+  contact              CitizenCaseContact?
+  events               CaseEvent[]
+  referrals            CaseReferral[]
+  correspondence       Correspondence[]
+  appointments         Appointment[]
+
+  @@unique([tenantId, reference])
+  @@unique([tenantId, publicReference])
+  @@index([tenantId, status])
+  @@index([tenantId, assigneeId, status])
+  @@index([tenantId, countyId])
+  @@index([tenantId, constituencyId])
+  @@index([tenantId, wardId])
+  @@index([tenantId, nextReviewDate])
+  @@map("citizen_cases")
+}
+
+/// Optional requester contact, stored minimally and apart from the case body.
+/// Read only through the contact endpoint (office.cases.contact.view, audited).
+/// Erasure nulls the fields and sets erased_at; the row is never deleted.
+model CitizenCaseContact {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @map("tenant_id") @db.Uuid
+  caseId            String            @unique @map("case_id") @db.Uuid
+  name              String?
+  phone             String?
+  email             String?
+  preference        ContactPreference @default(NONE)
+  preferredLanguage String?           @map("preferred_language")
+  retentionUntil    DateTime?         @map("retention_until") @db.Date
+  erasedAt          DateTime?         @map("erased_at") @db.Timestamptz(3)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  citizenCase CitizenCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, retentionUntil])
+  @@map("citizen_case_contacts")
+}
+
+/// Case timeline. Append-only. PUBLIC events are shown to the requester on the
+/// tracking page; INTERNAL events are staff-only.
+model CaseEvent {
+  id           String              @id @default(uuid()) @db.Uuid
+  tenantId     String              @map("tenant_id") @db.Uuid
+  caseId       String              @map("case_id") @db.Uuid
+  type         CaseEventType
+  visibility   CaseEventVisibility
+  actorType    CaseEventActorType  @map("actor_type")
+  actorId      String?             @map("actor_id") @db.Uuid
+  body         String?
+  fromStatus   CaseStatus?         @map("from_status")
+  toStatus     CaseStatus?         @map("to_status")
+  storedFileId String?             @map("stored_file_id") @db.Uuid
+  referralId   String?             @map("referral_id") @db.Uuid
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  citizenCase CitizenCase   @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  actor       User?         @relation("CaseEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  storedFile  StoredFile?   @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  referral    CaseReferral? @relation(fields: [referralId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, caseId, createdAt])
+  @@map("case_events")
+}
+
+/// Referral of a case to the institution responsible. Never deleted.
+model CaseReferral {
+  id                     String         @id @default(uuid()) @db.Uuid
+  tenantId               String         @map("tenant_id") @db.Uuid
+  caseId                 String         @map("case_id") @db.Uuid
+  institutionId          String         @map("institution_id") @db.Uuid
+  referredAt             DateTime       @map("referred_at") @db.Date
+  contactPerson          String?        @map("contact_person")
+  contactDetail          String?        @map("contact_detail")
+  institutionReference   String?        @map("institution_reference")
+  followUpDate           DateTime?      @map("follow_up_date") @db.Date
+  status                 ReferralStatus @default(SENT)
+  responseSummary        String?        @map("response_summary")
+  requesterContactShared Boolean        @default(false) @map("requester_contact_shared")
+  referredById           String         @map("referred_by_id") @db.Uuid
+  createdAt              DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  citizenCase CitizenCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  referredBy  User        @relation("CaseReferrer", fields: [referredById], references: [id], onDelete: Restrict)
+  events      CaseEvent[]
+
+  @@index([tenantId, caseId])
+  @@index([tenantId, followUpDate])
+  @@map("case_referrals")
+}
+
+/// S26/S27 development project. Names the responsible institution; the office
+/// tracks the project, it does not claim to control it.
+model Project {
+  id                            String             @id @default(uuid()) @db.Uuid
+  tenantId                      String             @map("tenant_id") @db.Uuid
+  reference                     String
+  name                          String
+  description                   String?
+  category                      ProjectCategory
+  geographicUnitId              String?            @map("geographic_unit_id") @db.Uuid
+  countyId                      String?            @map("county_id") @db.Uuid
+  constituencyId                String?            @map("constituency_id") @db.Uuid
+  wardId                        String?            @map("ward_id") @db.Uuid
+  locationDescription           String?            @map("location_description")
+  latitude                      Decimal?           @db.Decimal(9, 6)
+  longitude                     Decimal?           @db.Decimal(9, 6)
+  responsibleInstitutionId      String             @map("responsible_institution_id") @db.Uuid
+  implementingAgencyId          String?            @map("implementing_agency_id") @db.Uuid
+  ownerName                     String?            @map("owner_name")
+  trackingOfficerId             String?            @map("tracking_officer_id") @db.Uuid
+  approvalAuthority             String?            @map("approval_authority")
+  commitmentSource              CommitmentSource   @map("commitment_source")
+  commitmentSourceDetail        String?            @map("commitment_source_detail")
+  fundingSource                 FundingSource      @default(NOT_YET_IDENTIFIED) @map("funding_source")
+  fundingSourceDetail           String?            @map("funding_source_detail")
+  currency                      String             @default("KES") @db.Char(3)
+  approvedAllocation            Decimal?           @map("approved_allocation") @db.Decimal(16, 2)
+  allocationSource              String?            @map("allocation_source")
+  contractAmount                Decimal?           @map("contract_amount") @db.Decimal(16, 2)
+  contractAmountIsPublic        Boolean            @default(false) @map("contract_amount_is_public")
+  expenditureReported           Decimal?           @map("expenditure_reported") @db.Decimal(16, 2)
+  expenditureSource             String?            @map("expenditure_source")
+  expenditureAsOf               DateTime?          @map("expenditure_as_of") @db.Date
+  expenditureVerificationStatus VerificationStatus @default(UNVERIFIED) @map("expenditure_verification_status")
+  expenditureVerifiedById       String?            @map("expenditure_verified_by_id") @db.Uuid
+  expenditureVerifiedAt         DateTime?          @map("expenditure_verified_at") @db.Timestamptz(3)
+  startDate                     DateTime?          @map("start_date") @db.Date
+  expectedCompletionDate        DateTime?          @map("expected_completion_date") @db.Date
+  actualCompletionDate          DateTime?          @map("actual_completion_date") @db.Date
+  delayReason                   String?            @map("delay_reason")
+  status                        ProjectStatus      @default(PROPOSED)
+  completionReportedById        String?            @map("completion_reported_by_id") @db.Uuid
+  completionReportedAt          DateTime?          @map("completion_reported_at") @db.Timestamptz(3)
+  completionVerifiedById        String?            @map("completion_verified_by_id") @db.Uuid
+  completionVerifiedAt          DateTime?          @map("completion_verified_at") @db.Timestamptz(3)
+  completionVerificationNote    String?            @map("completion_verification_note")
+  isPublic                      Boolean            @default(false) @map("is_public")
+  /// Approved optional public fields (PROJECT_PUBLIC_FIELD_KEYS).
+  publicFields                  String[]           @default([]) @map("public_fields")
+  publicSummary                 String?            @map("public_summary")
+  publishedById                 String?            @map("published_by_id") @db.Uuid
+  publishedAt                   DateTime?          @map("published_at") @db.Timestamptz(3)
+  createdById                   String             @map("created_by_id") @db.Uuid
+  version                       Int                @default(0)
+  createdAt                     DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant                 Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  geographicUnit         GeographicUnit?    @relation("ProjectUnit", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  county                 GeographicUnit?    @relation("ProjectCounty", fields: [countyId], references: [id], onDelete: Restrict)
+  constituency           GeographicUnit?    @relation("ProjectConstituency", fields: [constituencyId], references: [id], onDelete: Restrict)
+  ward                   GeographicUnit?    @relation("ProjectWard", fields: [wardId], references: [id], onDelete: Restrict)
+  responsibleInstitution Institution        @relation("ProjectResponsibleInstitution", fields: [responsibleInstitutionId], references: [id], onDelete: Restrict)
+  implementingAgency     Institution?       @relation("ProjectImplementingAgency", fields: [implementingAgencyId], references: [id], onDelete: Restrict)
+  trackingOfficer        User?              @relation("ProjectTrackingOfficer", fields: [trackingOfficerId], references: [id], onDelete: Restrict)
+  createdBy              User               @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  completionReportedBy   User?              @relation("ProjectCompletionReporter", fields: [completionReportedById], references: [id], onDelete: Restrict)
+  completionVerifiedBy   User?              @relation("ProjectCompletionVerifier", fields: [completionVerifiedById], references: [id], onDelete: Restrict)
+  expenditureVerifiedBy  User?              @relation("ProjectExpenditureVerifier", fields: [expenditureVerifiedById], references: [id], onDelete: Restrict)
+  publishedBy            User?              @relation("ProjectPublisher", fields: [publishedById], references: [id], onDelete: Restrict)
+  milestones             ProjectMilestone[]
+  evidence               ProjectEvidence[]
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, countyId])
+  @@index([tenantId, constituencyId])
+  @@index([tenantId, wardId])
+  @@index([tenantId, responsibleInstitutionId])
+  @@index([tenantId, isPublic])
+  @@map("projects")
+}
+
+model ProjectMilestone {
+  id                 String             @id @default(uuid()) @db.Uuid
+  tenantId           String             @map("tenant_id") @db.Uuid
+  projectId          String             @map("project_id") @db.Uuid
+  sequence           Int
+  title              String
+  description        String?
+  plannedDate        DateTime?          @map("planned_date") @db.Date
+  actualDate         DateTime?          @map("actual_date") @db.Date
+  status             MilestoneStatus    @default(PLANNED)
+  verificationStatus VerificationStatus @default(UNVERIFIED) @map("verification_status")
+  verifiedById       String?            @map("verified_by_id") @db.Uuid
+  verifiedAt         DateTime?          @map("verified_at") @db.Timestamptz(3)
+  verificationNote   String?            @map("verification_note")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  verifiedBy User?             @relation("MilestoneVerifier", fields: [verifiedById], references: [id], onDelete: Restrict)
+  evidence   ProjectEvidence[]
+
+  @@unique([projectId, sequence])
+  @@index([tenantId, projectId])
+  @@map("project_milestones")
+}
+
+/// Evidence for a project or milestone. The file and upload facts are immutable
+/// (trigger); only the verification and publication fields may change.
+model ProjectEvidence {
+  id                 String              @id @default(uuid()) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  projectId          String              @map("project_id") @db.Uuid
+  milestoneId        String?             @map("milestone_id") @db.Uuid
+  type               ProjectEvidenceType
+  description        String
+  capturedOn         DateTime?           @map("captured_on") @db.Date
+  sourceDescription  String?             @map("source_description")
+  storedFileId       String              @map("stored_file_id") @db.Uuid
+  uploadedById       String              @map("uploaded_by_id") @db.Uuid
+  uploadedAt         DateTime            @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+  latitude           Decimal?            @db.Decimal(9, 6)
+  longitude          Decimal?            @db.Decimal(9, 6)
+  verificationStatus VerificationStatus  @default(UNVERIFIED) @map("verification_status")
+  verifiedById       String?             @map("verified_by_id") @db.Uuid
+  verifiedAt         DateTime?           @map("verified_at") @db.Timestamptz(3)
+  verificationNote   String?             @map("verification_note")
+  isPublic           Boolean             @default(false) @map("is_public")
+
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  milestone  ProjectMilestone? @relation(fields: [milestoneId], references: [id], onDelete: Restrict)
+  storedFile StoredFile        @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  uploadedBy User              @relation("EvidenceUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  verifiedBy User?             @relation("EvidenceVerifier", fields: [verifiedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, projectId])
+  @@index([tenantId, milestoneId])
+  @@map("project_evidence")
 }

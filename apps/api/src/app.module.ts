@@ -13,12 +13,15 @@ import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ReferenceModule } from './modules/reference/reference.module';
+import { OfficeModule } from './modules/office/office.module';
 import { TallyModule } from './modules/tally/tally.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RbacGuard } from './rbac/rbac.guard';
 import { RbacModule } from './rbac/rbac.module';
 import { StorageModule } from './storage/storage.module';
+import { ModuleGuard } from './tenant-modules/module.guard';
+import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
 
 @Module({
   imports: [
@@ -36,19 +39,22 @@ import { StorageModule } from './storage/storage.module';
     StorageModule,
     QueueModule.register(),
     HealthModule,
+    TenantModulesModule,
     // Domain modules (filled by module agents)
     ReferenceModule,
     TallyModule,
     AdminModule,
+    OfficeModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    // Guard order matters: rate limit → CSRF → authenticate → authorise.
+    // Guard order matters: rate limit → CSRF → authenticate → authorise → module activation.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useExisting: JwtAuthGuard },
     { provide: APP_GUARD, useExisting: RbacGuard },
+    { provide: APP_GUARD, useExisting: ModuleGuard },
   ],
 })
 export class AppModule implements NestModule {

@@ -9,6 +9,7 @@ import {
   verifyTotp,
 } from '@ngao360/db';
 import {
+  effectiveModules,
   AUDIT_ACTIONS,
   ERROR_CODES,
   type AcceptInvitationRequest,
@@ -488,6 +489,7 @@ export class AuthService {
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
       const { grants, roles, roleRequiresMfa } = await this.permissions.loadGrants(tx, userId);
       const permissions = [...new Set(grants.map((g) => g.permission))].sort();
+      const moduleRows = await tx.tenantModule.findMany({ select: { moduleKey: true, enabled: true } });
       return {
         user: {
           id: user.id,
@@ -507,6 +509,7 @@ export class AuthService {
         roles,
         permissions,
         grants,
+        modules: effectiveModules(moduleRows),
         mfaRequired:
           user.mfaEnabled || roleRequiresMfa || permissions.some((p) => MFA_REQUIRING_PERMISSIONS.has(p)),
         mfaVerified,

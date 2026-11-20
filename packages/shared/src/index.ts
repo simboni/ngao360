@@ -11,3 +11,5 @@ export * from './schemas/admin';
 export * from './schemas/dashboard';
 export * from './reference';
 export * from './admin';
+export * from './modules';
+export * from './office';

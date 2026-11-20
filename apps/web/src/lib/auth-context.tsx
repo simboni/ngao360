@@ -5,6 +5,8 @@ import {
   type MeResponse,
   type PermissionKey,
   type PermissionModule,
+  TENANT_MODULE_KEYS,
+  type TenantModuleKey,
 } from '@ngao360/shared';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
@@ -16,7 +18,14 @@ interface AuthState {
   /** UI hint only: the API re-checks every request server-side. */
   can: (permission: PermissionKey) => boolean;
   canAny: (permissions: PermissionKey[]) => boolean;
+  /**
+   * Permission-module access for navigation: the user holds a permission of
+   * the module AND, for tenant modules (tally, office), the tenant has the
+   * module switched on.
+   */
   canAccessModule: (module: PermissionModule) => boolean;
+  /** Tenant module activation (from /auth/me `modules`). */
+  moduleEnabled: (module: TenantModuleKey) => boolean;
   reload: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -59,12 +68,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthState>(() => {
     const perms = new Set<string>(me?.permissions ?? []);
+    const modules = new Set<string>(me?.modules ?? []);
+    const isTenantModule = (m: string): m is TenantModuleKey => (TENANT_MODULE_KEYS as readonly string[]).includes(m);
     return {
       me,
       loading,
       can: (p) => perms.has(p),
       canAny: (ps) => ps.some((p) => perms.has(p)),
-      canAccessModule: (m) => hasModuleAccess(perms, m),
+      canAccessModule: (m) => hasModuleAccess(perms, m) && (!isTenantModule(m) || modules.has(m)),
+      moduleEnabled: (m) => modules.has(m),
       reload,
       logout,
     };

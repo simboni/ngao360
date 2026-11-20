@@ -24,6 +24,11 @@ export const SYSTEM_ROLE_KEYS = [
   'FINANCE_OFFICER',
   'LEGAL_COMPLIANCE_OFFICER',
   'COMMUNICATIONS_EDITOR',
+  'OFFICE_ADMINISTRATOR',
+  'CASE_OFFICER',
+  'CORRESPONDENCE_CLERK',
+  'PROJECTS_OFFICER',
+  'PUBLIC_INFORMATION_EDITOR',
 ] as const;
 export type SystemRoleKey = (typeof SYSTEM_ROLE_KEYS)[number];
 export const SystemRoleKeySchema = z.enum(SYSTEM_ROLE_KEYS);
@@ -81,6 +86,12 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
       P.TALLY_RESULTS_VIEW,
       P.TALLY_DISCREPANCY_VIEW,
       P.INCIDENTS_VIEW,
+      // Office oversight is read-only; requester contact details stay with case staff.
+      P.OFFICE_CORRESPONDENCE_VIEW,
+      P.OFFICE_APPOINTMENTS_VIEW,
+      P.OFFICE_MEETINGS_VIEW,
+      P.OFFICE_CASES_VIEW,
+      P.OFFICE_PROJECTS_VIEW,
     ],
     mfaRequired: true,
   },
@@ -232,6 +243,101 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
     permissions: [...BASE],
     mfaRequired: false,
   },
+
+  /* ------------------------- NGAO360 Office (blueprint 9) ------------------------- */
+  // Office roles hold no campaign or tally permissions (blueprint 15.2: separate
+  // permissions for citizen case submissions and campaign records).
+  {
+    key: 'OFFICE_ADMINISTRATOR',
+    name: 'Office administrator',
+    description:
+      'Runs the office workspace: correspondence, diary, case triage and closure, institution registry and project verification.',
+    restrictions:
+      'Cannot verify evidence they uploaded or a completion they reported; cannot close a case they resolved when the office requires a second person.',
+    permissions: [
+      ...BASE,
+      P.USERS_VIEW,
+      P.OFFICE_CORRESPONDENCE_VIEW,
+      P.OFFICE_CORRESPONDENCE_CREATE,
+      P.OFFICE_CORRESPONDENCE_EDIT,
+      P.OFFICE_CORRESPONDENCE_CONFIDENTIAL,
+      P.OFFICE_APPOINTMENTS_VIEW,
+      P.OFFICE_APPOINTMENTS_MANAGE,
+      P.OFFICE_MEETINGS_VIEW,
+      P.OFFICE_MEETINGS_MANAGE,
+      P.OFFICE_CASES_VIEW,
+      P.OFFICE_CASES_CREATE,
+      P.OFFICE_CASES_MANAGE,
+      P.OFFICE_CASES_INTERNAL_NOTES,
+      P.OFFICE_CASES_CONTACT_VIEW,
+      P.OFFICE_CASES_REFERRAL,
+      P.OFFICE_CASES_CLOSE,
+      P.OFFICE_PROJECTS_VIEW,
+      P.OFFICE_PROJECTS_VERIFY,
+      P.OFFICE_INSTITUTIONS_MANAGE,
+    ],
+    mfaRequired: true,
+  },
+  {
+    key: 'CASE_OFFICER',
+    name: 'Case officer',
+    description: 'Handles assigned citizen cases: actions, public updates, internal notes, referrals and proposed resolutions.',
+    restrictions: 'Cannot close cases; cannot see correspondence, projects or any campaign data.',
+    permissions: [
+      ...BASE,
+      P.OFFICE_CASES_VIEW,
+      P.OFFICE_CASES_CREATE,
+      P.OFFICE_CASES_MANAGE,
+      P.OFFICE_CASES_INTERNAL_NOTES,
+      P.OFFICE_CASES_CONTACT_VIEW,
+      P.OFFICE_CASES_REFERRAL,
+      P.OFFICE_APPOINTMENTS_VIEW,
+    ],
+    mfaRequired: false,
+  },
+  {
+    key: 'CORRESPONDENCE_CLERK',
+    name: 'Correspondence clerk',
+    description: 'Registers incoming and outgoing letters, attaches scans, routes items and keeps the office diary.',
+    restrictions: 'Cannot open confidential correspondence or citizen case details.',
+    permissions: [
+      ...BASE,
+      P.OFFICE_CORRESPONDENCE_VIEW,
+      P.OFFICE_CORRESPONDENCE_CREATE,
+      P.OFFICE_CORRESPONDENCE_EDIT,
+      P.OFFICE_APPOINTMENTS_VIEW,
+      P.OFFICE_APPOINTMENTS_MANAGE,
+      P.OFFICE_MEETINGS_VIEW,
+      P.OFFICE_MEETINGS_MANAGE,
+    ],
+    mfaRequired: false,
+  },
+  {
+    key: 'PROJECTS_OFFICER',
+    name: 'Projects officer',
+    description: 'Maintains project records, milestones, financial fields and evidence uploads.',
+    restrictions: 'Cannot verify evidence or completion, and cannot publish to the public portal.',
+    permissions: [...BASE, P.OFFICE_PROJECTS_VIEW, P.OFFICE_PROJECTS_EDIT, P.OFFICE_PROJECTS_EVIDENCE],
+    mfaRequired: false,
+  },
+  {
+    key: 'PUBLIC_INFORMATION_EDITOR',
+    name: 'Public-information editor',
+    description: 'Chooses which approved project fields appear on the public portal and writes the public summary.',
+    restrictions:
+      'Cannot edit project facts or verification status; the public view always names the responsible institution and source.',
+    permissions: [...BASE, P.OFFICE_PROJECTS_VIEW, P.OFFICE_PROJECTS_PUBLISH],
+    mfaRequired: true,
+  },
+];
+
+/** System roles that belong to the NGAO360 Office environment. */
+export const OFFICE_ROLE_KEYS: readonly SystemRoleKey[] = [
+  'OFFICE_ADMINISTRATOR',
+  'CASE_OFFICER',
+  'CORRESPONDENCE_CLERK',
+  'PROJECTS_OFFICER',
+  'PUBLIC_INFORMATION_EDITOR',
 ];
 
 export function getSystemRole(key: SystemRoleKey): SystemRoleDefinition {

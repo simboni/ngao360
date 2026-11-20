@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ScopeTypeSchema, UserStatusSchema, TenantTypeSchema } from '../enums';
 import { PermissionKeySchema } from '../permissions';
 import { SystemRoleKeySchema } from '../roles';
+import { TenantModuleKeySchema } from '../modules';
 import { UuidSchema, IsoDateTimeSchema } from './common';
 
 export const LoginRequestSchema = z.object({
@@ -44,6 +45,8 @@ export const MeResponseSchema = z.object({
   /** Flattened permission keys (any scope). Navigation only; API re-checks every request. */
   permissions: z.array(PermissionKeySchema),
   grants: z.array(PermissionGrantSchema),
+  /** Tenant modules switched on (tenant module activation). Navigation hides the others. */
+  modules: z.array(TenantModuleKeySchema),
   mfaRequired: z.boolean(),
   mfaVerified: z.boolean(),
 });

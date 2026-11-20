@@ -40,6 +40,14 @@ export const ConfigSchema = z.object({
   RATE_LIMIT_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  /**
+   * Public portal limiter (per client IP and tenant, per window), separate from the
+   * global throttler. In-memory per API instance; a shared Redis store is a known gap.
+   */
+  PUBLIC_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(600),
+  PUBLIC_SUBMIT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
+  PUBLIC_TRACK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  PUBLIC_READ_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
 
   /** Seconds a password/TOTP re-authentication stays valid for high-risk actions. */
   REAUTH_WINDOW_SECONDS: z.coerce.number().int().positive().default(600),

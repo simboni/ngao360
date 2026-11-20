@@ -397,7 +397,17 @@ export const DiscrepancyLinkRoleSchema = z.enum(DISCREPANCY_LINK_ROLES);
 /* Files, snapshots, incidents, notifications                                 */
 /* -------------------------------------------------------------------------- */
 
-export const STORED_FILE_PURPOSES = ['RESULT_FORM', 'EVIDENCE', 'EXPORT', 'REFERENCE_IMPORT', 'OTHER'] as const;
+export const STORED_FILE_PURPOSES = [
+  'RESULT_FORM',
+  'EVIDENCE',
+  'EXPORT',
+  'REFERENCE_IMPORT',
+  'OTHER',
+  // NGAO360 Office (kept apart from result-form evidence, blueprint 15.2)
+  'CORRESPONDENCE',
+  'CASE_EVIDENCE',
+  'PROJECT_EVIDENCE',
+] as const;
 export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];
 export const StoredFilePurpose = enumObject(STORED_FILE_PURPOSES);
 export const StoredFilePurposeSchema = z.enum(STORED_FILE_PURPOSES);

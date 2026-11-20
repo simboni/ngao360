@@ -1,7 +1,7 @@
 'use client';
 
-import type { PermissionKey } from '@ngao360/shared';
-import { ShieldOff } from 'lucide-react';
+import type { PermissionKey, TenantModuleKey } from '@ngao360/shared';
+import { PackageX, ShieldOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { EmptyState } from './empty-state';
@@ -38,4 +38,26 @@ export function RequirePagePermission({ anyOf, children }: { anyOf: PermissionKe
       {children}
     </PermissionGate>
   );
+}
+
+/**
+ * Page-level guard for tenant modules (e.g. NGAO360 Office). Shows a plain
+ * message when the organisation has the module switched off. Presentation
+ * only: the API answers 403 MODULE_DISABLED.
+ */
+export function RequireModuleEnabled({ module, children }: { module: TenantModuleKey; children: ReactNode }) {
+  const { moduleEnabled, loading } = useAuth();
+  if (loading) return null;
+  if (!moduleEnabled(module)) {
+    return (
+      <div className="ngao-card">
+        <EmptyState
+          icon={PackageX}
+          title="This module is not enabled for your organisation"
+          description="An organisation owner can switch it on in workspace settings."
+        />
+      </div>
+    );
+  }
+  return <>{children}</>;
 }

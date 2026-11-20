@@ -264,5 +264,51 @@ export const AUDIT_ACTIONS = {
   SNAPSHOT_CREATED: 'tally.snapshot.created',
   SNAPSHOT_RELEASED: 'tally.snapshot.released',
   EXPORT_CREATED: 'tally.export.created',
+
+  // Tenant module activation
+  MODULE_UPDATED: 'workspace.module.updated',
+
+  // NGAO360 Office: correspondence
+  CORRESPONDENCE_CREATED: 'office.correspondence.created',
+  CORRESPONDENCE_UPDATED: 'office.correspondence.updated',
+  CORRESPONDENCE_ASSIGNED: 'office.correspondence.assigned',
+  CORRESPONDENCE_STATUS_CHANGED: 'office.correspondence.status_changed',
+  CORRESPONDENCE_ATTACHMENT_ADDED: 'office.correspondence.attachment_added',
+  // Appointments and meetings
+  APPOINTMENT_CREATED: 'office.appointment.created',
+  APPOINTMENT_UPDATED: 'office.appointment.updated',
+  APPOINTMENT_STATUS_CHANGED: 'office.appointment.status_changed',
+  MEETING_CREATED: 'office.meeting.created',
+  MEETING_UPDATED: 'office.meeting.updated',
+  MEETING_ACTION_ITEM_SAVED: 'office.meeting.action_item_saved',
+  MEETING_DECISION_RECORDED: 'office.meeting.decision_recorded',
+  // Citizen cases
+  CASE_CREATED: 'office.case.created',
+  CASE_PUBLIC_SUBMITTED: 'office.case.public_submitted',
+  CASE_UPDATED: 'office.case.updated',
+  CASE_ASSIGNED: 'office.case.assigned',
+  CASE_STATUS_CHANGED: 'office.case.status_changed',
+  CASE_EVENT_ADDED: 'office.case.event_added',
+  CASE_EVIDENCE_ADDED: 'office.case.evidence_added',
+  CASE_CONTACT_VIEWED: 'office.case.contact_viewed',
+  CASE_CONTACT_UPDATED: 'office.case.contact_updated',
+  CASE_CONTACT_ERASED: 'office.case.contact_erased',
+  CASE_REFERRED: 'office.case.referred',
+  CASE_REFERRAL_UPDATED: 'office.case.referral_updated',
+  CASE_CITIZEN_FEEDBACK: 'office.case.citizen_feedback',
+  CASE_CLOSED: 'office.case.closed',
+  CASE_REOPENED: 'office.case.reopened',
+  // Institutions
+  INSTITUTION_CREATED: 'office.institution.created',
+  INSTITUTION_UPDATED: 'office.institution.updated',
+  // Projects
+  PROJECT_CREATED: 'office.project.created',
+  PROJECT_UPDATED: 'office.project.updated',
+  PROJECT_STATUS_CHANGED: 'office.project.status_changed',
+  PROJECT_MILESTONE_SAVED: 'office.project.milestone_saved',
+  PROJECT_EVIDENCE_ADDED: 'office.project.evidence_added',
+  PROJECT_VERIFICATION_RECORDED: 'office.project.verification_recorded',
+  PROJECT_COMPLETION_VERIFIED: 'office.project.completion_verified',
+  PROJECT_PUBLICATION_CHANGED: 'office.project.publication_changed',
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

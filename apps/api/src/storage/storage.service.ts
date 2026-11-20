@@ -7,6 +7,14 @@ import { AppException } from '../common/http/app-exception';
 import { sniffMimeType } from './file-sniff';
 import { STORAGE_DRIVER, type StorageDriver } from './storage.types';
 
+const SNIFFED_PURPOSES: ReadonlySet<StoredFilePurpose> = new Set<StoredFilePurpose>([
+  'RESULT_FORM',
+  'EVIDENCE',
+  'CORRESPONDENCE',
+  'CASE_EVIDENCE',
+  'PROJECT_EVIDENCE',
+]);
+
 export interface StoreFileInput {
   tenantId: string;
   uploadedById: string;
@@ -50,7 +58,8 @@ export class StorageService {
     if (input.buffer.length > MAX_SOURCE_FILE_BYTES) {
       throw AppException.validation(`Files must be ${MAX_SOURCE_FILE_BYTES / (1024 * 1024)} MB or smaller`);
     }
-    if (input.purpose === 'RESULT_FORM' || input.purpose === 'EVIDENCE') {
+    // Evidence and Office uploads are sniffed: images and PDFs only, whatever the declared type.
+    if (SNIFFED_PURPOSES.has(input.purpose)) {
       const sniffed = sniffMimeType(input.buffer);
       if (!sniffed || !(ALLOWED_SOURCE_MIME_TYPES as readonly string[]).includes(sniffed)) {
         throw AppException.validation('Upload a JPEG, PNG, WebP, HEIC image or a PDF');

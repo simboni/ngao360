@@ -22,6 +22,7 @@ import { SYSTEM_ROLES, type SystemRoleKey } from '@ngao360/shared';
 import { provisionSystemRoles, syncPermissionCatalogue } from '../provisioning';
 import { sealSecret } from '../security';
 import { seedFormTemplates } from './form-templates';
+import { seedOffice } from './office';
 import { approveSeedRegistry, seedReferenceData } from './reference-data';
 
 const prisma = new PrismaClient();
@@ -47,7 +48,7 @@ interface DemoUser {
   roles: Array<{ key: SystemRoleKey; scope?: { type: ScopeType; unitKey?: string; stationKey?: string } }>;
 }
 
-async function upsertTenant(slug: string, name: string, type: 'PLATFORM' | 'CAMPAIGN') {
+async function upsertTenant(slug: string, name: string, type: 'PLATFORM' | 'CAMPAIGN' | 'ELECTED_OFFICE') {
   return prisma.tenant.upsert({
     where: { slug },
     create: { slug, name, displayName: name, type },
@@ -194,6 +195,13 @@ async function main() {
     `  form templates: ${templates.created.length ? `created ${templates.created.join(', ')}` : 'no changes'}` +
       (templates.unchanged ? ` (${templates.unchanged} unchanged)` : ''),
   );
+
+  /* ------------- NGAO360 Office: synthetic County Governor's office (Bungoma) ------------- */
+  await seedOffice(prisma, {
+    passwordHash,
+    mfaRoles,
+    applyDemoMfa: (tenantId, userId) => applyDemoMfa(tenantId, userId),
+  });
 
   /* ------------------- Second tenant (cross-tenant isolation tests) ------------------- */
   const other = await upsertTenant('other', 'Other Organisation (synthetic)', 'CAMPAIGN');
