@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
 import { CampaignCommonModule } from '../common/campaign-common.module';
+import { NotificationCenterModule } from '../notifications/notification-center.module';
+import { CampaignReportsModule } from '../reports/reports.module';
 import { FinanceSettingsController } from './finance-settings.controller';
 import { FinanceSettingsService } from './finance-settings.service';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 
 @Module({
-  imports: [CampaignCommonModule],
+  imports: [CampaignCommonModule, NotificationCenterModule, CampaignReportsModule],
   controllers: [FinanceController, FinanceSettingsController],
   providers: [FinanceService, FinanceSettingsService],
   exports: [FinanceService, FinanceSettingsService],

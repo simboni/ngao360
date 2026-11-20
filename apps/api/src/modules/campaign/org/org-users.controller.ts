@@ -1,5 +1,10 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
+import type { AssignableUser } from '@ngao360/shared';
+import type { AuthContext } from '../../../auth/auth.types';
+import { CurrentAuth } from '../../../common/decorators/auth.decorators';
+import { RequirePermission } from '../../../rbac/require-permission.decorator';
 import { RequireModule } from '../../../tenant-modules/require-module.decorator';
+import { AssignableUserQueryDto } from '../campaign.dto';
 import { OrgService } from './org.service';
 
 /**
@@ -10,4 +15,10 @@ import { OrgService } from './org.service';
 @Controller('org/assignable-users')
 export class OrgUsersController {
   constructor(private readonly service: OrgService) {}
+
+  @RequirePermission(['org.departments.manage', 'org.teams.manage', 'tasks.create', 'tasks.assign', 'events.create', 'events.manage'], { anyOf: true })
+  @Get()
+  list(@CurrentAuth() auth: AuthContext, @Query() q: AssignableUserQueryDto): Promise<AssignableUser[]> {
+    return this.service.assignableUsers(auth, q);
+  }
 }
