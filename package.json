@@ -22,10 +22,12 @@
     "test:rehearsal": "pnpm --filter @ngao360/api run test:rehearsal",
     "test:rehearsal:office": "pnpm --filter @ngao360/api run test:rehearsal:office",
     "test:rehearsal:field": "pnpm --filter @ngao360/api run test:rehearsal:field",
+    "test:rehearsal:campaign": "pnpm --filter @ngao360/api run test:rehearsal:campaign",
     "smoke:web": "node scripts/smoke/web-smoke.cjs",
     "fixtures:forms": "python3 scripts/fixtures/generate-form-images.py",
     "smoke:office": "node scripts/smoke/office-smoke.cjs",
-    "smoke:field": "node scripts/smoke/field-smoke.cjs"
+    "smoke:field": "node scripts/smoke/field-smoke.cjs",
+    "smoke:campaign": "node scripts/smoke/campaign-smoke.cjs"
   },
   "devDependencies": {
     "prettier": "3.6.2",
