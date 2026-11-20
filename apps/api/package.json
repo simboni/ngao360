@@ -13,7 +13,8 @@
     "test:watch": "jest --watch",
     "test:integration": "dotenv -e ../../.env -- jest test/",
     "test:rehearsal": "dotenv -e ../../.env -- jest test/governor-rehearsal",
-    "test:rehearsal:office": "dotenv -e ../../.env -- jest test/office-governor-rehearsal"
+    "test:rehearsal:office": "dotenv -e ../../.env -- jest test/office-governor-rehearsal",
+    "test:rehearsal:field": "dotenv -e ../../.env -- jest test/election-day-rehearsal"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.913.0",
