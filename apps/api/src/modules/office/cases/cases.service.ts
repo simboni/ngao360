@@ -847,7 +847,8 @@ export class CasesService {
             category: row.category,
             ...(row.wardId ? { wardId: row.wardId } : { constituencyId: row.constituencyId }),
             submittedAt: { gte: new Date(row.submittedAt.getTime() - windowMs), lte: new Date(row.submittedAt.getTime() + windowMs) },
-            NOT: { closureReason: 'DUPLICATE' },
+            // closure_reason is nullable: NOT (x = 'DUPLICATE') alone would drop open cases.
+            OR: [{ closureReason: null }, { closureReason: { not: 'DUPLICATE' } }],
           },
         ],
       },

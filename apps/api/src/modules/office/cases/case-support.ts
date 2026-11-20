@@ -210,14 +210,15 @@ export function rankPossibleDuplicates<T extends DuplicateCandidate>(
   candidates: readonly T[],
   limit = 5,
 ): Array<{ candidate: T; score: number; sameArea: boolean }> {
-  const base = keywords(`${subject.title} ${subject.description}`);
+  // Descriptions only: portal titles are generated from category and ward, so they always match.
+  const base = keywords(subject.description);
   const windowMs = DUPLICATE_WINDOW_DAYS * 86_400_000;
   return candidates
     .filter((c) => c.id !== subject.id && c.category === subject.category)
     .filter((c) => Math.abs(c.submittedAt.getTime() - subject.submittedAt.getTime()) <= windowMs)
     .map((c) => {
       const sameArea = subject.wardId ? c.wardId === subject.wardId : !!subject.constituencyId && c.constituencyId === subject.constituencyId;
-      const score = similarity(base, keywords(`${c.title} ${c.description}`));
+      const score = similarity(base, keywords(c.description));
       return { candidate: c, score: Math.round(score * 100) / 100, sameArea };
     })
     .filter((r) => r.sameArea && r.score >= DUPLICATE_MIN_SIMILARITY)

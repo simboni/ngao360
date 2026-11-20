@@ -164,6 +164,21 @@ describeDb('Office public portal (integration)', () => {
     for (const u of res.body.updates) expect(Object.keys(u).sort()).toEqual(['at', 'message']);
   });
 
+  it('flags a possible duplicate for triage (internal note and hint endpoint), never on the tracking page', async () => {
+    const first = await submit(randomIp(), payload({ contactPreference: 'NONE', consentToContact: false, description: 'Synthetic: streetlights along the Township bus park road are off every night since last week.' })).expect(201);
+    const second = await submit(randomIp(), payload({ contactPreference: 'NONE', consentToContact: false, description: 'Synthetic: the streetlights on the Township bus park road have been off every night this week.' })).expect(201);
+    const c1 = await f.owner.citizenCase.findFirstOrThrow({ where: { tenantId: f.tenantId, publicReference: first.body.publicReference } });
+    const c2 = await f.owner.citizenCase.findFirstOrThrow({ where: { tenantId: f.tenantId, publicReference: second.body.publicReference }, include: { events: true } });
+    const hint = c2.events.find((e) => e.type === 'NOTE');
+    expect(hint).toMatchObject({ visibility: 'INTERNAL', actorType: 'SYSTEM' });
+    expect(hint!.body).toContain(c1.reference);
+    const dupes = await f.http('officer').get(`/office/cases/${c2.id}/possible-duplicates`).expect(200);
+    expect(dupes.body.map((d: { id: string }) => d.id)).toContain(c1.id);
+    const tracked = await f.pub(randomIp()).post(`/public/${f.slug}/track`).send({ publicReference: second.body.publicReference, trackingCode: second.body.trackingCode }).expect(200);
+    expect(JSON.stringify(tracked.body)).not.toContain(c1.reference);
+    expect(JSON.stringify(tracked.body)).not.toContain('duplicate');
+  });
+
   it('rate-limits submissions per IP (429 with Retry-After) without affecting other IPs', async () => {
     const ip = randomIp();
     // Every request counts, valid or not: five honeypot hits use up the submit bucket.
