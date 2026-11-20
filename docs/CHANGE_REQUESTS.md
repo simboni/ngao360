@@ -2,6 +2,28 @@
 
 Requests from module agents for changes outside the files they own. Append below; do not edit other agents' entries.
 
+## Status (integration pass, 2026-11-20)
+
+| Request | Status |
+| --- | --- |
+| Reference 1, Admin 1: root re-exports | **Applied.** `@ngao360/shared` exports `./reference` and `./admin`. All `@ngao360/shared/dist/*` imports and `reference-shared.ts` are gone. |
+| Reference 2: registry import log | **Applied.** Migration `20261120000300` adds the append-only `registry_imports` table (tenant RLS) and `registry_versions.publication_date`. Imports write the log; `import-status` reads it first and falls back to audit events. |
+| Reference 3: database guards | **Applied** in the same migration. Approved registry versions are immutable (APPROVED → SUPERSEDED only). Polling stations change only in DRAFT versions. Approved form templates are immutable (APPROVED → RETIRED only). |
+| Reference 4, Tally 5, Admin 2: contract additions | **Open (docs).** Implemented and tested; `docs/API_CONTRACT.md` has not been rewritten yet. These entries are the current reference. |
+| Reference 5: reject certificate templates | **Applied.** Intake returns 400 `VALIDATION_FAILED` for CERTIFICATE-level templates (covered by the Governor rehearsal test). |
+| Reference 6: docs | **Applied** (README, DEVELOPMENT.md, `.env.example`). |
+| Tally 1: OCR queue through provider | **Applied.** |
+| Tally 2: `OCR_RECORDED` audit action | **Applied.** |
+| Tally 3: `StationCoverageRowSchema` | **Applied.** API and web use the shared type. |
+| Tally 4: `OCR_PROVIDER` config | **Applied.** |
+| Tally UI 1: web test script and `tsx` | **Applied.** `pnpm test` runs the 27 tally UI tests. |
+| Tally UI 2: Recharts | **Not applied.** The dependency-free charts are kept. |
+| Tally UI 3, 4: shared evaluator and coverage type | **Applied.** |
+| Tally UI 5: `GET /tally/assignees` | **Open.** |
+| Tally UI 6: CSP must allow `blob:` | **Open.** No CSP yet; keep this in mind when adding one. |
+| Admin 3: invitation acceptance | **Open.** Needs a new `user_invitations` table and e-mail delivery. |
+| (new) 413/415 upload errors | **Applied.** Mapped to `VALIDATION_FAILED` instead of `INTERNAL`. |
+
 ## Reference module (from the reference-data agent)
 
 1. **Re-export the reference helpers from the shared root.** Add this line to
