@@ -86,6 +86,7 @@ describe('enum parity with Prisma schema', () => {
     ['ScopeType', enums.SCOPE_TYPES],
     ['SensitivityLevel', enums.SENSITIVITY_LEVELS],
     ['AuditActorType', enums.AUDIT_ACTOR_TYPES],
+    ['DataProvenance', enums.DATA_PROVENANCES],
     ['ElectionCycleStatus', enums.ELECTION_CYCLE_STATUSES],
     ['GeographicUnitType', enums.GEOGRAPHIC_UNIT_TYPES],
     ['RegistryVersionStatus', enums.REGISTRY_VERSION_STATUSES],

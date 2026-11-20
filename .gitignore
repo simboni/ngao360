@@ -13,4 +13,5 @@ storage/
 apps/api/storage/
 *.log
 .DS_Store
+.env.docker
 next-env.d.ts

@@ -1,0 +1,25 @@
+# NGAO360 reverse proxy. Set NGAO_DOMAIN (e.g. app.example.org) for automatic TLS.
+{$NGAO_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	# Result-form uploads are limited to 25 MB by the API.
+	request_body {
+		max_size 30MB
+	}
+
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

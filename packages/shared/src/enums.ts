@@ -83,6 +83,17 @@ export const AuditActorTypeSchema = z.enum(AUDIT_ACTOR_TYPES);
 /* Reference data                                                             */
 /* -------------------------------------------------------------------------- */
 
+/** Provenance of a cycle's data (DECISIONS.md: historical 2022 data for demo/pilot). */
+export const DATA_PROVENANCES = ['SYNTHETIC', 'HISTORICAL', 'LIVE'] as const;
+export type DataProvenance = (typeof DATA_PROVENANCES)[number];
+export const DataProvenance = enumObject(DATA_PROVENANCES);
+export const DataProvenanceSchema = z.enum(DATA_PROVENANCES);
+export const DATA_PROVENANCE_LABELS: Record<DataProvenance, string> = {
+  SYNTHETIC: 'Synthetic demonstration data',
+  HISTORICAL: 'Historical data — not live or official results',
+  LIVE: 'Live election data',
+};
+
 export const ELECTION_CYCLE_STATUSES = ['DRAFT', 'ACTIVE', 'CLOSED', 'ARCHIVED'] as const;
 export type ElectionCycleStatus = (typeof ELECTION_CYCLE_STATUSES)[number];
 export const ElectionCycleStatus = enumObject(ELECTION_CYCLE_STATUSES);

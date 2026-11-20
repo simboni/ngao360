@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import {
   ContestStatusSchema,
+  DataProvenanceSchema,
   ElectionCycleStatusSchema,
   FormLevelSchema,
   FormTemplateApprovalStateSchema,
@@ -34,6 +35,7 @@ export const ElectionCycleSchema = z.object({
   jurisdiction: z.string(),
   legalConfigVersion: z.string(),
   status: ElectionCycleStatusSchema,
+  dataProvenance: DataProvenanceSchema,
   officialSources: z.array(OfficialSourceSchema),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
@@ -45,6 +47,7 @@ export const CreateElectionCycleSchema = z.object({
   electionDate: IsoDateSchema,
   jurisdiction: z.string().trim().min(2).max(100).default('Kenya'),
   legalConfigVersion: z.string().trim().min(1).max(100),
+  dataProvenance: DataProvenanceSchema.default('LIVE'),
   officialSources: z.array(OfficialSourceSchema).default([]),
 });
 export type CreateElectionCycle = z.infer<typeof CreateElectionCycleSchema>;

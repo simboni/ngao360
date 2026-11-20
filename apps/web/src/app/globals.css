@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * NGAO360 design tokens (blueprint 12.1 / 12.2).
+ * Hex tokens are the source of truth; *-rgb channel tokens feed Tailwind alpha utilities.
+ */
+:root {
+  /* Brand and interface palette */
+  --color-midnight-navy: #102b46; /* primary navigation, headings, high-contrast panels */
+  --color-deep-blue: #173d5b; /* secondary navigation, selected controls, section headers */
+  --color-operational-teal: #178b86; /* primary actions, verified/success, active indicators */
+  --color-warm-gold: #d5a64a; /* attention and pending states, sparingly */
+  --color-cloud: #f3f6f9; /* page background */
+  --color-white: #ffffff; /* cards and content surfaces */
+  --color-slate: #657789; /* secondary text and metadata */
+  --color-error: #b54747; /* errors, blocked states, critical alerts only */
+  --color-success: #2f855a; /* completed and verified, always with text/icon */
+
+  --ngao-navy: 16 43 70;
+  --ngao-deep-blue: 23 61 91;
+  --ngao-teal: 23 139 134;
+  --ngao-gold: 213 166 74;
+  --ngao-cloud: 243 246 249;
+  --ngao-white: 255 255 255;
+  --ngao-slate: 101 119 137;
+  --ngao-error: 181 71 71;
+  --ngao-success: 47 133 90;
+  --ngao-ink: 16 43 70;
+  --ngao-line: 220 227 234;
+
+  /* Spacing base 4px: 4, 8, 12, 16, 24, 32 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Layout (blueprint 12.3) */
+  --sidebar-width: 248px;
+  --sidebar-width-collapsed: 72px;
+  --topbar-height: 64px;
+  --radius-card: 14px;
+  --row-height: 48px;
+
+  --font-sans: 'Inter Variable', Inter, Aptos, system-ui, sans-serif;
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--color-cloud);
+  color: rgb(var(--ngao-ink));
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible focus for all interactive controls (WCAG 2.2 AA). */
+:focus-visible {
+  outline: 2px solid var(--color-operational-teal);
+  outline-offset: 2px;
+}
+
+@layer components {
+  .ngao-card {
+    @apply rounded-card border border-line bg-surface shadow-card;
+  }
+  .ngao-input {
+    @apply h-10 w-full rounded-lg border border-line bg-surface px-3 text-body text-ink placeholder:text-slate focus:border-teal focus:outline-none focus:ring-2 focus:ring-teal/30 disabled:bg-cloud;
+  }
+  .ngao-label {
+    @apply mb-1 block text-meta font-medium text-ink;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -201,6 +201,7 @@ async function main() {
       jurisdiction: 'Kenya',
       legalConfigVersion: 'LN72-2017-baseline',
       status: 'ACTIVE',
+      dataProvenance: 'SYNTHETIC',
       officialSources: [
         {
           title: 'Elections (General) (Amendment) Regulations, 2017 — Legal Notice No. 72 of 2017',
@@ -208,7 +209,7 @@ async function main() {
         },
       ],
     },
-    update: { status: 'ACTIVE' },
+    update: { status: 'ACTIVE', dataProvenance: 'SYNTHETIC' },
   });
 
   const registry = await prisma.registryVersion.upsert({

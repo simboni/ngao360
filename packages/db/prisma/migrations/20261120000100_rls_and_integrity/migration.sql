@@ -266,7 +266,14 @@ GRANT EXECUTE ON FUNCTION ngao_current_tenant() TO ngao_app;
 
 -- Global catalogue and Prisma bookkeeping: read-only for the API.
 REVOKE INSERT, UPDATE, DELETE ON permissions FROM ngao_app;
-REVOKE ALL ON _prisma_migrations FROM ngao_app;
+DO $$
+BEGIN
+  -- Not present in Prisma's shadow database.
+  IF to_regclass('_prisma_migrations') IS NOT NULL THEN
+    REVOKE ALL ON _prisma_migrations FROM ngao_app;
+  END IF;
+END
+$$;
 -- Tenants: the API may read and update settings, never create or delete tenants.
 REVOKE INSERT, DELETE ON tenants FROM ngao_app;
 

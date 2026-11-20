@@ -3,14 +3,18 @@ import { type DynamicModule, Global, Module } from '@nestjs/common';
 import { AppConfig } from '../config/app-config';
 import { OcrQueueService } from './ocr-queue.service';
 import { OcrProcessor } from './ocr.processor';
-import { OCR_QUEUE } from './queue.constants';
+import { ALL_QUEUES } from './queue.constants';
 
 function queuesEnabled(): boolean {
   const v = process.env.QUEUES_ENABLED;
   return v === undefined || ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 }
 
-/** BullMQ registration. Add new queues here (one shared place) to avoid collisions. */
+/**
+ * BullMQ registration. Queues are declared in queue.constants.ts. Modules inject
+ * a queue with @InjectQueue(NAME) (mark it @Optional() so the API still runs with
+ * QUEUES_ENABLED=false) and provide their own @Processor in their module.
+ */
 @Global()
 @Module({})
 export class QueueModule {
@@ -38,7 +42,7 @@ export class QueueModule {
             };
           },
         }),
-        BullModule.registerQueue({ name: OCR_QUEUE }),
+        BullModule.registerQueue(...ALL_QUEUES.map((name) => ({ name }))),
       ],
       providers: [OcrQueueService, OcrProcessor],
       exports: [OcrQueueService, BullModule],

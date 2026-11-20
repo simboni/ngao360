@@ -1,0 +1,16 @@
+{
+  "name": "NGAO360",
+  "short_name": "NGAO360",
+  "description": "Operations, field and parallel recordkeeping platform.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F3F6F9",
+  "theme_color": "#102B46",
+  "lang": "en-KE",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
