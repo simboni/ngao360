@@ -262,6 +262,8 @@ enum StoredFilePurpose {
   CORRESPONDENCE
   CASE_EVIDENCE
   PROJECT_EVIDENCE
+  FIELD_EVIDENCE
+  AGENT_DOCUMENT
 }
 
 enum MalwareScanStatus {
@@ -280,23 +282,6 @@ enum ExportFormat {
   CSV
   XLSX
   PDF
-}
-
-enum IncidentStatus {
-  NEW
-  ACKNOWLEDGED
-  ASSIGNED
-  IN_PROGRESS
-  ESCALATED
-  UNRESOLVED
-  CLOSED
-}
-
-enum IncidentPriority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
 }
 
 enum NotificationChannel {
@@ -617,7 +602,6 @@ model Tenant {
   discrepancyActions   DiscrepancyCaseAction[]
   tallySnapshots       TallySnapshot[]
   tallyExports         TallyExport[]
-  incidents            Incident[]
   notifications        Notification[]
   referenceSequences   ReferenceSequence[]
 
@@ -636,6 +620,27 @@ model Tenant {
   projects                  Project[]
   projectMilestones         ProjectMilestone[]
   projectEvidence           ProjectEvidence[]
+
+  // Field and election operations
+  agents               Agent[]
+  agentSensitive       AgentSensitive[]
+  agentAccreditations  AgentAccreditation[]
+  agentTrainings       AgentTraining[]
+  agentStatusEvents    AgentStatusEvent[]
+  deployments          Deployment[]
+  deploymentEvents     DeploymentEvent[]
+  readinessChecklists  ReadinessChecklist[]
+  readinessItems       ReadinessItem[]
+  fieldReportTemplates FieldReportTemplate[]
+  fieldReports         FieldReport[]
+  fieldReportEvidence  FieldReportEvidence[]
+  incidents            Incident[]
+  incidentEvents       IncidentEvent[]
+  incidentEvidence     IncidentEvidence[]
+  incidentSubjects     IncidentSubject[]
+  stationStatuses      StationStatus[]
+  stationStatusEvents  StationStatusEvent[]
+  clientSubmissions    ClientSubmission[]
 
   @@map("tenants")
 }
@@ -694,8 +699,6 @@ model User {
   createdTemplates        FormTemplate[]          @relation("TemplateCreator")
   approvedRegistries      RegistryVersion[]       @relation("RegistryApprover")
   registryImports         RegistryImport[]        @relation("RegistryImporter")
-  reportedIncidents       Incident[]              @relation("IncidentReporter")
-  assignedIncidents       Incident[]              @relation("IncidentAssignee")
 
   // NGAO360 Office
   updatedModules             TenantModule[]             @relation("ModuleUpdater")
@@ -724,6 +727,32 @@ model User {
   verifiedMilestones         ProjectMilestone[]         @relation("MilestoneVerifier")
   uploadedProjectEvidence    ProjectEvidence[]          @relation("EvidenceUploader")
   verifiedProjectEvidence    ProjectEvidence[]          @relation("EvidenceVerifier")
+
+  // Field and election operations
+  agentProfile               Agent?                @relation("AgentUser")
+  agentsCreated              Agent[]               @relation("AgentCreatedBy")
+  agentSensitiveUpdated      AgentSensitive[]      @relation("AgentSensitiveUpdatedBy")
+  agentAccreditationsUpdated AgentAccreditation[]  @relation("AccreditationUpdatedBy")
+  agentTrainingsRecorded     AgentTraining[]       @relation("TrainingRecordedBy")
+  agentStatusEvents          AgentStatusEvent[]    @relation("AgentStatusActor")
+  deploymentsCreated         Deployment[]          @relation("DeploymentCreatedBy")
+  deploymentEvents           DeploymentEvent[]     @relation("DeploymentEventActor")
+  readinessItemsUpdated      ReadinessItem[]       @relation("ReadinessItemUpdatedBy")
+  fieldTemplatesCreated      FieldReportTemplate[] @relation("FieldTemplateCreatedBy")
+  fieldTemplatesActivated    FieldReportTemplate[] @relation("FieldTemplateActivatedBy")
+  fieldReportsAuthored       FieldReport[]         @relation("FieldReportAuthor")
+  fieldReportsReviewed       FieldReport[]         @relation("FieldReportReviewer")
+  fieldReportEvidenceAdded   FieldReportEvidence[] @relation("FieldReportEvidenceAddedBy")
+  incidentsReported          Incident[]            @relation("IncidentReporter")
+  incidentsAssigned          Incident[]            @relation("IncidentAssignee")
+  incidentsResolved          Incident[]            @relation("IncidentResolvedBy")
+  incidentsClosed            Incident[]            @relation("IncidentClosedBy")
+  incidentEvents             IncidentEvent[]       @relation("IncidentEventActor")
+  incidentEvidenceAdded      IncidentEvidence[]    @relation("IncidentEvidenceAddedBy")
+  incidentSubjectsRecorded   IncidentSubject[]     @relation("IncidentSubjectRecordedBy")
+  stationStatusesSet         StationStatus[]       @relation("StationStatusManualBy")
+  stationStatusEvents        StationStatusEvent[]  @relation("StationStatusEventActor")
+  clientSubmissions          ClientSubmission[]    @relation("ClientSubmissionUser")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -781,25 +810,25 @@ model RolePermission {
 
 /// A grant of a role to a user, optionally limited by geography, election cycle and time.
 model RoleAssignment {
-  id               String    @id @default(uuid()) @db.Uuid
-  tenantId         String    @map("tenant_id") @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  roleId           String    @map("role_id") @db.Uuid
-  scopeType        ScopeType @default(ORGANISATION) @map("scope_type")
-  geographicUnitId String?   @map("geographic_unit_id") @db.Uuid
-  pollingStationId String?   @map("polling_station_id") @db.Uuid
+  id                 String    @id @default(uuid()) @db.Uuid
+  tenantId           String    @map("tenant_id") @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  roleId             String    @map("role_id") @db.Uuid
+  scopeType          ScopeType @default(ORGANISATION) @map("scope_type")
+  geographicUnitId   String?   @map("geographic_unit_id") @db.Uuid
+  pollingStationId   String?   @map("polling_station_id") @db.Uuid
   /// Station lineage key of a POLLING_STATION grant (filled from polling_station_id by a trigger).
   /// Grants match every registry version of the station's cycle by this code.
-  pollingStationCode String? @map("polling_station_code")
-  electionCycleId  String?   @map("election_cycle_id") @db.Uuid
-  validFrom        DateTime  @default(now()) @map("valid_from") @db.Timestamptz(3)
-  expiresAt        DateTime? @map("expires_at") @db.Timestamptz(3)
-  grantedById      String?   @map("granted_by_id") @db.Uuid
-  reason           String?
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
-  revokedById      String?   @map("revoked_by_id") @db.Uuid
-  revokedReason    String?   @map("revoked_reason")
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  pollingStationCode String?   @map("polling_station_code")
+  electionCycleId    String?   @map("election_cycle_id") @db.Uuid
+  validFrom          DateTime  @default(now()) @map("valid_from") @db.Timestamptz(3)
+  expiresAt          DateTime? @map("expires_at") @db.Timestamptz(3)
+  grantedById        String?   @map("granted_by_id") @db.Uuid
+  reason             String?
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById        String?   @map("revoked_by_id") @db.Uuid
+  revokedReason      String?   @map("revoked_reason")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user           User            @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
@@ -934,8 +963,16 @@ model ElectionCycle {
   submissions      ResultSubmission[]
   discrepancyCases DiscrepancyCase[]
   snapshots        TallySnapshot[]
-  incidents        Incident[]
   roleAssignments  RoleAssignment[]
+
+  agentAccreditations  AgentAccreditation[]
+  agentTrainings       AgentTraining[]
+  deployments          Deployment[]
+  readinessChecklists  ReadinessChecklist[]
+  fieldReportTemplates FieldReportTemplate[]
+  fieldReports         FieldReport[]
+  incidents            Incident[]
+  stationStatuses      StationStatus[]
 
   @@unique([tenantId, name])
   @@map("election_cycles")
@@ -1032,7 +1069,6 @@ model GeographicUnit {
   roleAssignments        RoleAssignment[]
   submissions            ResultSubmission[]
   snapshots              TallySnapshot[]
-  incidents              Incident[]
 
   // NGAO360 Office locations (down to ward level)
   casesAtUnit            CitizenCase[] @relation("CaseUnit")
@@ -1043,6 +1079,11 @@ model GeographicUnit {
   projectsInCounty       Project[]     @relation("ProjectCounty")
   projectsInConstituency Project[]     @relation("ProjectConstituency")
   projectsInWard         Project[]     @relation("ProjectWard")
+
+  // Field and election operations (lowest unit of area-level records; agent home ward)
+  agentsHomeWard Agent[]       @relation("AgentHomeWard")
+  fieldReports   FieldReport[] @relation("FieldReportUnit")
+  incidents      Incident[]    @relation("IncidentUnit")
 
   @@unique([tenantId, electionCycleId, type, officialCode, sourceVersion])
   @@index([tenantId, electionCycleId, type])
@@ -1084,7 +1125,6 @@ model PollingStation {
 
   roleAssignments RoleAssignment[]
   submissions     ResultSubmission[]
-  incidents       Incident[]
 
   @@unique([tenantId, registryVersionId, code])
   @@index([tenantId, electionCycleId, code])
@@ -1228,6 +1268,10 @@ model StoredFile {
   correspondenceAttachments CorrespondenceAttachment[]
   caseEvents                CaseEvent[]
   projectEvidence           ProjectEvidence[]
+
+  agentAccreditations AgentAccreditation[]
+  fieldReportEvidence FieldReportEvidence[]
+  incidentEvidence    IncidentEvidence[]
 
   @@unique([tenantId, sha256])
   @@map("stored_files")
@@ -1564,39 +1608,6 @@ model TallyExport {
 // ============================================================================
 // Operations (minimal in the foundation)
 // ============================================================================
-
-model Incident {
-  id                 String           @id @default(uuid()) @db.Uuid
-  tenantId           String           @map("tenant_id") @db.Uuid
-  reference          String
-  electionCycleId    String?          @map("election_cycle_id") @db.Uuid
-  category           String
-  occurredAt         DateTime         @map("occurred_at") @db.Timestamptz(3)
-  geographicUnitId   String?          @map("geographic_unit_id") @db.Uuid
-  pollingStationId   String?          @map("polling_station_id") @db.Uuid
-  reporterId         String           @map("reporter_id") @db.Uuid
-  factualDescription String           @map("factual_description")
-  evidenceFileIds    String[]         @map("evidence_file_ids") @db.Uuid
-  priority           IncidentPriority @default(MEDIUM)
-  status             IncidentStatus   @default(NEW)
-  sensitivity        SensitivityLevel @default(CONFIDENTIAL)
-  assigneeId         String?          @map("assignee_id") @db.Uuid
-  closureNote        String?          @map("closure_note")
-  closedAt           DateTime?        @map("closed_at") @db.Timestamptz(3)
-  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
-
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  electionCycle  ElectionCycle?  @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
-  geographicUnit GeographicUnit? @relation(fields: [geographicUnitId], references: [id], onDelete: Restrict)
-  pollingStation PollingStation? @relation(fields: [pollingStationId], references: [id], onDelete: Restrict)
-  reporter       User            @relation("IncidentReporter", fields: [reporterId], references: [id], onDelete: Restrict)
-  assignee       User?           @relation("IncidentAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
-
-  @@unique([tenantId, reference])
-  @@index([tenantId, status, priority])
-  @@map("incidents")
-}
 
 model Notification {
   id        String              @id @default(uuid()) @db.Uuid
@@ -2069,7 +2080,7 @@ model Project {
   completionVerifiedAt          DateTime?          @map("completion_verified_at") @db.Timestamptz(3)
   completionVerificationNote    String?            @map("completion_verification_note")
   /// Evidence cited by the completion verification (re-checked when one of them is disputed).
-  completionEvidenceIds      String[]             @default([]) @map("completion_evidence_ids") @db.Uuid
+  completionEvidenceIds         String[]           @default([]) @map("completion_evidence_ids") @db.Uuid
   isPublic                      Boolean            @default(false) @map("is_public")
   /// Approved optional public fields (PROJECT_PUBLIC_FIELD_KEYS).
   publicFields                  String[]           @default([]) @map("public_fields")
@@ -2166,4 +2177,812 @@ model ProjectEvidence {
   @@index([tenantId, projectId])
   @@index([tenantId, milestoneId])
   @@map("project_evidence")
+}
+
+// ===========================================================================
+// Field and election operations (blueprint 6, 7, 13.4; module 'field').
+// Enums mirror packages/shared/src/field/enums.ts (checked by shared.test.ts).
+//
+// Station lineage: field records reference a polling station by
+// (election_cycle_id, polling_station_code), never by a registry row id, so a
+// registry amendment keeps them attached. county/constituency/ward/centre ids
+// are denormalised from the station (or the unit given) for scope filters.
+// ===========================================================================
+
+enum AgentStatus {
+  RECRUITED
+  ACTIVE
+  STANDBY
+  INACTIVE
+  WITHDRAWN
+}
+
+enum AgentAvailability {
+  AVAILABLE
+  LIMITED
+  UNAVAILABLE
+}
+
+enum AgentGender {
+  FEMALE
+  MALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum AccreditationStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  NOT_APPLICABLE
+}
+
+enum TrainingStatus {
+  SCHEDULED
+  ATTENDED
+  COMPLETED
+  NOT_PASSED
+  ABSENT
+}
+
+enum DeploymentRole {
+  CHIEF_AGENT
+  STATION_AGENT
+  RELIEF_AGENT
+  RUNNER
+  SUPERVISOR
+}
+
+enum DeploymentShift {
+  FULL_DAY
+  OPENING
+  DAYTIME
+  CLOSING_AND_COUNTING
+}
+
+enum DeploymentStatus {
+  ASSIGNED
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  REPLACED
+  CANCELLED
+}
+
+enum DeploymentEventType {
+  CREATED
+  UPDATED
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  REPLACED
+  CANCELLED
+  NOTE
+}
+
+enum ReadinessCategory {
+  ACCREDITATION
+  MATERIALS
+  TRANSPORT
+  COMMUNICATIONS
+  PAYMENT
+}
+
+enum ReadinessItemStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  DONE
+  BLOCKED
+  NOT_APPLICABLE
+}
+
+enum ReadinessStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY
+  BLOCKED
+}
+
+enum FieldReportType {
+  OPENING_OF_POLLS
+  POLLING_OBSERVATION
+  CLOSING_AND_COUNTING
+  GENERAL
+}
+
+enum FieldReportTemplateStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum FieldReportReviewStatus {
+  SUBMITTED
+  ACCEPTED
+  RETURNED
+  ESCALATED
+  CLOSED
+}
+
+enum IncidentCategory {
+  OPENING_OR_CLOSING_TIME
+  MATERIALS
+  EQUIPMENT
+  AGENT_ACCESS
+  VOTER_IDENTIFICATION
+  PROCEDURE
+  COUNTING_AND_FORMS
+  SECURITY
+  VIOLENCE_OR_INTIMIDATION
+  ACCESSIBILITY
+  LOGISTICS
+  COMMUNICATIONS
+  HEALTH_AND_SAFETY
+  OTHER
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  REPORTED
+  TRIAGED
+  ASSIGNED
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum IncidentOutcome {
+  RESOLVED
+  UNRESOLVED
+  REFERRED
+  NO_ACTION_NEEDED
+  DUPLICATE
+}
+
+enum IncidentEscalationTarget {
+  WAR_ROOM_COMMAND
+  LEGAL_COMPLIANCE
+  SECURITY_LIAISON
+  COMPETENT_AUTHORITY
+  OTHER
+}
+
+enum IncidentEventType {
+  REPORTED
+  TRIAGED
+  ASSIGNED
+  ESCALATED
+  NOTE
+  CORRECTION
+  EVIDENCE_ADDED
+  EVIDENCE_HOLD_PLACED
+  EVIDENCE_HOLD_RELEASED
+  REFERRED
+  SUBJECT_RECORDED
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum StationStatusSource {
+  DERIVED
+  MANUAL
+}
+
+enum ClientSubmissionKind {
+  FIELD_REPORT
+  INCIDENT
+  INCIDENT_NOTE
+  CHECK_IN
+  ASSIGNMENT_CONFIRMATION
+}
+
+enum ClientSubmissionOutcome {
+  ACCEPTED
+  REJECTED
+  CONFLICT
+}
+
+/// Agent person record (blueprint 6.3, S13). Personal identifiers and contact
+/// details are NOT here: they live in agent_sensitive. Masked display values
+/// are stored here so lists never read the sensitive table.
+model Agent {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @map("tenant_id") @db.Uuid
+  /// AGT-YYYY-NNNNNN
+  reference            String
+  /// Sign-in account used on the mobile PWA (optional, one agent per user).
+  userId               String?           @unique @map("user_id") @db.Uuid
+  givenName            String            @map("given_name")
+  familyName           String            @map("family_name")
+  otherNames           String?           @map("other_names")
+  gender               AgentGender?
+  homeWardId           String            @map("home_ward_id") @db.Uuid
+  homeConstituencyId   String            @map("home_constituency_id") @db.Uuid
+  homeCountyId         String            @map("home_county_id") @db.Uuid
+  languages            String[]          @default([])
+  status               AgentStatus       @default(RECRUITED)
+  availability         AgentAvailability @default(AVAILABLE)
+  notes                String?
+  /// "+254 ••• ••• 678" (derived from agent_sensitive.phone on write).
+  phoneMasked          String?           @map("phone_masked")
+  /// "••••• 678" (derived from agent_sensitive.national_id_number on write).
+  nationalIdMasked     String?           @map("national_id_masked")
+  hasMpesaNumber       Boolean           @default(false) @map("has_mpesa_number")
+  hasNextOfKin         Boolean           @default(false) @map("has_next_of_kin")
+  privacyNoticeVersion String?           @map("privacy_notice_version")
+  privacyNoticeAckAt   DateTime?         @map("privacy_notice_ack_at") @db.Timestamptz(3)
+  createdById          String            @map("created_by_id") @db.Uuid
+  version              Int               @default(1)
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user           User?                @relation("AgentUser", fields: [userId], references: [id], onDelete: Restrict)
+  homeWard       GeographicUnit       @relation("AgentHomeWard", fields: [homeWardId], references: [id], onDelete: Restrict)
+  createdBy      User                 @relation("AgentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  sensitive      AgentSensitive?
+  accreditations AgentAccreditation[]
+  trainings      AgentTraining[]
+  statusEvents   AgentStatusEvent[]
+  deployments    Deployment[]         @relation("DeploymentAgent")
+  supervising    Deployment[]         @relation("DeploymentSupervisor")
+
+  @@unique([tenantId, reference])
+  @@index([tenantId, status])
+  @@index([tenantId, homeWardId])
+  @@index([tenantId, homeConstituencyId])
+  @@index([tenantId, homeCountyId])
+  @@map("agents")
+}
+
+/// Agent personal data (sensitive). Read only through the audited reveal
+/// endpoint with field.agents.reveal_sensitive; never in lists or exports.
+model AgentSensitive {
+  agentId               String   @id @map("agent_id") @db.Uuid
+  tenantId              String   @map("tenant_id") @db.Uuid
+  nationalIdNumber      String?  @map("national_id_number")
+  /// E.164, e.g. +2547XXXXXXXX
+  phone                 String?
+  mpesaNumber           String?  @map("mpesa_number")
+  nextOfKinName         String?  @map("next_of_kin_name")
+  nextOfKinPhone        String?  @map("next_of_kin_phone")
+  nextOfKinRelationship String?  @map("next_of_kin_relationship")
+  updatedById           String   @map("updated_by_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent     Agent  @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  updatedBy User   @relation("AgentSensitiveUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@map("agent_sensitive")
+}
+
+/// Accreditation status per agent and election cycle. Recorded, never granted, by NGAO360.
+model AgentAccreditation {
+  id                     String              @id @default(uuid()) @db.Uuid
+  tenantId               String              @map("tenant_id") @db.Uuid
+  agentId                String              @map("agent_id") @db.Uuid
+  electionCycleId        String              @map("election_cycle_id") @db.Uuid
+  status                 AccreditationStatus @default(NOT_SUBMITTED)
+  accreditationReference String?             @map("accreditation_reference")
+  evidenceFileId         String?             @map("evidence_file_id") @db.Uuid
+  submittedAt            DateTime?           @map("submitted_at") @db.Timestamptz(3)
+  decidedAt              DateTime?           @map("decided_at") @db.Timestamptz(3)
+  expiresOn              DateTime?           @map("expires_on") @db.Date
+  notes                  String?
+  updatedById            String?             @map("updated_by_id") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent         Agent         @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  evidenceFile  StoredFile?   @relation(fields: [evidenceFileId], references: [id], onDelete: Restrict)
+  updatedBy     User?         @relation("AccreditationUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, agentId, electionCycleId])
+  @@index([tenantId, electionCycleId, status])
+  @@map("agent_accreditations")
+}
+
+model AgentTraining {
+  id              String         @id @default(uuid()) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  agentId         String         @map("agent_id") @db.Uuid
+  electionCycleId String?        @map("election_cycle_id") @db.Uuid
+  title           String
+  status          TrainingStatus @default(SCHEDULED)
+  scheduledOn     DateTime?      @map("scheduled_on") @db.Date
+  materialsIssued Boolean        @default(false) @map("materials_issued")
+  attendedAt      DateTime?      @map("attended_at") @db.Timestamptz(3)
+  assessmentScore Int?           @map("assessment_score")
+  completedAt     DateTime?      @map("completed_at") @db.Timestamptz(3)
+  refresherDueOn  DateTime?      @map("refresher_due_on") @db.Date
+  notes           String?
+  recordedById    String         @map("recorded_by_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent         Agent          @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle? @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  recordedBy    User           @relation("TrainingRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, agentId])
+  @@index([tenantId, electionCycleId, status])
+  @@map("agent_trainings")
+}
+
+/// Append-only agent status history (S13 status history).
+model AgentStatusEvent {
+  id         String       @id @default(uuid()) @db.Uuid
+  tenantId   String       @map("tenant_id") @db.Uuid
+  agentId    String       @map("agent_id") @db.Uuid
+  fromStatus AgentStatus? @map("from_status")
+  toStatus   AgentStatus  @map("to_status")
+  reason     String?
+  actorId    String       @map("actor_id") @db.Uuid
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent  Agent  @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  actor  User   @relation("AgentStatusActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, agentId, createdAt])
+  @@map("agent_status_events")
+}
+
+/// Agent × polling station (by code) × cycle × role × shift (blueprint 6.3, S14).
+/// Never deleted: replacement marks the original REPLACED and links the successor.
+model Deployment {
+  id                    String           @id @default(uuid()) @db.Uuid
+  tenantId              String           @map("tenant_id") @db.Uuid
+  electionCycleId       String           @map("election_cycle_id") @db.Uuid
+  agentId               String           @map("agent_id") @db.Uuid
+  pollingStationCode    String           @map("polling_station_code")
+  countyId              String           @map("county_id") @db.Uuid
+  constituencyId        String           @map("constituency_id") @db.Uuid
+  wardId                String           @map("ward_id") @db.Uuid
+  pollingCentreId       String?          @map("polling_centre_id") @db.Uuid
+  role                  DeploymentRole
+  shift                 DeploymentShift  @default(FULL_DAY)
+  status                DeploymentStatus @default(ASSIGNED)
+  supervisorAgentId     String?          @map("supervisor_agent_id") @db.Uuid
+  instructions          String?
+  confirmedAt           DateTime?        @map("confirmed_at") @db.Timestamptz(3)
+  /// Device time of the check-in (as reported); received_at is in deployment_events.
+  checkedInAt           DateTime?        @map("checked_in_at") @db.Timestamptz(3)
+  checkInLatitude       Decimal?         @map("check_in_latitude") @db.Decimal(9, 6)
+  checkInLongitude      Decimal?         @map("check_in_longitude") @db.Decimal(9, 6)
+  checkInAccuracyMetres Int?             @map("check_in_accuracy_metres")
+  checkedOutAt          DateTime?        @map("checked_out_at") @db.Timestamptz(3)
+  replacesDeploymentId  String?          @unique @map("replaces_deployment_id") @db.Uuid
+  cancelledReason       String?          @map("cancelled_reason")
+  createdById           String           @map("created_by_id") @db.Uuid
+  version               Int              @default(1)
+  createdAt             DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle     @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  agent         Agent             @relation("DeploymentAgent", fields: [agentId], references: [id], onDelete: Restrict)
+  supervisor    Agent?            @relation("DeploymentSupervisor", fields: [supervisorAgentId], references: [id], onDelete: Restrict)
+  replaces      Deployment?       @relation("DeploymentReplacement", fields: [replacesDeploymentId], references: [id], onDelete: Restrict)
+  replacedBy    Deployment?       @relation("DeploymentReplacement")
+  createdBy     User              @relation("DeploymentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  events        DeploymentEvent[]
+
+  // Partial unique indexes (one active deployment per agent+shift, one active
+  // chief agent per station+shift) are in the migration SQL.
+  @@index([tenantId, electionCycleId, pollingStationCode])
+  @@index([tenantId, electionCycleId, agentId])
+  @@index([tenantId, electionCycleId, status])
+  @@index([tenantId, electionCycleId, wardId])
+  @@index([tenantId, electionCycleId, constituencyId])
+  @@map("deployments")
+}
+
+/// Append-only deployment history (assignment, confirmation, check-in, replacement).
+model DeploymentEvent {
+  id               String              @id @default(uuid()) @db.Uuid
+  tenantId         String              @map("tenant_id") @db.Uuid
+  deploymentId     String              @map("deployment_id") @db.Uuid
+  type             DeploymentEventType
+  fromStatus       DeploymentStatus?   @map("from_status")
+  toStatus         DeploymentStatus?   @map("to_status")
+  note             String?
+  /// Check-in coordinates are kept on the deployment row only; this records that one was given.
+  hasLocation      Boolean             @default(false) @map("has_location")
+  submittedOffline Boolean             @default(false) @map("submitted_offline")
+  clientCreatedAt  DateTime?           @map("client_created_at") @db.Timestamptz(3)
+  actorId          String              @map("actor_id") @db.Uuid
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  deployment Deployment @relation(fields: [deploymentId], references: [id], onDelete: Restrict)
+  actor      User       @relation("DeploymentEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, deploymentId, createdAt])
+  @@map("deployment_events")
+}
+
+/// Readiness checklist per polling station (by code) and cycle (S15).
+model ReadinessChecklist {
+  id                 String          @id @default(uuid()) @db.Uuid
+  tenantId           String          @map("tenant_id") @db.Uuid
+  electionCycleId    String          @map("election_cycle_id") @db.Uuid
+  pollingStationCode String          @map("polling_station_code")
+  countyId           String          @map("county_id") @db.Uuid
+  constituencyId     String          @map("constituency_id") @db.Uuid
+  wardId             String          @map("ward_id") @db.Uuid
+  pollingCentreId    String?         @map("polling_centre_id") @db.Uuid
+  /// Derived from the items (deriveReadinessStatus) on every item change.
+  status             ReadinessStatus @default(NOT_STARTED)
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle   @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  items         ReadinessItem[]
+
+  @@unique([tenantId, electionCycleId, pollingStationCode])
+  @@index([tenantId, electionCycleId, status])
+  @@index([tenantId, electionCycleId, wardId])
+  @@map("readiness_checklists")
+}
+
+model ReadinessItem {
+  id          String              @id @default(uuid()) @db.Uuid
+  tenantId    String              @map("tenant_id") @db.Uuid
+  checklistId String              @map("checklist_id") @db.Uuid
+  category    ReadinessCategory
+  status      ReadinessItemStatus @default(NOT_STARTED)
+  note        String?
+  dueAt       DateTime?           @map("due_at") @db.Timestamptz(3)
+  updatedById String?             @map("updated_by_id") @db.Uuid
+  version     Int                 @default(1)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  checklist ReadinessChecklist @relation(fields: [checklistId], references: [id], onDelete: Restrict)
+  updatedBy User?              @relation("ReadinessItemUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, checklistId, category])
+  @@index([tenantId, category, status])
+  @@map("readiness_items")
+}
+
+/// Versioned field report template (schema JSON). ACTIVE templates are immutable.
+model FieldReportTemplate {
+  id              String                    @id @default(uuid()) @db.Uuid
+  tenantId        String                    @map("tenant_id") @db.Uuid
+  key             String
+  version         Int
+  name            String
+  description     String?
+  reportType      FieldReportType           @map("report_type")
+  status          FieldReportTemplateStatus @default(DRAFT)
+  /// FieldReportTemplateSchemaSchema (packages/shared/src/field/reports.ts)
+  schema          Json
+  electionCycleId String?                   @map("election_cycle_id") @db.Uuid
+  createdById     String                    @map("created_by_id") @db.Uuid
+  activatedById   String?                   @map("activated_by_id") @db.Uuid
+  activatedAt     DateTime?                 @map("activated_at") @db.Timestamptz(3)
+  retiredAt       DateTime?                 @map("retired_at") @db.Timestamptz(3)
+  createdAt       DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle? @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  createdBy     User           @relation("FieldTemplateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  activatedBy   User?          @relation("FieldTemplateActivatedBy", fields: [activatedById], references: [id], onDelete: Restrict)
+  reports       FieldReport[]
+
+  @@unique([tenantId, key, version])
+  @@index([tenantId, status])
+  @@map("field_report_templates")
+}
+
+/// Field report (S11). Submitted content is immutable (trigger); review fields change.
+model FieldReport {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  tenantId             String                  @map("tenant_id") @db.Uuid
+  /// FRP-YYYY-NNNNNN
+  reference            String
+  templateId           String                  @map("template_id") @db.Uuid
+  templateVersion      Int                     @map("template_version")
+  reportType           FieldReportType         @map("report_type")
+  electionCycleId      String                  @map("election_cycle_id") @db.Uuid
+  pollingStationCode   String?                 @map("polling_station_code")
+  /// Lowest unit (station's centre/ward, or the area given).
+  geographicUnitId     String                  @map("geographic_unit_id") @db.Uuid
+  countyId             String?                 @map("county_id") @db.Uuid
+  constituencyId       String?                 @map("constituency_id") @db.Uuid
+  wardId               String?                 @map("ward_id") @db.Uuid
+  pollingCentreId      String?                 @map("polling_centre_id") @db.Uuid
+  eventAt              DateTime                @map("event_at") @db.Timestamptz(3)
+  receivedAt           DateTime                @default(now()) @map("received_at") @db.Timestamptz(3)
+  answers              Json
+  notes                String?
+  latitude             Decimal?                @db.Decimal(9, 6)
+  longitude            Decimal?                @db.Decimal(9, 6)
+  authorId             String                  @map("author_id") @db.Uuid
+  submittedOffline     Boolean                 @default(false) @map("submitted_offline")
+  clientIdempotencyKey String                  @map("client_idempotency_key") @db.Uuid
+  deviceId             String?                 @map("device_id")
+  clientCreatedAt      DateTime?               @map("client_created_at") @db.Timestamptz(3)
+  supersedesReportId   String?                 @map("supersedes_report_id") @db.Uuid
+  reviewStatus         FieldReportReviewStatus @default(SUBMITTED) @map("review_status")
+  reviewerId           String?                 @map("reviewer_id") @db.Uuid
+  reviewNote           String?                 @map("review_note")
+  reviewedAt           DateTime?               @map("reviewed_at") @db.Timestamptz(3)
+  version              Int                     @default(1)
+  updatedAt            DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  template       FieldReportTemplate   @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  electionCycle  ElectionCycle         @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  geographicUnit GeographicUnit        @relation("FieldReportUnit", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  author         User                  @relation("FieldReportAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  reviewer       User?                 @relation("FieldReportReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  supersedes     FieldReport?          @relation("FieldReportSupersedes", fields: [supersedesReportId], references: [id], onDelete: Restrict)
+  supersededBy   FieldReport[]         @relation("FieldReportSupersedes")
+  evidence       FieldReportEvidence[]
+
+  @@unique([tenantId, reference])
+  @@unique([tenantId, authorId, clientIdempotencyKey])
+  @@index([tenantId, electionCycleId, pollingStationCode])
+  @@index([tenantId, electionCycleId, reviewStatus])
+  @@index([tenantId, electionCycleId, wardId])
+  @@map("field_reports")
+}
+
+/// Append-only link between a field report and its evidence files.
+model FieldReportEvidence {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  reportId     String   @map("report_id") @db.Uuid
+  storedFileId String   @map("stored_file_id") @db.Uuid
+  addedById    String   @map("added_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  report     FieldReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+  storedFile StoredFile  @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  addedBy    User        @relation("FieldReportEvidenceAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, reportId, storedFileId])
+  @@map("field_report_evidence")
+}
+
+/// Incident (blueprint 7.3, S17). The original report is immutable (trigger);
+/// everything after it is an incident_events row. Never deleted.
+model Incident {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  tenantId             String                    @map("tenant_id") @db.Uuid
+  /// INC-YYYY-NNNNNN
+  reference            String
+  electionCycleId      String                    @map("election_cycle_id") @db.Uuid
+  /// As reported (immutable).
+  reportedCategory     IncidentCategory          @map("reported_category")
+  /// Current category after triage.
+  category             IncidentCategory
+  /// Initial severity from the configured rules (immutable).
+  initialSeverity      IncidentSeverity          @map("initial_severity")
+  severity             IncidentSeverity
+  status               IncidentStatus            @default(REPORTED)
+  outcome              IncidentOutcome?
+  occurredAt           DateTime                  @map("occurred_at") @db.Timestamptz(3)
+  reportedAt           DateTime                  @default(now()) @map("reported_at") @db.Timestamptz(3)
+  pollingStationCode   String?                   @map("polling_station_code")
+  geographicUnitId     String                    @map("geographic_unit_id") @db.Uuid
+  countyId             String?                   @map("county_id") @db.Uuid
+  constituencyId       String?                   @map("constituency_id") @db.Uuid
+  wardId               String?                   @map("ward_id") @db.Uuid
+  pollingCentreId      String?                   @map("polling_centre_id") @db.Uuid
+  locationDescription  String?                   @map("location_description")
+  latitude             Decimal?                  @db.Decimal(9, 6)
+  longitude            Decimal?                  @db.Decimal(9, 6)
+  /// Neutral factual description as reported (immutable).
+  description          String
+  sensitivity          SensitivityLevel          @default(INTERNAL)
+  reporterId           String                    @map("reporter_id") @db.Uuid
+  assigneeId           String?                   @map("assignee_id") @db.Uuid
+  escalatedTo          IncidentEscalationTarget? @map("escalated_to")
+  evidenceHold         Boolean                   @default(false) @map("evidence_hold")
+  duplicateOfId        String?                   @map("duplicate_of_id") @db.Uuid
+  resolutionNote       String?                   @map("resolution_note")
+  resolvedById         String?                   @map("resolved_by_id") @db.Uuid
+  resolvedAt           DateTime?                 @map("resolved_at") @db.Timestamptz(3)
+  closureNote          String?                   @map("closure_note")
+  closedById           String?                   @map("closed_by_id") @db.Uuid
+  closedAt             DateTime?                 @map("closed_at") @db.Timestamptz(3)
+  submittedOffline     Boolean                   @default(false) @map("submitted_offline")
+  clientIdempotencyKey String                    @map("client_idempotency_key") @db.Uuid
+  deviceId             String?                   @map("device_id")
+  clientCreatedAt      DateTime?                 @map("client_created_at") @db.Timestamptz(3)
+  version              Int                       @default(1)
+  updatedAt            DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle  ElectionCycle      @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  geographicUnit GeographicUnit     @relation("IncidentUnit", fields: [geographicUnitId], references: [id], onDelete: Restrict)
+  reporter       User               @relation("IncidentReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  assignee       User?              @relation("IncidentAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  resolvedBy     User?              @relation("IncidentResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  closedBy       User?              @relation("IncidentClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  duplicateOf    Incident?          @relation("IncidentDuplicate", fields: [duplicateOfId], references: [id], onDelete: Restrict)
+  duplicates     Incident[]         @relation("IncidentDuplicate")
+  events         IncidentEvent[]
+  evidence       IncidentEvidence[]
+  subjects       IncidentSubject[]
+
+  @@unique([tenantId, reference])
+  @@unique([tenantId, reporterId, clientIdempotencyKey])
+  @@index([tenantId, electionCycleId, status, severity])
+  @@index([tenantId, electionCycleId, pollingStationCode])
+  @@index([tenantId, electionCycleId, wardId])
+  @@index([tenantId, assigneeId, status])
+  @@map("incidents")
+}
+
+/// Append-only incident history: triage, assignment, escalation, notes,
+/// corrections, referrals, evidence holds, resolution, closure, reopening.
+model IncidentEvent {
+  id         String            @id @default(uuid()) @db.Uuid
+  tenantId   String            @map("tenant_id") @db.Uuid
+  incidentId String            @map("incident_id") @db.Uuid
+  type       IncidentEventType
+  fromStatus IncidentStatus?   @map("from_status")
+  toStatus   IncidentStatus?   @map("to_status")
+  note       String?
+  /// Structured details (severity change, assignee, escalation target, correction). No personal data.
+  data       Json              @default("{}")
+  fileIds    String[]          @default([]) @map("file_ids") @db.Uuid
+  actorId    String            @map("actor_id") @db.Uuid
+  createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  actor    User     @relation("IncidentEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, incidentId, createdAt])
+  @@map("incident_events")
+}
+
+/// Append-only evidence links (original report evidence and later additions).
+model IncidentEvidence {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  incidentId   String   @map("incident_id") @db.Uuid
+  storedFileId String   @map("stored_file_id") @db.Uuid
+  original     Boolean  @default(false)
+  addedById    String   @map("added_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  incident   Incident   @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  storedFile StoredFile @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+  addedBy    User       @relation("IncidentEvidenceAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, incidentId, storedFileId])
+  @@map("incident_evidence")
+}
+
+/// Restricted subject of an incident (who or what it concerns), append-only.
+/// Readable only with field.incidents.view_subject; every read is audited.
+model IncidentSubject {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  incidentId   String   @map("incident_id") @db.Uuid
+  description  String
+  recordedById String   @map("recorded_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  recordedBy User     @relation("IncidentSubjectRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, incidentId])
+  @@map("incident_subjects")
+}
+
+/// Current War Room status per polling station (by code) and cycle (blueprint 7.2).
+/// Derived from deployments, field reports, incidents and tally intake;
+/// commanders may set FLAGGED or CLOSED manually (with a reason).
+model StationStatus {
+  id                 String              @id @default(uuid()) @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  electionCycleId    String              @map("election_cycle_id") @db.Uuid
+  pollingStationCode String              @map("polling_station_code")
+  countyId           String              @map("county_id") @db.Uuid
+  constituencyId     String              @map("constituency_id") @db.Uuid
+  wardId             String              @map("ward_id") @db.Uuid
+  pollingCentreId    String?             @map("polling_centre_id") @db.Uuid
+  status             OperationalStatus   @default(NOT_ASSIGNED)
+  source             StationStatusSource @default(DERIVED)
+  /// Last derived status (kept while a manual status is set).
+  derivedStatus      OperationalStatus   @default(NOT_ASSIGNED) @map("derived_status")
+  manualStatus       OperationalStatus?  @map("manual_status")
+  manualNote         String?             @map("manual_note")
+  manualSetById      String?             @map("manual_set_by_id") @db.Uuid
+  /// Snapshot of the components used for the derived status.
+  components         Json                @default("{}")
+  computedAt         DateTime            @default(now()) @map("computed_at") @db.Timestamptz(3)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle ElectionCycle        @relation(fields: [electionCycleId], references: [id], onDelete: Restrict)
+  manualSetBy   User?                @relation("StationStatusManualBy", fields: [manualSetById], references: [id], onDelete: Restrict)
+  events        StationStatusEvent[]
+
+  @@unique([tenantId, electionCycleId, pollingStationCode])
+  @@index([tenantId, electionCycleId, status])
+  @@index([tenantId, electionCycleId, wardId])
+  @@map("station_statuses")
+}
+
+/// Append-only station status history.
+model StationStatusEvent {
+  id              String              @id @default(uuid()) @db.Uuid
+  tenantId        String              @map("tenant_id") @db.Uuid
+  stationStatusId String              @map("station_status_id") @db.Uuid
+  fromStatus      OperationalStatus?  @map("from_status")
+  toStatus        OperationalStatus   @map("to_status")
+  source          StationStatusSource
+  reason          String?
+  actorId         String?             @map("actor_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  stationStatus StationStatus @relation(fields: [stationStatusId], references: [id], onDelete: Restrict)
+  actor         User?         @relation("StationStatusEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, stationStatusId, createdAt])
+  @@map("station_status_events")
+}
+
+/// Offline-sync idempotency ledger (blueprint 13.4): one row per
+/// (tenant, user, client key). A retry with the same key and payload hash
+/// returns the recorded result; a different payload is a conflict.
+model ClientSubmission {
+  id              String                  @id @default(uuid()) @db.Uuid
+  tenantId        String                  @map("tenant_id") @db.Uuid
+  userId          String                  @map("user_id") @db.Uuid
+  deviceId        String                  @map("device_id")
+  idempotencyKey  String                  @map("idempotency_key") @db.Uuid
+  kind            ClientSubmissionKind
+  /// SHA-256 of canonicalPayload(payload).
+  payloadHash     String                  @map("payload_hash")
+  outcome         ClientSubmissionOutcome
+  resultType      String?                 @map("result_type")
+  resultId        String?                 @map("result_id") @db.Uuid
+  resultReference String?                 @map("result_reference")
+  errorCode       String?                 @map("error_code")
+  clientCreatedAt DateTime?               @map("client_created_at") @db.Timestamptz(3)
+  attempts        Int                     @default(1)
+  firstSeenAt     DateTime                @default(now()) @map("first_seen_at") @db.Timestamptz(3)
+  lastSeenAt      DateTime                @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation("ClientSubmissionUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, userId, idempotencyKey])
+  @@index([tenantId, userId, deviceId, lastSeenAt])
+  @@index([tenantId, outcome, lastSeenAt])
+  @@map("client_submissions")
 }

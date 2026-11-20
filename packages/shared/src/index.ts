@@ -13,3 +13,4 @@ export * from './reference';
 export * from './admin';
 export * from './modules';
 export * from './office';
+export * from './field';

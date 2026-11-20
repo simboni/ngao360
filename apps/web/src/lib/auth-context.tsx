@@ -5,7 +5,7 @@ import {
   type MeResponse,
   type PermissionKey,
   type PermissionModule,
-  TENANT_MODULE_KEYS,
+  PERMISSION_MODULE_TENANT_MODULES,
   type TenantModuleKey,
 } from '@ngao360/shared';
 import { usePathname, useRouter } from 'next/navigation';
@@ -69,13 +69,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthState>(() => {
     const perms = new Set<string>(me?.permissions ?? []);
     const modules = new Set<string>(me?.modules ?? []);
-    const isTenantModule = (m: string): m is TenantModuleKey => (TENANT_MODULE_KEYS as readonly string[]).includes(m);
+    // A permission module may need several tenant modules (the War Room needs field and tally).
+    const tenantModulesOn = (m: string) => (PERMISSION_MODULE_TENANT_MODULES[m] ?? []).every((k) => modules.has(k));
     return {
       me,
       loading,
       can: (p) => perms.has(p),
       canAny: (ps) => ps.some((p) => perms.has(p)),
-      canAccessModule: (m) => hasModuleAccess(perms, m) && (!isTenantModule(m) || modules.has(m)),
+      canAccessModule: (m) => hasModuleAccess(perms, m) && tenantModulesOn(m),
       moduleEnabled: (m) => modules.has(m),
       reload,
       logout,

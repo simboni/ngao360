@@ -11,5 +11,8 @@ export const REQUIRE_MODULE_KEY = 'ngao:requireModule';
  *
  *   @RequireModule('office')
  *   @Controller('office/cases')
+ *
+ * Several keys mean every one of them must be on (the War Room needs
+ * `@RequireModule('field', 'tally')`).
  */
-export const RequireModule = (key: TenantModuleKey) => SetMetadata(REQUIRE_MODULE_KEY, key);
+export const RequireModule = (...keys: [TenantModuleKey, ...TenantModuleKey[]]) => SetMetadata(REQUIRE_MODULE_KEY, keys);

@@ -28,7 +28,9 @@ const MODULE_LABELS: Record<string, string> = {
   reference: 'Reference data',
   forms: 'Form templates',
   tally: 'NGAO TALLY',
-  incidents: 'Incidents',
+  field: 'Field operations',
+  warroom: 'War Room',
+  office: 'NGAO360 Office',
   platform: 'Platform operator',
 };
 

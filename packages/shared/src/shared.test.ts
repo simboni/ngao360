@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as enums from './enums';
 import * as office from './office/enums';
+import * as field from './field/enums';
 import {
   ALL_PERMISSION_KEYS,
   PERMISSION_DEFINITIONS,
@@ -114,8 +115,6 @@ describe('enum parity with Prisma schema', () => {
     ['MalwareScanStatus', enums.MALWARE_SCAN_STATUSES],
     ['StorageDriverKind', enums.STORAGE_DRIVERS],
     ['ExportFormat', enums.EXPORT_FORMATS],
-    ['IncidentStatus', enums.INCIDENT_STATUSES],
-    ['IncidentPriority', enums.INCIDENT_PRIORITIES],
     ['NotificationChannel', enums.NOTIFICATION_CHANNELS],
     // NGAO360 Office
     ['ContactPreference', office.CONTACT_PREFERENCES],
@@ -144,6 +143,31 @@ describe('enum parity with Prisma schema', () => {
     ['ProjectStatus', office.PROJECT_STATUSES],
     ['MilestoneStatus', office.MILESTONE_STATUSES],
     ['ProjectEvidenceType', office.PROJECT_EVIDENCE_TYPES],
+    // Field and election operations
+    ['AgentStatus', field.AGENT_STATUSES],
+    ['AgentAvailability', field.AGENT_AVAILABILITIES],
+    ['AgentGender', field.AGENT_GENDERS],
+    ['AccreditationStatus', field.ACCREDITATION_STATUSES],
+    ['TrainingStatus', field.TRAINING_STATUSES],
+    ['DeploymentRole', field.DEPLOYMENT_ROLES],
+    ['DeploymentShift', field.DEPLOYMENT_SHIFTS],
+    ['DeploymentStatus', field.DEPLOYMENT_STATUSES],
+    ['DeploymentEventType', field.DEPLOYMENT_EVENT_TYPES],
+    ['ReadinessCategory', field.READINESS_CATEGORIES],
+    ['ReadinessItemStatus', field.READINESS_ITEM_STATUSES],
+    ['ReadinessStatus', field.READINESS_STATUSES],
+    ['FieldReportType', field.FIELD_REPORT_TYPES],
+    ['FieldReportTemplateStatus', field.FIELD_REPORT_TEMPLATE_STATUSES],
+    ['FieldReportReviewStatus', field.FIELD_REPORT_REVIEW_STATUSES],
+    ['IncidentCategory', field.INCIDENT_CATEGORIES],
+    ['IncidentSeverity', field.INCIDENT_SEVERITIES],
+    ['IncidentStatus', field.INCIDENT_STATUSES],
+    ['IncidentOutcome', field.INCIDENT_OUTCOMES],
+    ['IncidentEscalationTarget', field.INCIDENT_ESCALATION_TARGETS],
+    ['IncidentEventType', field.INCIDENT_EVENT_TYPES],
+    ['StationStatusSource', field.STATION_STATUS_SOURCES],
+    ['ClientSubmissionKind', field.CLIENT_SUBMISSION_KINDS],
+    ['ClientSubmissionOutcome', field.CLIENT_SUBMISSION_OUTCOMES],
   ];
   it.each(pairs)('%s matches', (name, values) => {
     expect(prismaEnums.get(name)).toEqual([...values]);

@@ -13,6 +13,7 @@ import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ReferenceModule } from './modules/reference/reference.module';
+import { FieldModule } from './modules/field/field.module';
 import { OfficeModule } from './modules/office/office.module';
 import { TallyModule } from './modules/tally/tally.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -45,6 +46,7 @@ import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
     TallyModule,
     AdminModule,
     OfficeModule,
+    FieldModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

@@ -313,5 +313,46 @@ export const AUDIT_ACTIONS = {
   PROJECT_VERIFICATION_RECORDED: 'office.project.verification_recorded',
   PROJECT_COMPLETION_VERIFIED: 'office.project.completion_verified',
   PROJECT_PUBLICATION_CHANGED: 'office.project.publication_changed',
+
+  // Field and election operations: agents
+  AGENT_CREATED: 'field.agent.created',
+  AGENT_UPDATED: 'field.agent.updated',
+  AGENT_STATUS_CHANGED: 'field.agent.status_changed',
+  AGENT_SENSITIVE_REVEALED: 'field.agent.sensitive_revealed',
+  AGENT_SENSITIVE_UPDATED: 'field.agent.sensitive_updated',
+  AGENT_TRAINING_RECORDED: 'field.agent.training_recorded',
+  AGENT_ACCREDITATION_RECORDED: 'field.agent.accreditation_recorded',
+  AGENT_USER_LINKED: 'field.agent.user_linked',
+  // Deployment
+  DEPLOYMENT_CREATED: 'field.deployment.created',
+  DEPLOYMENT_UPDATED: 'field.deployment.updated',
+  DEPLOYMENT_STATUS_CHANGED: 'field.deployment.status_changed',
+  DEPLOYMENT_REPLACED: 'field.deployment.replaced',
+  DEPLOYMENT_CHECKED_IN: 'field.deployment.checked_in',
+  // Readiness
+  READINESS_GENERATED: 'field.readiness.generated',
+  READINESS_ITEM_UPDATED: 'field.readiness.item_updated',
+  // Field reports
+  FIELD_REPORT_TEMPLATE_CREATED: 'field.report_template.created',
+  FIELD_REPORT_TEMPLATE_STATE_CHANGED: 'field.report_template.state_changed',
+  FIELD_REPORT_SUBMITTED: 'field.report.submitted',
+  FIELD_REPORT_REVIEWED: 'field.report.reviewed',
+  FIELD_REPORT_EVIDENCE_ADDED: 'field.report.evidence_added',
+  // Incidents
+  INCIDENT_REPORTED: 'field.incident.reported',
+  INCIDENT_TRIAGED: 'field.incident.triaged',
+  INCIDENT_ASSIGNED: 'field.incident.assigned',
+  INCIDENT_ESCALATED: 'field.incident.escalated',
+  INCIDENT_EVENT_ADDED: 'field.incident.event_added',
+  INCIDENT_EVIDENCE_ADDED: 'field.incident.evidence_added',
+  INCIDENT_SUBJECT_RECORDED: 'field.incident.subject_recorded',
+  INCIDENT_SUBJECT_VIEWED: 'field.incident.subject_viewed',
+  INCIDENT_RESOLVED: 'field.incident.resolved',
+  INCIDENT_CLOSED: 'field.incident.closed',
+  INCIDENT_REOPENED: 'field.incident.reopened',
+  // War Room
+  STATION_STATUS_SET: 'warroom.station_status.set',
+  // Offline sync
+  SYNC_CONFLICT_RECORDED: 'field.sync.conflict_recorded',
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

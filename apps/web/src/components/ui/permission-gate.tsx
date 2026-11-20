@@ -41,14 +41,16 @@ export function RequirePagePermission({ anyOf, children }: { anyOf: PermissionKe
 }
 
 /**
- * Page-level guard for tenant modules (e.g. NGAO360 Office). Shows a plain
+ * Page-level guard for tenant modules (e.g. NGAO360 Office). Several modules
+ * mean all must be on (the War Room needs field and tally). Shows a plain
  * message when the organisation has the module switched off. Presentation
  * only: the API answers 403 MODULE_DISABLED.
  */
-export function RequireModuleEnabled({ module, children }: { module: TenantModuleKey; children: ReactNode }) {
+export function RequireModuleEnabled({ module, children }: { module: TenantModuleKey | TenantModuleKey[]; children: ReactNode }) {
   const { moduleEnabled, loading } = useAuth();
   if (loading) return null;
-  if (!moduleEnabled(module)) {
+  const modules = Array.isArray(module) ? module : [module];
+  if (!modules.every((m) => moduleEnabled(m))) {
     return (
       <div className="ngao-card">
         <EmptyState

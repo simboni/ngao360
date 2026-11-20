@@ -24,12 +24,14 @@ export class ModuleGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (context.getType() !== 'http') return true;
     const targets = [context.getHandler(), context.getClass()];
-    const key = this.reflector.getAllAndOverride<TenantModuleKey | undefined>(REQUIRE_MODULE_KEY, targets);
-    if (!key) return true;
+    const keys = this.reflector.getAllAndOverride<TenantModuleKey[] | undefined>(REQUIRE_MODULE_KEY, targets);
+    if (!keys || keys.length === 0) return true;
     if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, targets)) return true;
     const auth = context.switchToHttp().getRequest<AppRequest>().auth;
     if (!auth) return true; // JwtAuthGuard has already refused unauthenticated calls.
-    await this.prisma.withTenant(auth.tenantId, (tx) => this.modules.assertEnabled(tx, key));
+    await this.prisma.withTenant(auth.tenantId, async (tx) => {
+      for (const key of keys) await this.modules.assertEnabled(tx, key);
+    });
     return true;
   }
 }

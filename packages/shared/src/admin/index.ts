@@ -58,6 +58,18 @@ export const ROLE_SOD_RULES: readonly RoleSodRule[] = [
     message: 'A role cannot both verify results and approve verification outcomes.',
   },
   {
+    id: 'incident-resolve-vs-close',
+    left: ['field.incidents.resolve'],
+    right: ['field.incidents.close'],
+    message: 'A role cannot both record an incident resolution and close the incident; a second person closes it.',
+  },
+  {
+    id: 'field-agent-vs-agent-admin',
+    left: ['field.deployment.checkin'],
+    right: ['field.agents.view', 'field.agents.reveal_sensitive', 'field.deployment.plan'],
+    message: "A field agent role cannot view other agents' records or plan deployments.",
+  },
+  {
     id: 'access-admin-vs-tally-write',
     left: ACCESS_ADMIN_PERMISSIONS,
     right: TALLY_VALUE_WRITE_PERMISSIONS,

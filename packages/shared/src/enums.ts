@@ -407,6 +407,9 @@ export const STORED_FILE_PURPOSES = [
   'CORRESPONDENCE',
   'CASE_EVIDENCE',
   'PROJECT_EVIDENCE',
+  // Field and election operations (incident and field-report evidence, accreditation documents)
+  'FIELD_EVIDENCE',
+  'AGENT_DOCUMENT',
 ] as const;
 export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];
 export const StoredFilePurpose = enumObject(STORED_FILE_PURPOSES);
@@ -426,15 +429,8 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export const ExportFormat = enumObject(EXPORT_FORMATS);
 export const ExportFormatSchema = z.enum(EXPORT_FORMATS);
 
-export const INCIDENT_STATUSES = ['NEW', 'ACKNOWLEDGED', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED', 'UNRESOLVED', 'CLOSED'] as const;
-export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
-export const IncidentStatus = enumObject(INCIDENT_STATUSES);
-export const IncidentStatusSchema = z.enum(INCIDENT_STATUSES);
-
-export const INCIDENT_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
-export type IncidentPriority = (typeof INCIDENT_PRIORITIES)[number];
-export const IncidentPriority = enumObject(INCIDENT_PRIORITIES);
-export const IncidentPrioritySchema = z.enum(INCIDENT_PRIORITIES);
+// Incident statuses, severities and categories live in ./field/enums.ts
+// (blueprint 7.3 workflow; the foundation's placeholder enums were replaced).
 
 export const NOTIFICATION_CHANNELS = ['IN_APP', 'EMAIL', 'SMS'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];

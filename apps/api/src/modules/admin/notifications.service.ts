@@ -8,7 +8,7 @@ import {
   type Paginated,
   PERMISSION_MODULES,
   type PermissionModule,
-  TENANT_MODULE_KEYS,
+  PERMISSION_MODULE_TENANT_MODULES,
 } from '@ngao360/shared';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
@@ -32,8 +32,8 @@ export class NotificationsService {
    */
   private async visibleModules(tx: TenantTx, auth: AuthContext): Promise<string[]> {
     const enabled = new Set<string>(await this.modules.enabledModules(tx));
-    const switchedOff = new Set<string>(TENANT_MODULE_KEYS.filter((k) => !enabled.has(k)));
-    return PERMISSION_MODULES.filter((m: PermissionModule) => !switchedOff.has(m) && (m === 'notifications' || hasModuleAccess(auth.permissions, m)));
+    const switchedOff = (m: string) => (PERMISSION_MODULE_TENANT_MODULES[m] ?? []).some((k) => !enabled.has(k));
+    return PERMISSION_MODULES.filter((m: PermissionModule) => !switchedOff(m) && (m === 'notifications' || hasModuleAccess(auth.permissions, m)));
   }
 
   private async baseWhere(tx: TenantTx, auth: AuthContext): Promise<Prisma.NotificationWhereInput> {

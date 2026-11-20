@@ -1,6 +1,9 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { DashboardView } from '@/components/admin/dashboard-view';
+import { MOBILE_PERMISSIONS } from '@/components/field/mobile/mobile-nav';
 import { OFFICE_DASHBOARD_PERMISSIONS, OfficeOverview } from '@/components/office/office-overview';
 import { RequirePagePermission } from '@/components/ui/permission-gate';
 import { useAuth } from '@/lib/auth-context';
@@ -14,6 +17,12 @@ import { useAuth } from '@/lib/auth-context';
  */
 export default function DashboardPage() {
   const { can, moduleEnabled } = useAuth();
+  const router = useRouter();
+  // Field agents (mobile-only, no dashboard) land on the field app.
+  const fieldAgentOnly = moduleEnabled('field') && !can('dashboard.view') && MOBILE_PERMISSIONS.some((p) => can(p));
+  useEffect(() => {
+    if (fieldAgentOnly) router.replace('/m');
+  }, [fieldAgentOnly, router]);
   const officeStaff = moduleEnabled('office') && OFFICE_DASHBOARD_PERMISSIONS.some((p) => can(p));
   const officeOnly = officeStaff && (!can('dashboard.view') || !moduleEnabled('tally'));
   return (

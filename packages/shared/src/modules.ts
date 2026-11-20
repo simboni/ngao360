@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema, ReasonSchema, UserRefSchema } from './schemas/common';
 
-export const TENANT_MODULE_KEYS = ['tally', 'office'] as const;
+export const TENANT_MODULE_KEYS = ['tally', 'office', 'field'] as const;
 export type TenantModuleKey = (typeof TENANT_MODULE_KEYS)[number];
 export const TenantModuleKeySchema = z.enum(TENANT_MODULE_KEYS);
 
@@ -37,7 +37,25 @@ export const TENANT_MODULES: readonly TenantModuleDefinition[] = [
       'Correspondence, appointments, meetings, citizen cases, development projects and the public portal.',
     defaultEnabled: false,
   },
+  {
+    key: 'field',
+    label: 'Field and election operations',
+    description:
+      'Agent registry, deployment planner, readiness, field reports, incidents, the offline mobile app and the election-day War Room (with NGAO TALLY).',
+    defaultEnabled: false,
+  },
 ];
+
+/**
+ * Permission modules that belong to a tenant module. The War Room shows
+ * deployment, incident and tally state, so it needs both `field` and `tally`.
+ */
+export const PERMISSION_MODULE_TENANT_MODULES: Readonly<Record<string, readonly TenantModuleKey[]>> = {
+  tally: ['tally'],
+  office: ['office'],
+  field: ['field'],
+  warroom: ['field', 'tally'],
+};
 
 export function moduleDefinition(key: TenantModuleKey): TenantModuleDefinition {
   const def = TENANT_MODULES.find((m) => m.key === key);

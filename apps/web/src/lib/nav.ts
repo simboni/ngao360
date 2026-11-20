@@ -1,6 +1,11 @@
 import type { PermissionKey, PermissionModule } from '@ngao360/shared';
 import {
   AlertTriangle,
+  ClipboardList,
+  RadioTower,
+  Smartphone,
+  TriangleAlert,
+  UserRoundCheck,
   BarChart3,
   CalendarClock,
   FolderKanban,
@@ -71,6 +76,25 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Citizen cases', href: '/office/cases', icon: LifeBuoy, anyOf: ['office.cases.view'] },
       { label: 'Projects', href: '/office/projects', icon: FolderKanban, anyOf: ['office.projects.view'] },
     ],
+  },
+  {
+    // Field and election operations (blueprint 6). Hidden unless the tenant has
+    // the field module on and the user holds a field permission.
+    label: 'Field operations',
+    module: 'field',
+    items: [
+      { label: 'Agents', href: '/field/agents', icon: UserRoundCheck, anyOf: ['field.agents.view'] },
+      { label: 'Deployment', href: '/field/deployment', icon: MapPin, anyOf: ['field.deployment.view'] },
+      { label: 'Readiness', href: '/field/readiness', icon: ClipboardList, anyOf: ['field.readiness.view'] },
+      { label: 'Incidents', href: '/field/incidents', icon: TriangleAlert, anyOf: ['field.incidents.view'] },
+      { label: 'Field app', href: '/m', icon: Smartphone, anyOf: ['field.reports.submit', 'field.incidents.report', 'field.deployment.checkin'] },
+    ],
+  },
+  {
+    // Election-day War Room (blueprint 7): needs the field AND tally modules.
+    label: 'Election day',
+    module: 'warroom',
+    items: [{ label: 'War Room', href: '/warroom', icon: RadioTower, anyOf: ['warroom.view'] }],
   },
   {
     label: 'Reference data',
