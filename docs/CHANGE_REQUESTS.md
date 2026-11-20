@@ -553,3 +553,39 @@ Implemented to §15–22. Additions and interpretations the contract should reco
    Photos are still stored as uploaded (EXIF not stripped), as §16.4 states.
 10. **Sync 5xx items** come back as REJECTED `INTERNAL` without a ledger row, so the device retries
     with the same key; proposed contract wording for this case.
+
+## Field: mobile PWA and offline queue (S11, S17 on `/m`; from the field mobile agent)
+
+Built in `apps/web/src/app/m/**` (home, report, incident, checkin, forms, plus new `queue` and
+`submissions`), `apps/web/src/components/mobile/**`, `apps/web/src/lib/offline/**`, `public/sw.js`
+and `public/manifest.webmanifest`. Coded to API contract §16.4, §17, §19, §20 and §22; no contract
+change is needed. Requests for files owned by others:
+
+1. **`next.config.mjs` Permissions-Policy blocks geolocation** (`geolocation=()`). Check-in location
+   (when `checkInLocationEnabled`) and the optional incident location cannot work until it is
+   `geolocation=(self)`. The mobile screens detect the policy and hide the location buttons meanwhile.
+2. **Sign-out outside `/m` does not clear the offline queue.** The field app warns about unsent items
+   and deletes the queue and its key on sign-out; the desktop menu (`lib/auth-context.tsx` `logout`)
+   should call `clearOfflineDataForSignOut()` from `@/lib/offline/device` (ideally after the same
+   warning: `unsentCount()` from `@/lib/offline/queue`). Until then a desktop sign-out leaves the last
+   field user's encrypted queue on the device, and `/m` opened offline can show its item summaries.
+3. **Unused files:** `components/field/mobile/mobile-shell.tsx` and `mobile-placeholder.tsx` are no
+   longer used (the `/m` layout uses `components/mobile/mobile-shell.tsx`, which still reuses
+   `components/field/mobile/mobile-nav.ts` and its test). They can be deleted by their owner.
+4. **Bottom navigation:** the queue and "My submissions" are reached from the header chip and the menu;
+   adding a "Queue" item to `MOBILE_NAV` is optional.
+5. **Manifest (shared):** added `shortcuts` (Field app, Report an incident, Upload queue) only;
+   `start_url` stays `/dashboard` (agents are redirected to `/m`).
+6. **Tally upload deep link:** `/m/forms` links to `/tally/inbox?upload=1` (as the dashboard does). If
+   the inbox ignores `upload=1`, opening the upload dialog from that parameter would save a tap.
+
+Known gaps (documented, not blocking):
+
+- Queue encryption uses a per-user, per-tenant non-extractable AES-GCM key in IndexedDB (fresh IV per
+  record, entry-bound AAD). It protects against copying the browser's files, not against someone using
+  the unlocked browser profile; a PIN-wrapped key (PBKDF2) is the planned next step.
+- No upload with every tab closed: the service worker relays Background Sync to open tabs only.
+- No separate unsaved "draft" state: a saved form goes straight into the encrypted queue (it can be
+  removed from the queue before it uploads).
+- Server-side EXIF stripping is still open (§16.4 gap); the phone now re-encodes photos (EXIF/GPS
+  removed, long edge 1600 px) before queueing, so PWA uploads no longer carry it.

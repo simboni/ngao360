@@ -1,14 +1,14 @@
-import { MobilePlaceholder } from '@/components/field/mobile/mobile-placeholder';
+import { Suspense } from 'react';
+import { ReportScreen } from '@/components/mobile/report-form';
+import { Spinner } from '@/components/mobile/mobile-ui';
 
 export const metadata = { title: 'Field report' };
 
-/** Mobile PWA: Field report (blueprint 11.3). API §16–22. */
+/** Mobile PWA: S11 field report (blueprint 11.3). API §19, §22. */
 export default function MobileReportPage() {
   return (
-    <MobilePlaceholder
-      title="Field report"
-      description="S11 on the phone: choose a template, answer the short factual questions, add a photo, save a draft and upload now or when back online."
-      anyOf={['field.reports.submit']}
-    />
+    <Suspense fallback={<Spinner />}>
+      <ReportScreen />
+    </Suspense>
   );
 }

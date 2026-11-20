@@ -1,14 +1,8 @@
-import { MobilePlaceholder } from '@/components/field/mobile/mobile-placeholder';
+import { IncidentForm } from '@/components/mobile/incident-form';
 
 export const metadata = { title: 'Report an incident' };
 
-/** Mobile PWA: Report an incident (blueprint 11.3). API §16–22. */
+/** Mobile PWA: S17 incident intake (blueprint 11.3). API §20, §22. */
 export default function MobileIncidentPage() {
-  return (
-    <MobilePlaceholder
-      title="Report an incident"
-      description="S17 on the phone: category, time, station, a neutral factual description and optional evidence, with a privacy warning. You get a reference once it reaches the server."
-      anyOf={['field.incidents.report']}
-    />
-  );
+  return <IncidentForm />;
 }
