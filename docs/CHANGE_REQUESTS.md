@@ -507,3 +507,49 @@ shared schema or migration was changed. Requests:
    resolved cycle and its `dataProvenance` would remove the guess and give observers the provenance
    label without `reference.view`. Geography filters likewise need `reference.view`
    (War Room observers lack it, so they see their whole scope without filters).
+
+## Field: API (agents, deployment, readiness, reports, incidents, War Room, sync; from the field API agent)
+
+Implemented to §15–22. Additions and interpretations the contract should record:
+
+1. **Bulk assignment (addition).** `POST /field/deployments/bulk` (`field.deployment.plan`), body
+   `{ items: CreateDeployment[] }` (1–200), 200 with `{ created, refused, results: [{ index, outcome:
+   'CREATED' | 'REFUSED', deploymentId, warnings: DeploymentConflict[], error: { code, message,
+   details? } | null }] }`. Each item runs in its own transaction with exactly the checks of
+   `POST /field/deployments` (one refusal never rolls back another). The schema lives in
+   `apps/api/src/modules/field/field.dto.ts` (`BulkCreateDeploymentSchema`); proposed move to
+   `packages/shared/src/field/deployment.ts` as `BulkCreateDeploymentSchema` / `BulkDeploymentResultSchema`.
+2. **Coverage conflicts.** `GET /field/deployments/coverage` reports over-coverage (two agents in the
+   same CHIEF/STATION role on overlapping shifts at one station) as a non-blocking
+   `SLOT_ALREADY_FILLED`; double bookings, inactive agents, unaccredited agents and codes dropped from
+   the approved registry as listed in §17. At most 200 conflicts are returned.
+3. **Re-authentication for template activation** is checked in the service (`transition` to ACTIVE
+   only), because the same route retires templates without it. Same 401 `REAUTH_REQUIRED`.
+4. **Incident reassignment.** `POST /field/incidents/:id/assign` also accepts ASSIGNED (reassign; event
+   ASSIGNED with `previousAssigneeId`). Moving away from RESOLVED (assign / escalate) clears the
+   resolution fields on the row (they stay in events and audit), so the closer check uses the new resolver.
+   Evidence is not added to a CLOSED incident (409 `INVALID_TRANSITION`; reopen first).
+5. **Reporter-only incident view** hides other people's notes and event data, the assignee, the
+   resolution/closure notes and evidence added by others; status, outcome and own entries stay visible.
+6. **`field_report.escalated` notification** (module `field`, to `warroom.command` holders in scope):
+   §19.2 names the recipients but §15 does not list the type.
+7. **War Room derived-status history** is written for the stations a read returns (list page or
+   detail), not for all stations on every overview read; the overview counts are still derived for
+   every station. Per-station components are cached per tenant + cycle + scope for
+   `FIELD_WARROOM_CACHE_SECONDS` (default 15; `asOf` is the computation time; a manual status change
+   clears the tenant's cache). `formStatus` is `null` for callers without `tally.view`, while the
+   derived status itself uses the tally state.
+8. **Set-based queries at 55k stations.** Under RLS the planner estimates a scoped station set at one
+   row and picks nested loops (minutes at 55k). War Room and readiness roll-ups run with
+   `SET LOCAL enable_nestloop = off` inside their transaction (`withHashJoins`,
+   `modules/field/common/field-sql.ts`); `test/warroom.integration.spec.ts` checks overview, station
+   list, coverage and readiness summary on a 55,000-station registry (about 1 s together locally).
+   A schema follow-up could add `polling_stations (tenant_id, registry_version_id, status)` and run
+   `ANALYZE` after registry imports.
+9. **Evidence attachment and de-duplication (gap).** Files are content-addressed per tenant; when two
+   people upload identical bytes, the second upload returns the first person's file
+   (`duplicate: true`) and the "attach only files you uploaded" rule then refuses it. Proposed: an
+   upload-claims table (file × uploader) so a duplicate upload grants the uploader attach rights.
+   Photos are still stored as uploaded (EXIF not stripped), as §16.4 states.
+10. **Sync 5xx items** come back as REJECTED `INTERNAL` without a ledger row, so the device retries
+    with the same key; proposed contract wording for this case.

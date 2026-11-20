@@ -54,6 +54,7 @@ import {
 } from '@ngao360/shared';
 import { z } from 'zod';
 import { createZodDto } from '../../common/zod/zod-dto';
+import { DownloadQuerySchema } from './common/field-support';
 
 export class FieldIdParamDto extends createZodDto(IdParamSchema) {}
 export class TrainingParamDto extends createZodDto(z.object({ id: z.string().uuid(), trainingId: z.string().uuid() })) {}
@@ -119,3 +120,16 @@ export class SetStationStatusDto extends createZodDto(SetStationStatusSchema) {}
 // Sync (§22)
 export class SyncRequestDto extends createZodDto(SyncRequestSchema) {}
 export class SyncStatusQueryDto extends createZodDto(SyncStatusQuerySchema) {}
+
+// Files and extras local to the field module
+export class DownloadQueryDto extends createZodDto(DownloadQuerySchema) {}
+export class FileParamDto extends createZodDto(z.object({ id: z.string().uuid(), fileId: z.string().uuid() })) {}
+
+/**
+ * Bulk planner assignment (POST /field/deployments/bulk): up to 200 CreateDeployment
+ * items applied one by one; each item is accepted or refused with its own error.
+ * Proposed contract addition: docs/CHANGE_REQUESTS.md (Field).
+ */
+export const BulkCreateDeploymentSchema = z.object({ items: z.array(CreateDeploymentSchema).min(1).max(200) });
+export type BulkCreateDeployment = z.infer<typeof BulkCreateDeploymentSchema>;
+export class BulkCreateDeploymentDto extends createZodDto(BulkCreateDeploymentSchema) {}
