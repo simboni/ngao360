@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { ReportsHome } from '@/components/reports/reports-home';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Reports' };
 
-/** S28 Report builder. */
+/** S28 Report builder, standard-report catalogue, saved templates and export log. API §28. */
 export default function ReportsPage() {
   return (
-    <ModulePlaceholder
-      title="Reports"
-      screen="S28 Report builder"
-      description="Standard reports catalogue and the report builder: approved dataset, permitted fields, filters, area and date range, preview, saved templates with owner and sharing, and exports with generation time, filters and classification. API §28."
-      breadcrumbs={[{ label: 'Reports' }]}
-      anyOf={['reports.view', 'reports.build']}
-    />
+    <RequirePagePermission anyOf={['reports.view', 'reports.build']}>
+      <ReauthProvider>
+        <ReportsHome />
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }

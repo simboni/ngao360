@@ -691,3 +691,52 @@ files outside the campaign API folder:
 10. **Finance "committed".** §27.4 says committed = REQUESTED / APPROVED-not-paid, while `BudgetLineSchema` and the
     dataset label say "requested but not yet approved". Implemented: committed = REQUESTED expense entries; actual =
     APPROVED + PAID expense entries (reversed originals and reversing entries both drop out, so reversals net to zero).
+
+## Campaign: finance, reports, notification centre and breach register UI (from the campaign web agent, B/C screens)
+
+Screens: `/finance` (S10 ledger, contribution register, budget vs actual), `/finance/transactions/[id]`,
+`/finance/settings` (limit settings), `/reports` and `/reports/[id]` (S28 builder, standard catalogue, templates, export
+log), `/notifications` (centre, preferences, delivery log), `/security/breaches` and the new `/security/breaches/[id]`.
+Components live in `apps/web/src/components/{finance,reports,notifications,security}` (this run's file assignment;
+`docs/ARCHITECTURE.md` §1 lists `components/campaign/{finance,reports,notifications,security}`, so the table needs
+updating, as for the org/tasks/events/comms screens).
+
+1. **Mount the notification bell (app shell).** `components/notifications/notification-bell.tsx` exports
+   `NotificationBell` (unread badge, a critical marker while alerts await acknowledgement, a panel of the latest eight
+   with safe in-app deep links, polling `GET /notifications/counts` every minute while the tab is visible). In
+   `components/layout/topbar.tsx` replace the static `<button … aria-label="Notifications"><Bell …/></button>` with
+   `<NotificationBell />` (`import { NotificationBell } from '@/components/notifications/notification-bell'`). No other
+   shell change is needed.
+2. **Breach evidence URL in the contract.** The web opens timeline evidence with
+   `GET /security/breaches/:id/events/:eventId/evidence/url` (implemented in `breaches.controller.ts`), which §30 does
+   not list. Proposed: add the row (`security.breach.view`, `SignedUrlResponse`, audit `FILE_SOURCE_ACCESSED`).
+3. **Why an action is unavailable (finance).** `FinanceTransactionDetail.allowedActions` says *whether*, not *why*. The
+   web explains requester / approver segregation itself; for "approver cannot pay" it assumes
+   `finance.approverCannotPay` is on because the web cannot read `CampaignModuleConfig` (needs `workspace.view`).
+   Proposed: `FinanceLedgerSummary.segregation: { approverCannotPay: boolean }` or
+   `FinanceTransactionDetail.unavailableActions: { action, reason: 'REQUESTER' | 'APPROVER_CANNOT_PAY' | 'STATUS' | 'PERMISSION' | 'BLOCKERS' }[]`.
+4. **Currency on contribution totals.** `ContributionSource.totalContributedMinor` has no currency; the register shows
+   it in the ledger summary currency. Proposed: `totalContributed: MoneyMinor`.
+5. **Finance export answer.** `POST /finance/exports` returns only `SignedUrlResponse`, so the dialog states the
+   classification client-side (CONFIDENTIAL; HIGHLY_RESTRICTED hint for the contribution register) and cannot show the
+   row count. Proposed: return `ReportExport & SignedUrlResponse` like `POST /reports/exports`.
+6. **Shared shapes for report listings.** `GET /reports/datasets` (`{ key, label, description, group, fields }[]`) and
+   `GET /reports/standard` (`StandardReport & { runnable }`) have no shared schema; the web defines `AvailableDataset`
+   and `RunnableStandardReport` in `components/reports/reports-api.ts`. Proposed: export
+   `AvailableDatasetSchema` / `RunnableStandardReportSchema` from `packages/shared/src/campaign/reports`.
+7. **Scope options for the report builder and limit settings.** Area narrowing uses `/reference/geographic-units`
+   (needs `reference.view` and a cycle) and department narrowing uses `/org/departments/tree` (needs
+   `org.departments.view` and the campaign module); election cycles come from `/reference/election-cycles`. Finance
+   and report users often hold none of these, so the pickers fall back to "your scope is applied automatically" and
+   limit settings to "every election cycle". Proposed: `GET /reports/scope-options` (any `reports.*`) returning the
+   cycles, units (county → constituency → ward) and departments inside the caller's grant, reusable by
+   `/finance/settings` (see also the campaign web agent's request 1, `GET /org/geography`). Area narrowing is hidden for
+   organisation-level datasets, which answer 400 (API request 9).
+8. **Notification module filter.** The centre's "Area" filter is a fixed list of permission modules. Proposed:
+   `NotificationCounts.byModule: Record<string, { unread, awaitingAck }>` so the filter lists only modules with items.
+9. **Not built in this run (UI).** Budget-line create / approve / close (§27.4), account, category, payee and
+   contribution-source management (§27.2–27.3) and the per-entry "edit counterparty" pickers beyond the first 200
+   payees / sources (`pageSize` 200 lists; a search-as-you-type picker is proposed). The ledger, detail, settings,
+   register and budget views read these records.
+10. **Ledger period by election cycle.** `FinanceLedgerQuery.electionCycleId` is not offered (no cycle list for
+    finance users, request 7); the ledger summary uses the from / to dates of the filter bar.

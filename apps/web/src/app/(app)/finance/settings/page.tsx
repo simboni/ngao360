@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { ReauthProvider } from '@/components/admin/reauth';
+import { FinanceSettings } from '@/components/finance/finance-settings';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Finance settings' };
 
-/** Finance limit settings. */
+/** Finance limit settings with effective dates, legal source and verification (blueprint 15.3). API §27.6. */
 export default function FinanceSettingsPage() {
   return (
-    <ModulePlaceholder
-      title="Finance settings"
-      screen="Finance limit settings"
-      description="Accounts, categories and limit settings: single-source contribution cap, spending limits and reporting deadlines per election period, each with effective dates, legal source note, verified flag and enforcement. Unverified settings are labelled Unverified – configure to the applicable law. API §27.6."
-      breadcrumbs={[{ label: 'Campaign' }, { label: 'Finance', href: '/finance' }, { label: 'Settings' }]}
-      anyOf={['finance.settings.manage', 'finance.view']}
-    />
+    <RequirePagePermission anyOf={['finance.settings.manage', 'finance.view']}>
+      <ReauthProvider>
+        <FinanceSettings />
+      </ReauthProvider>
+    </RequirePagePermission>
   );
 }

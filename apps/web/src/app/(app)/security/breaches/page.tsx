@@ -1,16 +1,13 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { BreachRegister } from '@/components/security/breach-register';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Breach register' };
 
-/** Data breach register. */
+/** Data breach register: breaches and drills (blueprint 15.4). API §30. */
 export default function BreachRegisterPage() {
   return (
-    <ModulePlaceholder
-      title="Breach register"
-      screen="Data breach register"
-      description="Breaches and drills with detect, contain, preserve evidence, assess, notify, remediate and lessons steps, and an exportable timeline. Categories and counts only. API §30."
-      breadcrumbs={[{ label: 'Administration' }, { label: 'Breach register' }]}
-      anyOf={['security.breach.view']}
-    />
+    <RequirePagePermission anyOf={['security.breach.view']}>
+      <BreachRegister />
+    </RequirePagePermission>
   );
 }

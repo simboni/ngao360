@@ -1,16 +1,13 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { NotificationCenter } from '@/components/notifications/notification-center';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Notifications' };
 
-/** Notification centre. */
+/** Notification centre: read / unread, deep links, critical alerts, preferences and delivery log. API §7, §29. */
 export default function NotificationsPage() {
   return (
-    <ModulePlaceholder
-      title="Notifications"
-      screen="Notification centre"
-      description="Your notifications with read and unread state, deep links, critical alerts awaiting acknowledgement, and your preferences per channel and type (in-app; e-mail, SMS and push when the organisation has a provider). API §29."
-      breadcrumbs={[{ label: 'Notifications' }]}
-      anyOf={['notifications.view']}
-    />
+    <RequirePagePermission anyOf={['notifications.view']}>
+      <NotificationCenter />
+    </RequirePagePermission>
   );
 }
