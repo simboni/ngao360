@@ -32,6 +32,7 @@ import {
   EraseCaseContactDto,
   OfficeIdParamDto,
   ProposeCaseResolutionDto,
+  RedactCaseDto,
   ReopenCaseDto,
   UpdateCaseContactDto,
   UpdateCaseDto,
@@ -133,10 +134,19 @@ export class CasesController {
     return this.cases.eraseContact(auth, p.id, body);
   }
 
+  /** Permanent removal of the requester's personal content (data-subject request or retention). */
+  @Post(':id/redact')
+  @HttpCode(200)
+  @RequirePermission('office.cases.close', { geo: CASE })
+  @RequireReauth()
+  redact(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto, @Body() body: RedactCaseDto): Promise<CaseDetail> {
+    return this.cases.redact(auth, p.id, body);
+  }
+
   @Get(':id/referrals')
   @RequirePermission('office.cases.view', { geo: CASE })
-  referrals(@Param() p: OfficeIdParamDto): Promise<CaseReferral[]> {
-    return this.cases.listReferrals(p.id);
+  referrals(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto): Promise<CaseReferral[]> {
+    return this.cases.listReferrals(auth, p.id);
   }
 
   @Post(':id/referrals')
@@ -175,8 +185,8 @@ export class CasesController {
 
   @Get(':id/history')
   @RequirePermission('office.cases.view', { geo: CASE })
-  history(@Param() p: OfficeIdParamDto): Promise<AuditEvent[]> {
-    return this.cases.history(p.id);
+  history(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto): Promise<AuditEvent[]> {
+    return this.cases.history(auth, p.id);
   }
 
   /** Triage hint (blueprint 9.2 "duplicate possibility"); proposed contract addition in docs/CHANGE_REQUESTS.md. */

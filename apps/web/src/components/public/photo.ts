@@ -5,7 +5,11 @@
  * - Re-encodes JPEG/PNG/WebP photos to a JPEG of at most 1600 px on the long
  *   side. That saves mobile data and drops hidden metadata such as GPS
  *   coordinates (EXIF), which the person may not know is in the file.
- * - HEIC cannot be decoded by most browsers, so it is sent as is.
+ * - HEIC is converted when the browser can decode it (Safari can). The server
+ *   cannot decode HEIC, so it refuses HEIC uploads rather than keep a file it
+ *   cannot strip of location data; the form asks for another photo instead.
+ * - The server re-encodes every photo again, so metadata is removed even when
+ *   this step is skipped.
  */
 
 export type PhotoCheck = { ok: true } | { ok: false; reason: 'type' | 'size' };
@@ -54,9 +58,8 @@ export interface PreparedPhoto {
  * when the browser cannot decode it, or when the result would be larger.
  */
 export async function preparePhoto(file: File): Promise<PreparedPhoto> {
-  const type = photoType(file);
   const original: PreparedPhoto = { blob: file, name: file.name, processed: false };
-  if (type === 'image/heic' || typeof createImageBitmap !== 'function' || typeof document === 'undefined') return original;
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return original;
   try {
     const bitmap = await createImageBitmap(file);
     const size = scaledSize(bitmap.width, bitmap.height);
@@ -69,11 +72,17 @@ export async function preparePhoto(file: File): Promise<PreparedPhoto> {
     bitmap.close?.();
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
     if (!blob) return original;
-    const name = `${file.name.replace(/\.[^.]+$/, '') || 'photo'}.jpg`;
+    // A neutral name: the original file name can contain a person's name.
+    const name = 'photo.jpg';
     // Re-encoding always strips metadata, so the re-encoded copy is kept even
     // when it is not smaller than the original.
     return { blob, name, processed: true };
   } catch {
     return original;
   }
+}
+
+/** True when the photo would be refused by the server (HEIC the browser could not convert). */
+export function needsConversion(file: { name: string; type: string }, prepared: PreparedPhoto): boolean {
+  return photoType(file) === 'image/heic' && !prepared.processed;
 }

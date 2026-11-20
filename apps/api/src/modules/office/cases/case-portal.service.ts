@@ -25,6 +25,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { NOTIFICATION_QUEUE } from '../../../queue/queue.constants';
 import { pathToUnitIds } from '../../../rbac/scope';
 import { sniffMimeType } from '../../../storage/file-sniff';
+import { ImageSanitizeError, type SanitizedImage, isSanitizableImage, sanitizeImage } from '../../../storage/image-sanitize';
 import { StorageService } from '../../../storage/storage.service';
 import {
   type OfficeUpload,
@@ -95,6 +96,7 @@ export class CasePortalService {
       throw AppException.validation('This type of request is not accepted here', [{ path: ['category'], message: 'Choose another category' }]);
     }
     let photoMime: string | null = null;
+    let sanitized: SanitizedImage | null = null;
     if (photo) {
       if (photo.size > MAX_PUBLIC_PHOTO_BYTES || photo.buffer.length > MAX_PUBLIC_PHOTO_BYTES) {
         throw AppException.validation(`Photos must be ${MAX_PUBLIC_PHOTO_BYTES / (1024 * 1024)} MB or smaller`, [{ path: ['photo'], message: 'Too large' }]);
@@ -105,6 +107,19 @@ export class CasePortalService {
       }
       if (!tenant.config.portalServiceUserId) {
         throw AppException.validation('Photos cannot be accepted at the moment. Please submit without a photo.', [{ path: ['photo'], message: 'Not accepted' }]);
+      }
+      if (!isSanitizableImage(photoMime)) {
+        // HEIC cannot be decoded here, so its location metadata could not be removed.
+        throw AppException.validation('HEIC photos cannot be accepted. Please choose a JPEG or PNG copy, or submit without a photo.', [
+          { path: ['photo'], message: 'Unsupported file' },
+        ]);
+      }
+      try {
+        // Location (EXIF GPS), device and time metadata are removed before anything is stored.
+        sanitized = await sanitizeImage(photo.buffer, photoMime, 1600);
+      } catch (err) {
+        if (!(err instanceof ImageSanitizeError)) throw err;
+        throw AppException.validation('We could not read this photo. Please choose another photo, or submit without a photo.', [{ path: ['photo'], message: 'Unreadable image' }]);
       }
     }
 
@@ -160,15 +175,17 @@ export class CasePortalService {
           data: { tenantId: tenant.id, caseId: row.id, type: 'SUBMITTED', visibility: 'PUBLIC', actorType: 'REQUESTER', toStatus: 'SUBMITTED' },
         });
         let storedFileId: string | null = null;
-        if (photo && tenant.config.portalServiceUserId) {
+        if (sanitized && tenant.config.portalServiceUserId) {
           const { file } = await this.storage.storeImmutable(
             {
               tenantId: tenant.id,
               uploadedById: tenant.config.portalServiceUserId,
-              buffer: photo.buffer,
-              declaredMimeType: photoMime ?? photo.mimetype,
-              originalFilename: (photo.originalname || 'photo').slice(0, 120),
+              buffer: sanitized.buffer,
+              declaredMimeType: sanitized.mimeType,
+              // Neutral name: the device file name can contain a person's name.
+              originalFilename: `portal-photo.${sanitized.extension}`,
               purpose: 'CASE_EVIDENCE',
+              anonymousSource: true,
             },
             tx,
           );
@@ -218,6 +235,7 @@ export class CasePortalService {
               possibleDuplicates: duplicates.length,
               privacyNoticeVersion: dto.privacyNoticeVersion,
             },
+            omitRequestMetadata: true,
           },
           tx,
         );
@@ -299,6 +317,7 @@ export class CasePortalService {
           entityId: row.id,
           before: { status: row.status },
           after: { status: to, response: dto.response, hasMessage: !!dto.message },
+          omitRequestMetadata: true,
         },
         tx,
       );

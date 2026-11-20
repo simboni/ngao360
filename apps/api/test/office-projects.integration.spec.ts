@@ -53,6 +53,7 @@ describeDb('Office projects (integration)', () => {
       contractAmount: '4200000.50',
       contractAmountIsPublic: false,
       initialStatus: 'APPROVED',
+      approvalAuthority: 'County Assembly budget approval (synthetic)',
       description: 'Internal description with procurement notes (synthetic).',
     };
     const out = await f.http('scopedK2').post('/office/projects').send(base).expect(403);
@@ -155,6 +156,11 @@ describeDb('Office projects (integration)', () => {
     const pending = await evidence('projects', { type: 'OTHER_DOCUMENT', description: 'Unverified synthetic memo' }).expect(201);
     await pub('editor', { isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [pending.body.id] }).expect(400);
 
+    // A document is published only after a clean malware scan (the scanner records it).
+    const unscanned = await pub('editor', { isPublic: true, publicFields: ['schedule', 'evidence', 'expenditure'], publicEvidenceIds: [reportId] }).expect(400);
+    expect(unscanned.body.message).toMatch(/malware scan/i);
+    const report = await f.owner.projectEvidence.findUniqueOrThrow({ where: { id: reportId } });
+    await f.owner.storedFile.update({ where: { id: report.storedFileId }, data: { malwareScanStatus: 'CLEAN', scannedAt: new Date() } });
     const ok = await pub('editor', { isPublic: true, publicFields: ['schedule', 'evidence', 'expenditure'], publicEvidenceIds: [reportId] }).expect(200);
     expect(ok.body.publication).toMatchObject({ isPublic: true, publishedBy: { id: f.users.editor } });
     version = ok.body.version;
@@ -193,7 +199,7 @@ describeDb('Office projects (integration)', () => {
     const created = await f
       .http('projects')
       .post('/office/projects')
-      .send({ name: 'Mihuu dispensary maternity wing (synthetic)', category: 'HEALTH', geographicUnitId: f.units.w2, responsibleInstitutionId: institutionId, commitmentSource: 'MANIFESTO_PLEDGE', initialStatus: 'APPROVED' })
+      .send({ name: 'Mihuu dispensary maternity wing (synthetic)', category: 'HEALTH', geographicUnitId: f.units.w2, responsibleInstitutionId: institutionId, commitmentSource: 'MANIFESTO_PLEDGE', initialStatus: 'APPROVED', approvalAuthority: 'County Assembly budget approval (synthetic)' })
       .expect(201);
     let v = created.body.version;
     v = (await f.http('projects').post(`/office/projects/${created.body.id}/transition`).send({ to: 'ONGOING', reason: 'start', expectedVersion: v }).expect(200)).body.version;

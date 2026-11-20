@@ -8,10 +8,12 @@ import {
   type AssignCase,
   type AuditEvent,
   type PossibleDuplicate,
+  CASE_CATEGORY_LABELS,
   CASE_CLOSURE_REASON_LABELS,
   CURRENT_PORTAL_PRIVACY_NOTICE_VERSION,
   type CaseAction,
   type CaseContact,
+  type CaseContactInput,
   type CaseDetail,
   type CaseEvent,
   type CaseEventActorType,
@@ -36,7 +38,10 @@ import {
   type UpdateCase,
   type UpdateCaseContact,
   type UpdateCaseReferral,
+  type RedactCase,
+  type SensitivityLevel,
   canTransitionCase,
+  caseClosureAllowed,
 } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AuditService } from '../../../audit/audit.service';
@@ -100,10 +105,36 @@ interface NewEvent {
   actorType?: CaseEventActorType;
 }
 
+/** Sensitivity levels visible only with `office.cases.confidential` (as for correspondence). */
+const RESTRICTED: readonly SensitivityLevel[] = ['CONFIDENTIAL', 'HIGHLY_RESTRICTED'];
+const RESTRICTED_WHERE: Prisma.CitizenCaseWhereInput = { sensitivity: { notIn: [...RESTRICTED] } };
+/** Replaces redacted requester content. */
+export const REDACTED_TEXT = '[Personal content removed]';
+
 /** Statuses from which a referral may be made (REFERRED adds another referral). */
 const REFERRABLE: readonly CaseStatus[] = ['TRIAGE', 'ASSIGNED', 'IN_PROGRESS', 'REFERRED'];
 /** Statuses in which assigning only changes the assignee (from TRIAGE/REOPENED it also moves to ASSIGNED). */
 const REASSIGNABLE: readonly CaseStatus[] = ['TRIAGE', 'REOPENED', 'ASSIGNED', 'IN_PROGRESS', 'REFERRED', 'RESOLUTION_PROPOSED', 'CITIZEN_FEEDBACK'];
+
+/**
+ * Minimal contact data (blueprint 15.2), the same rule as the public portal:
+ * phone or email only for the channel the requester chose, and only when they
+ * agreed to be contacted. A name alone may be kept for a requester who does not
+ * want to be contacted.
+ */
+export function minimalContact(c: CaseContactInput, consentToContact: boolean): CaseContactInput {
+  if (c.preference !== 'NONE' && !consentToContact) {
+    throw AppException.validation('The requester must agree to be contacted', [{ path: ['consentToContact'], message: 'Required for this contact preference' }]);
+  }
+  const usesPhone = c.preference === 'PHONE' || c.preference === 'SMS';
+  const usesEmail = c.preference === 'EMAIL';
+  if ((c.phone && !usesPhone) || (c.email && !usesEmail)) {
+    throw AppException.validation('Record only the contact channel the requester chose and agreed to. Do not keep other contact details.', [
+      { path: [c.phone && !usesPhone ? 'contact.phone' : 'contact.email'], message: 'Not the chosen contact channel' },
+    ]);
+  }
+  return { ...c, phone: usesPhone ? c.phone : undefined, email: usesEmail ? c.email : undefined };
+}
 
 /**
  * Citizen cases (blueprint 9.2, API contract §11). Requester contact details
@@ -128,6 +159,7 @@ export class CasesService {
     const and: Prisma.CitizenCaseWhereInput[] = [];
     const scope = officeScopeWhere(this.permissions.scopeFor(auth, 'office.cases.view'));
     if (scope) and.push(scope);
+    and.push(this.restrictedWhere(auth));
     if (q.status) and.push({ status: q.status });
     if (q.category) and.push({ category: q.category });
     if (q.priority) and.push({ priority: q.priority });
@@ -192,16 +224,16 @@ export class CasesService {
         { path: ['privacyNoticeVersion'], message: `Expected ${CURRENT_PORTAL_PRIVACY_NOTICE_VERSION}` },
       ]);
     }
-    const contact = dto.contact;
-    if (contact && contact.preference !== 'NONE' && !dto.consentToContact) {
-      throw AppException.validation('The requester must agree to be contacted', [{ path: ['consentToContact'], message: 'Required for this contact preference' }]);
-    }
+    const contact = dto.contact ? minimalContact(dto.contact, !!dto.consentToContact) : undefined;
     return this.prisma.tenantTx(async (tx) => {
       const location = await resolveOfficeLocation(tx, dto.geographicUnitId);
       if (!callerCovers(this.permissions, auth, 'office.cases.create', officeGeoLocation(location))) {
         throw AppException.outOfScope('You can record cases only inside your assigned geography');
       }
-      if (dto.assigneeId) await this.assertAssignee(tx, dto.assigneeId, officeGeoLocation(location));
+      if (RESTRICTED.includes(dto.sensitivity) && !this.canSeeRestricted(auth, location)) {
+        throw AppException.forbidden('Recording a confidential case needs the confidential cases permission');
+      }
+      if (dto.assigneeId) await this.assertAssignee(tx, dto.assigneeId, officeGeoLocation(location), dto.sensitivity);
       if (dto.linkedCorrespondenceId) {
         const c = await tx.correspondence.findUnique({ where: { id: dto.linkedCorrespondenceId }, select: { id: true, sensitivity: true } });
         const hidden = c && (c.sensitivity === 'CONFIDENTIAL' || c.sensitivity === 'HIGHLY_RESTRICTED') && !auth.permissions.has('office.correspondence.confidential');
@@ -212,7 +244,7 @@ export class CasesService {
       const { publicReference, trackingCode, trackingCodeHash } = await allocatePublicReference(tx, tenant.slug);
       const now = new Date();
       const status: CaseStatus = dto.assigneeId ? 'ASSIGNED' : 'SUBMITTED';
-      const consent = !!dto.consentToContact && !!contact && contact.preference !== 'NONE';
+      const consent = !!contact && contact.preference !== 'NONE';
       const row = await tx.citizenCase.create({
         data: {
           tenantId: auth.tenantId,
@@ -293,8 +325,22 @@ export class CasesService {
 
   update(auth: AuthContext, id: string, dto: UpdateCase): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (row.status === 'CLOSED') throw immutableRecord('Reopen the case before changing it');
+      if (dto.sensitivity && dto.sensitivity !== row.sensitivity) {
+        const fromRestricted = RESTRICTED.includes(row.sensitivity);
+        const toRestricted = RESTRICTED.includes(dto.sensitivity);
+        if ((fromRestricted || toRestricted) && !this.canSeeRestricted(auth, row)) {
+          throw AppException.forbidden('Changing the sensitivity of a confidential case needs the confidential cases permission');
+        }
+        if (fromRestricted && !toRestricted && !dto.reason) {
+          throw AppException.validation('Give a reason for lowering the sensitivity', [{ path: ['reason'], message: 'Required' }]);
+        }
+        if (toRestricted && row.assigneeId) {
+          // The assigned officer must still be able to open the case.
+          await this.assertAssignee(tx, row.assigneeId, officeGeoLocation(row), dto.sensitivity);
+        }
+      }
       let location: OfficeLocationColumns | undefined;
       if (dto.geographicUnitId !== undefined && dto.geographicUnitId !== row.geographicUnitId) {
         location = await resolveOfficeLocation(tx, dto.geographicUnitId);
@@ -330,11 +376,11 @@ export class CasesService {
 
   assign(auth: AuthContext, id: string, dto: AssignCase): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (!REASSIGNABLE.includes(row.status)) {
         throw AppException.invalidTransition(row.status, 'ASSIGNED');
       }
-      await this.assertAssignee(tx, dto.assigneeId, officeGeoLocation(row));
+      await this.assertAssignee(tx, dto.assigneeId, officeGeoLocation(row), row.sensitivity);
       const moves = row.status === 'TRIAGE' || row.status === 'REOPENED';
       const status: CaseStatus = moves ? 'ASSIGNED' : row.status;
       const nextReviewDate = dto.nextReviewDate
@@ -374,7 +420,7 @@ export class CasesService {
 
   transition(auth: AuthContext, id: string, dto: CaseTransition): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (!canTransitionCase(row.status, dto.to)) throw AppException.invalidTransition(row.status, dto.to);
       if (dto.to === 'ASSIGNED' && !row.assigneeId) {
         throw AppException.validation('Choose an officer with the assign action first', [{ path: ['to'], message: 'No assignee' }]);
@@ -414,11 +460,15 @@ export class CasesService {
   /* ------------------------------ Timeline events ----------------------------- */
 
   addEvent(auth: AuthContext, id: string, dto: AddCaseEvent): Promise<CaseEvent> {
-    if (dto.type === 'NOTE' && !auth.permissions.has('office.cases.internal_notes')) {
-      throw AppException.forbidden('Internal notes need the internal notes permission');
+    const internal = NOTE_EVENT_TYPES.includes(dto.type);
+    if (internal && !auth.permissions.has('office.cases.internal_notes')) {
+      throw AppException.forbidden('Internal notes and contact attempts need the internal notes permission');
     }
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      // Row lock: a close committing between the status check and the insert
+      // would otherwise let a public update land on a closed case.
+      const row = await this.load(tx, auth, id, { lock: true });
+      if (internal && !this.canSeeNotes(auth, row)) throw AppException.outOfScope('Your internal notes permission does not cover this case');
       if (row.status === 'CLOSED' && dto.type !== 'NOTE') throw immutableRecord('Only internal notes can be added to a closed case');
       const visibility: CaseEventVisibility = dto.type === 'PUBLIC_UPDATE' ? 'PUBLIC' : 'INTERNAL';
       const [eventId] = await this.addEvents(tx, auth, id, [{ type: dto.type, visibility, body: dto.body }]);
@@ -435,7 +485,7 @@ export class CasesService {
     const meta: AddCaseEvidence = parseJsonField(rawMetadata, AddCaseEvidenceSchema, 'metadata');
     return this.prisma.tenantTx(
       async (tx) => {
-        const row = await this.load(tx, id);
+        const row = await this.load(tx, auth, id, { lock: true });
         if (row.status === 'CLOSED') throw immutableRecord('Reopen the case before adding evidence');
         const { file: stored } = await this.storage.storeImmutable(
           {
@@ -451,7 +501,7 @@ export class CasesService {
         const [eventId] = await this.addEvents(tx, auth, id, [
           { type: 'EVIDENCE_ADDED', visibility: meta.visibility, body: meta.description, storedFileId: stored.id },
         ]);
-          await this.audit.record(
+        await this.audit.record(
           {
             tenantId: auth.tenantId,
             action: AUDIT_ACTIONS.CASE_EVIDENCE_ADDED,
@@ -469,6 +519,7 @@ export class CasesService {
 
   fileUrl(auth: AuthContext, id: string, fileId: string, download: boolean): Promise<SignedUrlResponse> {
     return this.prisma.tenantTx(async (tx) => {
+      await this.load(tx, auth, id);
       const event = await tx.caseEvent.findFirst({ where: { caseId: id, storedFileId: fileId }, include: { storedFile: true } });
       if (!event?.storedFile) throw AppException.notFound('File not found on this case');
       return issueOfficeFileUrl(tx, { storage: this.storage, audit: this.audit }, {
@@ -485,7 +536,7 @@ export class CasesService {
 
   getContact(auth: AuthContext, id: string): Promise<CaseContact> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       const contact = await tx.citizenCaseContact.findUnique({ where: { caseId: id } });
       if (!contact) throw AppException.notFound('No contact details were given for this case');
       await this.audit.record(
@@ -503,25 +554,23 @@ export class CasesService {
   }
 
   updateContact(auth: AuthContext, id: string, dto: UpdateCaseContact): Promise<CaseContact> {
-    if (dto.contact.preference !== 'NONE' && !dto.consentToContact) {
-      throw AppException.validation('The requester must agree to be contacted', [{ path: ['consentToContact'], message: 'Required for this contact preference' }]);
-    }
+    const given = minimalContact(dto.contact, dto.consentToContact);
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       this.assertCovers(auth, ['office.cases.contact.view', 'office.cases.manage'], row);
       const existing = await tx.citizenCaseContact.findUnique({ where: { caseId: id } });
       if (existing?.erasedAt) throw immutableRecord('These contact details were erased and cannot be restored');
       const data = {
-        name: dto.contact.name ?? null,
-        phone: dto.contact.phone ?? null,
-        email: dto.contact.email ?? null,
-        preference: dto.contact.preference,
-        preferredLanguage: dto.contact.preferredLanguage ?? null,
+        name: given.name ?? null,
+        phone: given.phone ?? null,
+        email: given.email ?? null,
+        preference: given.preference,
+        preferredLanguage: given.preferredLanguage ?? null,
       };
       const contact = existing
         ? await tx.citizenCaseContact.update({ where: { caseId: id }, data })
         : await tx.citizenCaseContact.create({ data: { tenantId: auth.tenantId, caseId: id, ...data } });
-      const consent = dto.consentToContact && dto.contact.preference !== 'NONE';
+      const consent = given.preference !== 'NONE';
       if (consent !== row.consentToContact) {
         await tx.citizenCase.update({ where: { id }, data: { consentToContact: consent, version: { increment: 1 } } });
       }
@@ -545,7 +594,7 @@ export class CasesService {
 
   eraseContact(auth: AuthContext, id: string, dto: EraseCaseContact): Promise<CaseContact> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       const existing = await tx.citizenCaseContact.findUnique({ where: { caseId: id } });
       if (!existing) throw AppException.notFound('No contact details were given for this case');
       const contact = existing.erasedAt
@@ -570,11 +619,62 @@ export class CasesService {
     });
   }
 
+  /* --------------------------------- Redaction -------------------------------- */
+
+  redact(auth: AuthContext, id: string, dto: RedactCase): Promise<CaseDetail> {
+    return this.prisma.tenantTx(async (tx) => {
+      const row = await this.load(tx, auth, id, { lock: true });
+      if (row.redactedAt) throw immutableRecord('This case was already redacted');
+      if (row.status !== 'CLOSED') {
+        throw AppException.validation('Close the case before redacting it (for example as withdrawn)', [{ path: ['status'], message: 'Case is open' }]);
+      }
+      await this.redactInTx(tx, { tenantId: auth.tenantId, actorId: auth.userId }, row, dto.reason, 'REQUEST');
+      return this.loadDetail(tx, auth, id);
+    });
+  }
+
+  /**
+   * Remove the personal content of a closed case (shared with the retention
+   * job). The database function is the only path past the immutability guards;
+   * contact details are erased in the same transaction.
+   */
+  async redactInTx(
+    tx: TenantTx,
+    actor: { tenantId: string; actorId: string | null },
+    row: Pick<CaseRow, 'id' | 'category' | 'status'>,
+    reason: string,
+    trigger: 'REQUEST' | 'RETENTION',
+  ): Promise<boolean> {
+    const title = `${CASE_CATEGORY_LABELS[row.category]} (personal details removed)`;
+    const rows = await tx.$queryRaw<{ count: number }[]>`
+      SELECT ngao_redact_citizen_case(${row.id}::uuid, ${actor.actorId}::uuid, ${title}, ${REDACTED_TEXT}) AS count`;
+    if (Number(rows[0]?.count ?? 0) === 0) return false;
+    const contact = await tx.citizenCaseContact.findUnique({ where: { caseId: row.id }, select: { erasedAt: true } });
+    if (contact && !contact.erasedAt) {
+      await tx.citizenCaseContact.update({ where: { caseId: row.id }, data: { name: null, phone: null, email: null, preference: 'NONE', erasedAt: new Date() } });
+    }
+    await tx.citizenCase.updateMany({ where: { id: row.id, consentToContact: true }, data: { consentToContact: false } });
+    await this.audit.record(
+      {
+        tenantId: actor.tenantId,
+        actorId: actor.actorId,
+        actorType: actor.actorId ? 'USER' : 'SYSTEM',
+        action: AUDIT_ACTIONS.CASE_REDACTED,
+        entityType: CASE_ENTITY,
+        entityId: row.id,
+        after: { redacted: true, trigger, contactErased: !!contact && !contact.erasedAt, status: row.status },
+        reason,
+      },
+      tx,
+    );
+    return true;
+  }
+
   /* --------------------------------- Referrals -------------------------------- */
 
-  listReferrals(id: string): Promise<CaseReferral[]> {
+  listReferrals(auth: AuthContext, id: string): Promise<CaseReferral[]> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      await this.load(tx, auth, id);
       const rows = await tx.caseReferral.findMany({ where: { caseId: id }, include: REFERRAL_INCLUDE, orderBy: { createdAt: 'asc' } });
       return rows.map(toCaseReferral);
     });
@@ -582,7 +682,7 @@ export class CasesService {
 
   createReferral(auth: AuthContext, id: string, dto: CreateCaseReferral): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (!REFERRABLE.includes(row.status)) throw AppException.invalidTransition(row.status, 'REFERRED');
       const institution = await tx.institution.findUnique({ where: { id: dto.institutionId } });
       if (!institution || !institution.isActive) {
@@ -640,7 +740,7 @@ export class CasesService {
 
   updateReferral(auth: AuthContext, id: string, referralId: string, dto: UpdateCaseReferral): Promise<CaseReferral> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id, { lock: true });
       if (row.status === 'CLOSED') throw immutableRecord('Reopen the case before updating its referrals');
       const referral = await tx.caseReferral.findFirst({ where: { id: referralId, caseId: id } });
       if (!referral) throw AppException.notFound('Referral not found');
@@ -677,7 +777,7 @@ export class CasesService {
 
   proposeResolution(auth: AuthContext, id: string, dto: ProposeCaseResolution): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (!canTransitionCase(row.status, 'RESOLUTION_PROPOSED')) throw AppException.invalidTransition(row.status, 'RESOLUTION_PROPOSED');
       const result = await tx.citizenCase.updateMany({
         where: { id, version: dto.expectedVersion },
@@ -692,7 +792,7 @@ export class CasesService {
       assertUpdated(result, 'case');
       await this.addEvents(tx, auth, id, [
         { type: 'RESOLUTION_PROPOSED', visibility: 'PUBLIC', body: dto.summary, fromStatus: row.status, toStatus: 'RESOLUTION_PROPOSED' },
-        ...(dto.internalNote ? [{ type: 'NOTE' as const, visibility: 'INTERNAL' as const, body: dto.internalNote }] : []),
+        ...(dto.internalNote && this.canSeeNotes(auth, row) ? [{ type: 'NOTE' as const, visibility: 'INTERNAL' as const, body: dto.internalNote }] : []),
       ]);
       await this.audit.record(
         {
@@ -711,8 +811,13 @@ export class CasesService {
 
   close(auth: AuthContext, id: string, dto: CloseCase): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
       if (!canTransitionCase(row.status, 'CLOSED')) throw AppException.invalidTransition(row.status, 'CLOSED');
+      if (!caseClosureAllowed(row.status, dto.closureReason)) {
+        throw AppException.validation('A case can be closed as resolved only after a resolution has been proposed. Choose another closure reason.', [
+          { path: ['closureReason'], message: 'Propose the resolution first' },
+        ]);
+      }
       const config = await this.modules.officeConfig(tx);
       if (this.closeBlockedBySoD(auth, row, config)) {
         throw AppException.separationOfDuties('The person who proposed the resolution cannot also close the case. Ask another officer to close it.');
@@ -781,7 +886,8 @@ export class CasesService {
 
   reopen(auth: AuthContext, id: string, dto: ReopenCase): Promise<CaseDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      const row = await this.load(tx, auth, id);
+      if (row.redactedAt) throw immutableRecord('A redacted case cannot be reopened. Record a new case instead.');
       if (!canTransitionCase(row.status, 'REOPENED')) throw AppException.invalidTransition(row.status, 'REOPENED');
       const result = await tx.citizenCase.updateMany({
         where: { id, version: dto.expectedVersion },
@@ -811,26 +917,31 @@ export class CasesService {
 
   /* ----------------------------- History and hints ---------------------------- */
 
-  history(id: string): Promise<AuditEvent[]> {
+  history(auth: AuthContext, id: string): Promise<AuditEvent[]> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      await this.load(tx, auth, id);
       const [referrals, files] = await Promise.all([
         tx.caseReferral.findMany({ where: { caseId: id }, select: { id: true } }),
         tx.caseEvent.findMany({ where: { caseId: id, storedFileId: { not: null } }, select: { storedFileId: true } }),
       ]);
-      return auditEventsFor(tx, [id, ...referrals.map((r) => r.id), ...files.map((f) => f.storedFileId!)]);
+      return auditEventsFor(tx, [id, ...referrals.map((r) => r.id), ...files.map((f) => f.storedFileId!)], auth);
     });
   }
 
   /** Triage hint: open cases that may report the same issue (same category and area, similar wording). */
   possibleDuplicates(auth: AuthContext, id: string): Promise<PossibleDuplicate[]> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
-      return this.findPossibleDuplicates(tx, row, officeScopeWhere(this.permissions.scopeFor(auth, 'office.cases.view')));
+      const row = await this.load(tx, auth, id);
+      const scope = officeScopeWhere(this.permissions.scopeFor(auth, 'office.cases.view'));
+      return this.findPossibleDuplicates(tx, row, { AND: [scope ?? {}, this.restrictedWhere(auth)] });
     });
   }
 
-  /** Shared with the public submission flow (which records a SYSTEM note when a hint exists). */
+  /**
+   * Shared with the public submission flow (which records a SYSTEM note when a
+   * hint exists and passes `RESTRICTED_WHERE`, so a confidential case's reference
+   * never appears in a note readable without the confidential permission).
+   */
   async findPossibleDuplicates(
     tx: TenantTx,
     row: Pick<CaseRow, 'id' | 'category' | 'wardId' | 'constituencyId' | 'description' | 'title' | 'submittedAt'>,
@@ -841,7 +952,7 @@ export class CasesService {
     const candidates = await tx.citizenCase.findMany({
       where: {
         AND: [
-          scope ?? {},
+          scope ?? RESTRICTED_WHERE,
           {
             id: { not: row.id },
             category: row.category,
@@ -869,10 +980,31 @@ export class CasesService {
 
   /* -------------------------------- Internals -------------------------------- */
 
-  private async load(tx: TenantTx, id: string): Promise<CaseRow> {
+  /**
+   * Load a case the caller may see: confidential and highly restricted cases
+   * answer 404 without `office.cases.confidential` covering the case. `lock`
+   * takes a row lock for writers that check the status and then insert.
+   */
+  private async load(tx: TenantTx, auth: AuthContext, id: string, opts: { lock?: boolean } = {}): Promise<CaseRow> {
+    if (opts.lock) await tx.$queryRaw`SELECT id FROM citizen_cases WHERE id = ${id}::uuid FOR UPDATE`;
     const row = await tx.citizenCase.findUnique({ where: { id } });
-    if (!row) throw AppException.notFound('Case not found');
+    if (!row || (RESTRICTED.includes(row.sensitivity) && !this.canSeeRestricted(auth, row))) throw AppException.notFound('Case not found');
     return row;
+  }
+
+  private canSeeRestricted(auth: AuthContext, row: OfficeLocationColumns): boolean {
+    return auth.permissions.has('office.cases.confidential') && callerCovers(this.permissions, auth, 'office.cases.confidential', officeGeoLocation(row));
+  }
+
+  private canSeeNotes(auth: AuthContext, row: OfficeLocationColumns): boolean {
+    return auth.permissions.has('office.cases.internal_notes') && callerCovers(this.permissions, auth, 'office.cases.internal_notes', officeGeoLocation(row));
+  }
+
+  /** List filter: restricted cases only inside the caller's confidential-cases scope. */
+  private restrictedWhere(auth: AuthContext): Prisma.CitizenCaseWhereInput {
+    if (!auth.permissions.has('office.cases.confidential')) return RESTRICTED_WHERE;
+    const scope = officeScopeWhere(this.permissions.scopeFor(auth, 'office.cases.confidential'));
+    return scope ? { OR: [RESTRICTED_WHERE, scope] } : {};
   }
 
   private async assertCaseExists(tx: TenantTx, id: string, path: string): Promise<void> {
@@ -881,9 +1013,12 @@ export class CasesService {
     }
   }
 
-  private async assertAssignee(tx: TenantTx, userId: string, location: GeoLocation): Promise<void> {
-    if (!(await userHoldsPermission(tx, this.permissions, userId, 'office.cases.manage', location))) {
-      throw AppException.validation('The assignee must be an active officer who can manage cases in this area', [
+  private async assertAssignee(tx: TenantTx, userId: string, location: GeoLocation, sensitivity: SensitivityLevel): Promise<void> {
+    const ok =
+      (await userHoldsPermission(tx, this.permissions, userId, 'office.cases.manage', location)) &&
+      (!RESTRICTED.includes(sensitivity) || (await userHoldsPermission(tx, this.permissions, userId, 'office.cases.confidential', location)));
+    if (!ok) {
+      throw AppException.validation('The assignee must be an active officer who can manage this case in this area', [
         { path: ['assigneeId'], message: 'Not allowed to handle this case' },
       ]);
     }
@@ -972,17 +1107,19 @@ export class CasesService {
 
   private async loadDetail(tx: TenantTx, auth: AuthContext, id: string): Promise<CaseDetail> {
     const row = await tx.citizenCase.findUnique({ where: { id }, include: CASE_DETAIL_INCLUDE });
-    if (!row) throw AppException.notFound('Case not found');
+    if (!row || (RESTRICTED.includes(row.sensitivity) && !this.canSeeRestricted(auth, row))) throw AppException.notFound('Case not found');
     const config = await this.modules.officeConfig(tx);
     return this.toDetail(row, auth, config);
   }
 
   private toDetail(r: CaseDetailRow, auth: AuthContext, config: OfficeModuleConfig): CaseDetail {
-    const seeNotes = auth.permissions.has('office.cases.internal_notes');
+    // Scoped like every other Office permission: a ward-limited notes grant does not reach other wards.
+    const seeNotes = this.canSeeNotes(auth, r);
     const seeRestricted = auth.permissions.has('office.correspondence.confidential');
     return {
       ...toCaseSummary(r, nairobiToday()),
       description: r.description,
+      redactedAt: r.redactedAt?.toISOString() ?? null,
       sensitivity: r.sensitivity,
       privacyNoticeVersion: r.privacyNoticeVersion,
       consentToContact: r.consentToContact,
@@ -1022,7 +1159,7 @@ export class CasesService {
     if (can('office.cases.referral') && REFERRABLE.includes(r.status)) out.push('refer');
     if (manage && canTransitionCase(r.status, 'RESOLUTION_PROPOSED')) out.push('propose_resolution');
     if (can('office.cases.close') && canTransitionCase(r.status, 'CLOSED') && !this.closeBlockedBySoD(auth, r, config)) out.push('close');
-    if (can('office.cases.close') && r.status === 'CLOSED') out.push('reopen');
+    if (can('office.cases.close') && r.status === 'CLOSED' && !r.redactedAt) out.push('reopen', 'redact');
     if (can('office.cases.contact.view') && r.contact) out.push('view_contact');
     return out;
   }

@@ -13,6 +13,8 @@
  *     the citizen tracks the request and sees only public updates (no notes,
  *       no staff names, no contact details), then confirms the resolution
  *     the administrator (not the proposer) closes it; the citizen sees "Closed"
+ *     a data-protection request removes the requester's personal content
+ *       (re-auth); no IP address or device data was ever stored for them
  *
  *   Project
  *     the projects officer records a project naming the institution legally
@@ -23,7 +25,9 @@
  *       report after re-authentication
  *     the public-information editor publishes selected fields; the public
  *       endpoint shows only those fields and verified evidence, and always names
- *       the responsible institution
+ *       the responsible institution; photographs are served re-encoded without
+ *       metadata, documents only after a clean scan; editing a published field
+ *       takes the project off the portal until it is approved again
  *
  * Everything is SYNTHETIC (fictional Bungoma geography, people and institutions)
  * in a fresh tenant with a random slug. Requires TEST_DATABASE_URL (owner) and
@@ -43,10 +47,11 @@ import {
 } from '@ngao360/db';
 import { CURRENT_PORTAL_PRIVACY_NOTICE_VERSION, PROJECT_PUBLIC_DISCLAIMER, type SystemRoleKey } from '@ngao360/shared';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
+import { syntheticPng } from './office-fixtures';
 
 const OWNER_URL = process.env.TEST_DATABASE_URL;
 const APP_URL = process.env.TEST_APP_DATABASE_URL;
@@ -67,7 +72,8 @@ const PERSONAS: Record<Persona, SystemRoleKey> = {
 };
 const MFA_ROLES = new Set<SystemRoleKey>(['OFFICE_ADMINISTRATOR', 'PUBLIC_INFORMATION_EDITOR']);
 
-const png = () => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), randomBytes(64)]);
+/** Decodable synthetic PNG carrying a text metadata chunk (stands in for EXIF location data). */
+const png = () => syntheticPng('SYNTHETIC-GPS 0.5636N 34.5606E');
 const pdf = () => Buffer.concat([Buffer.from('%PDF-1.4\n% synthetic inspection report (rehearsal)\n'), randomBytes(48)]);
 const ip = () => {
   const b = randomBytes(3);
@@ -298,7 +304,7 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
     const res = await citizen()
       .post(`/public/${slug}/requests`)
       .field('payload', JSON.stringify(payload))
-      .attach('photo', png(), { filename: 'bridge.png', contentType: 'image/png' })
+      .attach('photo', png(), { filename: 'Wekesa-home-bridge.png', contentType: 'image/png' })
       .expect(201);
     expect(res.body.trackingCode).toMatch(/^[0-9A-Z]{8}$/);
     expect(res.body.trackPath).toBe(`/p/${slug}/track`);
@@ -433,6 +439,36 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
     expect(snapshots).not.toContain(INTERNAL_NOTE);
     const history = await http('admin').get(`/office/cases/${caseId}/history`).expect(200);
     expect(history.body.length).toBeGreaterThanOrEqual(audit.length);
+    // The anonymous requester's IP address and device are never stored.
+    const portalEvents = audit.filter((a) => a.action === 'office.case.public_submitted' || a.action === 'office.case.citizen_feedback');
+    expect(portalEvents.length).toBe(2);
+    for (const e of portalEvents) expect([e.sourceIp, e.userAgent]).toEqual([null, null]);
+  });
+
+  it('a data-protection request removes the requester’s personal details; the anonymised record stays', async () => {
+    // The portal photo was stored without its metadata and under a neutral name.
+    const detail = await http('admin').get(`/office/cases/${caseId}`).expect(200);
+    const photo = detail.body.events.find((e: { type: string; file: unknown }) => e.type === 'EVIDENCE_ADDED' && e.file);
+    expect(photo.file.originalFilename).toBe('portal-photo.png');
+    const stored = await owner.storedFile.findUniqueOrThrow({ where: { id: photo.file.id } });
+    const bytes = readFileSync(join(storageRoot, stored.storageKey));
+    expect(bytes.includes(Buffer.from('SYNTHETIC-GPS'))).toBe(false);
+
+    await http('admin').post(`/office/cases/${caseId}/redact`).send({ reason: 'Requester asked for their details to be removed' }).expect(401);
+    await reauth('admin');
+    const redacted = await http('admin').post(`/office/cases/${caseId}/redact`).send({ reason: 'Requester asked for their details to be removed' }).expect(200);
+    expect(redacted.body).toMatchObject({ status: 'CLOSED', redactedAt: expect.any(String), description: '[Personal content removed]' });
+    expect(redacted.body.allowedActions).not.toContain('reopen');
+    expect(JSON.stringify(redacted.body)).not.toContain('Thank you, the children can cross again.');
+    expect(redacted.body.events.some((e: { file: unknown }) => e.file)).toBe(false);
+    const contact = await http('admin').get(`/office/cases/${caseId}/contact`).expect(200);
+    expect(contact.body).toMatchObject({ name: null, phone: null, erasedAt: expect.any(String) });
+    // The requester can still see that the request was handled and closed.
+    const tracked = await track().expect(200);
+    expect(tracked.body.stage).toBe('CLOSED');
+    expect(JSON.stringify(tracked.body)).not.toContain('Thank you, the children can cross again.');
+    const audit = await owner.auditEvent.findFirstOrThrow({ where: { tenantId, entityId: caseId, action: 'office.case.redacted' } });
+    expect(audit.actorId).toBe(userIds.admin);
   });
 
   /* --------------------------------- project ---------------------------------- */
@@ -454,6 +490,7 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
         contractAmount: '3650000',
         contractAmountIsPublic: false,
         initialStatus: 'APPROVED',
+        approvalAuthority: 'County Assembly budget approval (synthetic)',
         description: 'Internal description: procurement file reference PF-SYN-0099 (synthetic).',
       })
       .expect(201);
@@ -503,7 +540,10 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
 
   it('the public-information editor publishes approved fields; the public page shows only those', async () => {
     await citizen().get(`/public/${slug}/projects/${projectId}`).expect(404);
-    const body = { isPublic: true, publicFields: ['schedule', 'evidence'], publicEvidenceIds: [reportId], reason: 'Publish verified completion', expectedVersion: projectVersion };
+    // Documents reach the public only after a clean malware scan (recorded by the scanner).
+    const report = await owner.projectEvidence.findUniqueOrThrow({ where: { id: reportId } });
+    await owner.storedFile.update({ where: { id: report.storedFileId }, data: { malwareScanStatus: 'CLEAN', scannedAt: new Date() } });
+    const body = { isPublic: true, publicFields: ['schedule', 'evidence'], publicEvidenceIds: [reportId, photoId], reason: 'Publish verified completion', expectedVersion: projectVersion };
     await http('projects').put(`/office/projects/${projectId}/publication`).send(body).expect(403);
     const stale = await http('editor').put(`/office/projects/${projectId}/publication`).send(body).expect(401);
     expect(stale.body.code).toBe('REAUTH_REQUIRED');
@@ -524,18 +564,35 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
     for (const hidden of ['contractAmount', 'approvedAllocation', 'description', 'projectOwner', 'expenditure', 'milestones']) {
       expect(res.body).not.toHaveProperty(hidden);
     }
-    expect(res.body.evidence.map((e: { id: string }) => e.id)).toEqual([reportId]);
+    expect(res.body.evidence.map((e: { id: string }) => e.id).sort()).toEqual([reportId, photoId].sort());
     const text = JSON.stringify(res.body);
     for (const s of ['3650000', '3800000', 'PF-SYN-0099', ...Object.values(displayNames), ...Object.values(userIds)]) expect(text).not.toContain(s);
 
     await citizen().get(`/public/${slug}/projects/${projectId}/evidence/${reportId}/file`).expect(302);
-    await citizen().get(`/public/${slug}/projects/${projectId}/evidence/${photoId}/file`).expect(404);
+    // The photograph is re-encoded for the public: no metadata, neutral file name.
+    const photo = await citizen().get(`/public/${slug}/projects/${projectId}/evidence/${photoId}/file`).buffer(true).expect(200);
+    expect(photo.headers['content-type']).toBe('image/png');
+    expect(photo.headers['content-disposition']).toBe(`inline; filename="evidence-${photoId}.png"`);
+    expect((photo.body as Buffer).includes(Buffer.from('SYNTHETIC-GPS'))).toBe(false);
+
+    // Editing a published field takes the project off the portal until it is approved again.
+    const edited = await http('projects').patch(`/office/projects/${projectId}`).send({ name: 'Mihuu culverts (renamed, synthetic)', expectedVersion: published.body.version }).expect(200);
+    expect(edited.body.publication.isPublic).toBe(false);
+    await citizen().get(`/public/${slug}/projects/${projectId}`).expect(404);
+    await reauth('editor');
+    const republished = await http('editor')
+      .put(`/office/projects/${projectId}/publication`)
+      .send({ ...body, reason: 'Approve the new name', expectedVersion: edited.body.version })
+      .expect(200);
+    expect(republished.body.publication.isPublic).toBe(true);
+    const renamed = await citizen().get(`/public/${slug}/projects/${projectId}`).expect(200);
+    expect(renamed.body.name).toBe('Mihuu culverts (renamed, synthetic)');
     const list = await citizen().get(`/public/${slug}/projects`).expect(200);
     expect(list.body.items.map((p: { id: string }) => p.id)).toEqual([projectId]);
 
     // Staff preview uses the same code path as the public page.
     const preview = await http('projects').get(`/office/projects/${projectId}/public-preview`).expect(200);
-    expect(preview.body).toEqual(res.body);
+    expect(preview.body).toEqual(renamed.body);
 
     const audit = await owner.auditEvent.findMany({ where: { tenantId, entityId: projectId } });
     const actions = new Set(audit.map((a) => a.action));

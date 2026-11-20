@@ -228,6 +228,11 @@ export function ProjectFormDialog({ project, onClose, onSaved }: { project?: Pro
       }
     >
       <form id="project-form" onSubmit={submit} noValidate>
+        {editing && project.isPublic ? (
+          <Notice tone="warning" className="mb-4" title="This project is on the public portal">
+            Saving a change to a published field takes the project off the public portal until someone who can publish approves it again.
+          </Notice>
+        ) : null}
         {section('Identity')}
         {input('name', 'Project name', { required: true, max: 200 })}
         <div className="grid gap-x-4 sm:grid-cols-2">

@@ -15,6 +15,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import request from 'supertest';
 
 export const OWNER_URL = process.env.TEST_DATABASE_URL;
@@ -45,6 +46,8 @@ export interface OfficeFixture {
   otherUnits: Record<UnitKey, string>;
   users: Record<string, string>;
   portalServiceUserId: string;
+  /** Local storage root of this fixture's API (stored originals live under it). */
+  storageRoot: string;
   http: (who: string) => Client;
   /** Unauthenticated client presenting a given client IP (X-Forwarded-For; trust proxy is 1). */
   pub: (ip: string) => Client;
@@ -58,9 +61,37 @@ export interface Client {
   patch: (path: string) => request.Test;
 }
 
-/** A small synthetic PNG (unique bytes each call, so files never deduplicate across tests). */
-export function syntheticPng(): Buffer {
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), randomBytes(64)]);
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body) >>> 0);
+  return Buffer.concat([len, body, crc]);
+}
+
+/**
+ * A small, decodable synthetic PNG with random pixels (unique each call, so
+ * files never deduplicate across tests). `textChunk` adds a tEXt chunk, used to
+ * check that metadata is stripped.
+ */
+export function syntheticPng(textChunk?: string): Buffer {
+  const w = 8;
+  const h = 8;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const rows: Buffer[] = [];
+  for (let y = 0; y < h; y++) rows.push(Buffer.concat([Buffer.from([0]), randomBytes(w * 3)]));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    ...(textChunk ? [pngChunk('tEXt', Buffer.from(`Comment\0${textChunk}`, 'latin1'))] : []),
+    pngChunk('IDAT', deflateSync(Buffer.concat(rows))),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
 }
 /** A small synthetic PDF. */
 export function syntheticPdf(): Buffer {
@@ -131,6 +162,7 @@ export async function createOfficeFixture(
     DATABASE_URL: OWNER_URL,
     APP_DATABASE_URL: APP_URL,
     QUEUES_ENABLED: 'false',
+    OFFICE_RETENTION_INTERVAL_MINUTES: '0',
     STORAGE_DRIVER: 'local',
     STORAGE_LOCAL_ROOT: storageRoot,
     JWT_ACCESS_SECRET: JWT_SECRET,
@@ -197,6 +229,7 @@ export async function createOfficeFixture(
     otherUnits: other.units,
     users,
     portalServiceUserId: main.portalServiceUserId,
+    storageRoot,
     http: (who) => {
       if (!tokens[who]) throw new Error(`Unknown persona ${who}`);
       return client((r) => r.set('authorization', `Bearer ${tokens[who]}`).set('x-ngao-client', 'web'));

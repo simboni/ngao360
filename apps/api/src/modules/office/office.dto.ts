@@ -19,6 +19,7 @@ import {
   CreateProjectMilestoneSchema,
   CreateProjectSchema,
   EraseCaseContactSchema,
+  RedactCaseSchema,
   IdParamSchema,
   InstitutionQuerySchema,
   MeetingActionItemParamSchema,
@@ -89,6 +90,7 @@ export class CaseTransitionDto extends createZodDto(CaseTransitionSchema) {}
 export class AddCaseEventDto extends createZodDto(AddCaseEventSchema) {}
 export class UpdateCaseContactDto extends createZodDto(UpdateCaseContactSchema) {}
 export class EraseCaseContactDto extends createZodDto(EraseCaseContactSchema) {}
+export class RedactCaseDto extends createZodDto(RedactCaseSchema) {}
 export class CreateCaseReferralDto extends createZodDto(CreateCaseReferralSchema) {}
 export class UpdateCaseReferralDto extends createZodDto(UpdateCaseReferralSchema) {}
 export class CaseReferralParamDto extends createZodDto(CaseReferralParamSchema) {}

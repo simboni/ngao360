@@ -10,7 +10,7 @@ import { CASE_STATUS_PUBLIC_STAGE, CONTACT_PREFERENCES, CURRENT_PORTAL_PRIVACY_N
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ApiRequestError } from '@/lib/api-client';
 import { en, translate } from '../i18n';
-import { checkPhoto, photoType, scaledSize } from '../photo';
+import { checkPhoto, needsConversion, photoType, scaledSize } from '../photo';
 import { portalErrorKey, publicFileHref, serverFieldErrors } from '../portal-api';
 import { PortalProvider } from '../portal-context';
 import { formatMoney, PUBLIC_STAGE_SHORT } from '../project-labels';
@@ -136,6 +136,12 @@ describe('photo checks', () => {
   it('infers HEIC from the extension when the browser gives no type', () => {
     assert.equal(photoType({ name: 'IMG_1.HEIC', type: '' }), 'image/heic');
     assert.equal(photoType({ name: 'x', type: 'image/heif' }), 'image/heic');
+  });
+  it('asks for another photo when a HEIC file could not be converted (the server refuses HEIC)', () => {
+    const blob = new Blob(['x']);
+    assert.equal(needsConversion({ name: 'IMG_1.HEIC', type: '' }, { blob, name: 'IMG_1.HEIC', processed: false }), true);
+    assert.equal(needsConversion({ name: 'IMG_1.HEIC', type: 'image/heic' }, { blob, name: 'photo.jpg', processed: true }), false);
+    assert.equal(needsConversion({ name: 'a.jpg', type: 'image/jpeg' }, { blob, name: 'a.jpg', processed: false }), false);
   });
   it('scales down to 1600 px on the long side and never up', () => {
     assert.deepEqual(scaledSize(4000, 3000), { width: 1600, height: 1200 });

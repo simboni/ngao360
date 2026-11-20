@@ -159,7 +159,7 @@ export class ProjectsController {
 
   @Get(':id/history')
   @RequirePermission('office.projects.view', { geo: PROJECT })
-  history(@Param() p: OfficeIdParamDto): Promise<AuditEvent[]> {
-    return this.projects.history(p.id);
+  history(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto): Promise<AuditEvent[]> {
+    return this.projects.history(auth, p.id);
   }
 }

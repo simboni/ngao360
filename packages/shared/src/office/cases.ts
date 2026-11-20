@@ -42,6 +42,7 @@ export const CASE_ACTIONS = [
   'close',
   'reopen',
   'view_contact',
+  'redact',
 ] as const;
 export const CaseActionSchema = z.enum(CASE_ACTIONS);
 export type CaseAction = z.infer<typeof CaseActionSchema>;
@@ -93,6 +94,15 @@ export type UpdateCaseContact = z.infer<typeof UpdateCaseContactSchema>;
 /** Erase contact details (data-subject request or retention). The case body stays. */
 export const EraseCaseContactSchema = z.object({ reason: ReasonSchema });
 export type EraseCaseContact = z.infer<typeof EraseCaseContactSchema>;
+
+/**
+ * Redact the personal content of a case (data-subject request, or the case
+ * retention period has passed). Removes the description, location text,
+ * requester messages and portal photos, and erases contact details; the
+ * anonymised record of what the office did stays. Permanent; needs re-auth.
+ */
+export const RedactCaseSchema = z.object({ reason: ReasonSchema });
+export type RedactCase = z.infer<typeof RedactCaseSchema>;
 
 /* ------------------------------ Timeline events ----------------------------- */
 
@@ -209,6 +219,8 @@ export type CaseSummary = z.infer<typeof CaseSummarySchema>;
 
 export const CaseDetailSchema = CaseSummarySchema.extend({
   description: z.string(),
+  /** Set when the personal content was redacted (description and requester messages replaced). */
+  redactedAt: IsoDateTimeSchema.nullable(),
   sensitivity: SensitivityLevelSchema,
   privacyNoticeVersion: z.string(),
   consentToContact: z.boolean(),

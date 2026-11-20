@@ -223,6 +223,8 @@ export class CorrespondenceService {
         if (fromRestricted && !toRestricted && !dto.reason) {
           throw AppException.validation('Give a reason for lowering the sensitivity', [{ path: ['reason'], message: 'Required' }]);
         }
+        // The assignee must still be able to open the item after the change.
+        if (toRestricted && row.assignedToId) await this.assertAssignable(tx, row.assignedToId, dto.sensitivity);
       }
       if (dto.inReplyToId !== undefined && dto.inReplyToId !== row.inReplyToId) {
         if (dto.inReplyToId === id) throw AppException.validation('An item cannot reply to itself', [{ path: ['inReplyToId'], message: 'Invalid' }]);
@@ -279,7 +281,12 @@ export class CorrespondenceService {
       const row = await this.loadVisible(tx, auth, id);
       if (row.status === 'ARCHIVED' || row.status === 'FILED') throw immutableRecord('Filed or archived correspondence cannot be reassigned');
       if (dto.assignedToId) await this.assertAssignable(tx, dto.assignedToId, row.sensitivity);
-      const status: CorrespondenceStatus = dto.assignedToId && row.status === 'RECEIVED' ? 'ASSIGNED' : row.status;
+      if (!dto.assignedToId && row.status === 'IN_PROGRESS') {
+        throw AppException.validation('Assign another officer instead: an item in progress needs an assignee', [{ path: ['assignedToId'], message: 'Required while in progress' }]);
+      }
+      // Unassigning an ASSIGNED item returns it to RECEIVED (the unassigned queue).
+      const status: CorrespondenceStatus =
+        dto.assignedToId && row.status === 'RECEIVED' ? 'ASSIGNED' : !dto.assignedToId && row.status === 'ASSIGNED' ? 'RECEIVED' : row.status;
       const result = await tx.correspondence.updateMany({
         where: { id, version: dto.expectedVersion },
         data: {
@@ -408,7 +415,7 @@ export class CorrespondenceService {
     return this.prisma.tenantTx(async (tx) => {
       await this.loadVisible(tx, auth, id);
       const atts = await tx.correspondenceAttachment.findMany({ where: { correspondenceId: id }, select: { id: true, storedFileId: true } });
-      return auditEventsFor(tx, [id, ...atts.map((a) => a.id), ...atts.map((a) => a.storedFileId)]);
+      return auditEventsFor(tx, [id, ...atts.map((a) => a.id), ...atts.map((a) => a.storedFileId)], auth);
     });
   }
 

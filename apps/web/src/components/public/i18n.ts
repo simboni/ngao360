@@ -82,6 +82,7 @@ export const en = {
   'request.photo.resized': 'We made the photo smaller to save data and removed its hidden location details.',
   'request.photo.tooLarge': 'This photo is larger than {size}. Choose a smaller photo.',
   'request.photo.badType': 'This file type is not accepted. Choose a JPEG, PNG, WebP or HEIC photo.',
+  'request.photo.heicUnsupported': 'This browser cannot convert this HEIC photo. Choose a JPEG or PNG copy, or send the request without a photo.',
   'request.contact.legend': 'How should we contact you about this request?',
   'request.contact.hint': 'Contact is optional. If you choose "Do not contact me", we will not store any contact details and you can still track your request with the reference and tracking code.',
   'request.contact.NONE': 'Do not contact me',

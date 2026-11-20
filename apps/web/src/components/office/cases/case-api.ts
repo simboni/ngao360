@@ -24,6 +24,7 @@ import type {
   InstitutionQuery,
   Paginated,
   ProposeCaseResolution,
+  RedactCase,
   ReopenCase,
   SignedUrlResponse,
   UpdateCase,
@@ -60,6 +61,7 @@ export const casesApi = {
   proposeResolution: (id: string, body: ProposeCaseResolution) => api.post<CaseDetail>(`${c(id)}/propose-resolution`, body),
   close: (id: string, body: CloseCase) => api.post<CaseDetail>(`${c(id)}/close`, body),
   reopen: (id: string, body: ReopenCase) => api.post<CaseDetail>(`${c(id)}/reopen`, body),
+  redact: (id: string, body: RedactCase) => api.post<CaseDetail>(`${c(id)}/redact`, body),
   history: (id: string) => api.get<AuditEvent[]>(`${c(id)}/history`),
   /** `active` is sent as the string the query schema expects ('true' / 'false'). */
   institutions: (query: { q?: string; type?: InstitutionQuery['type']; active?: 'true' | 'false' }) =>

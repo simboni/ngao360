@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiRequestError } from '@/lib/api-client';
 import { CaptchaSlot, captchaState } from './captcha';
 import { formatBytes } from './i18n';
-import { photoType, checkPhoto, preparePhoto, type PreparedPhoto } from './photo';
+import { photoType, checkPhoto, needsConversion, preparePhoto, type PreparedPhoto } from './photo';
 import { portalApi, portalErrorKey, serverFieldErrors } from './portal-api';
 import { usePortal } from './portal-context';
 import {
@@ -129,6 +129,12 @@ export function RequestForm() {
     const previewUrl = photoType(file) === 'image/heic' ? '' : URL.createObjectURL(file);
     setPhoto({ file, prepared: null, previewUrl });
     const prepared = await preparePhoto(file);
+    if (needsConversion(file, prepared)) {
+      setPhoto((p) => (p && p.file === file ? null : p));
+      setPhotoError(t('request.photo.heicUnsupported'));
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
     setPhoto((p) => (p && p.file === file ? { ...p, prepared } : p));
   };
 

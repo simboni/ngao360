@@ -30,12 +30,15 @@ import {
   type VerifyRecord,
   canTransitionProject,
   completionEvidenceSufficient,
+  projectStatusNeedsApproval,
+  publicFacingProjectChanges,
 } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AuditService } from '../../../audit/audit.service';
 import { AppException } from '../../../common/http/app-exception';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PermissionService } from '../../../rbac/permission.service';
+import { ImageSanitizeError, isSanitizableImage, sanitizeImage } from '../../../storage/image-sanitize';
 import { StorageService } from '../../../storage/storage.service';
 import {
   type OfficeLocationColumns,
@@ -71,9 +74,15 @@ import {
   toProjectSummary,
   toPublicProjectDetail,
   toPublicProjectSummary,
+  publicEvidenceServable,
 } from './project-support';
 
 type ProjectRow = Prisma.ProjectGetPayload<object>;
+
+export type PublicEvidenceFile =
+  | { kind: 'inline'; buffer: Buffer; mimeType: string; filename: string }
+  | { kind: 'redirect'; url: string };
+
 
 /** Statuses a project leaves its completion record behind from. */
 const COMPLETION_STATES: readonly ProjectStatus[] = ['COMPLETED', 'VERIFIED_COMPLETED'];
@@ -136,6 +145,7 @@ export class ProjectsService {
 
   create(auth: AuthContext, dto: CreateProject): Promise<ProjectDetail> {
     this.assertCoordinates(dto.latitude, dto.longitude);
+    this.assertApprovalAuthority(dto.initialStatus, dto.approvalAuthority);
     return this.prisma.tenantTx(async (tx) => {
       const location = await resolveOfficeLocation(tx, dto.geographicUnitId);
       if (!callerCovers(this.permissions, auth, 'office.projects.edit', officeGeoLocation(location))) {
@@ -228,6 +238,7 @@ export class ProjectsService {
         await this.assertInstitution(tx, dto.implementingAgencyId, 'implementingAgencyId');
       }
       if (dto.trackingOfficerId && dto.trackingOfficerId !== row.trackingOfficerId) await this.assertTrackingOfficer(tx, dto.trackingOfficerId);
+      if (dto.approvalAuthority !== undefined) this.assertApprovalAuthority(row.status, dto.approvalAuthority);
       if (dto.contractAmountIsPublic === false && row.publicFields.includes('contractAmount')) {
         throw AppException.validation('Remove the contract amount from the public fields first', [{ path: ['contractAmountIsPublic'], message: 'Published' }]);
       }
@@ -267,8 +278,13 @@ export class ProjectsService {
         patch.expenditureVerifiedById = null;
         patch.expenditureVerifiedAt = null;
       }
+      // Publication approval covers what the public fields say: a change to one of
+      // them takes the project off the public portal until it is approved again.
+      const publicChanges = row.isPublic ? publicFacingProjectChanges(diff.keys, row.publicFields) : [];
+      if (publicChanges.length > 0) patch.isPublic = false;
       const result = await tx.project.updateMany({ where: { id, version: dto.expectedVersion }, data: { ...patch, version: { increment: 1 } } });
       assertUpdated(result, 'project');
+      if (publicChanges.length > 0) await this.auditPublicationWithdrawn(tx, auth, row, publicChanges);
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -276,7 +292,11 @@ export class ProjectsService {
           entityType: PROJECT_ENTITY,
           entityId: id,
           before: diff.before,
-          after: { ...diff.after, ...(diff.keys.includes('expenditureReported') ? { expenditureVerificationStatus: 'UNVERIFIED' } : {}) },
+          after: {
+            ...diff.after,
+            ...(diff.keys.includes('expenditureReported') ? { expenditureVerificationStatus: 'UNVERIFIED' } : {}),
+            ...(publicChanges.length > 0 ? { publicationWithdrawn: true } : {}),
+          },
           reason: dto.reason ?? null,
         },
         tx,
@@ -290,6 +310,7 @@ export class ProjectsService {
       const row = await this.load(tx, id);
       if (!canTransitionProject(row.status, dto.to)) throw AppException.invalidTransition(row.status, dto.to);
       if (row.status === 'VERIFIED_COMPLETED') this.assertCovers(auth, ['office.projects.verify'], row);
+      this.assertApprovalAuthority(dto.to, row.approvalAuthority);
       const data: Prisma.ProjectUncheckedUpdateManyInput = { status: dto.to };
       if (dto.to === 'DELAYED') {
         if (!dto.delayReason) throw AppException.validation('Give the reason for the delay', [{ path: ['delayReason'], message: 'Required' }]);
@@ -311,10 +332,15 @@ export class ProjectsService {
           completionVerifiedById: null,
           completionVerifiedAt: null,
           completionVerificationNote: null,
+          completionEvidenceIds: [],
         });
       }
+      const publicChanges =
+        row.isPublic && dto.to === 'DELAYED' && dto.delayReason !== row.delayReason ? publicFacingProjectChanges(['delayReason'], row.publicFields) : [];
+      if (publicChanges.length > 0) data.isPublic = false;
       const result = await tx.project.updateMany({ where: { id, version: dto.expectedVersion }, data: { ...data, version: { increment: 1 } } });
       assertUpdated(result, 'project');
+      if (publicChanges.length > 0) await this.auditPublicationWithdrawn(tx, auth, row, publicChanges);
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -338,7 +364,9 @@ export class ProjectsService {
 
   verifyCompletion(auth: AuthContext, id: string, dto: VerifyProjectCompletion): Promise<ProjectDetail> {
     return this.prisma.tenantTx(async (tx) => {
-      const row = await this.load(tx, id);
+      // Project row lock: an evidence dispute running at the same moment waits,
+      // then sees VERIFIED_COMPLETED and re-checks the cited evidence.
+      const row = await this.load(tx, id, { lock: true });
       if (row.status !== 'COMPLETED') throw AppException.invalidTransition(row.status, 'VERIFIED_COMPLETED');
       if (!row.completionReportedById) {
         throw AppException.validation('The completion report is missing; record the completion first', [{ path: ['status'], message: 'No reporter' }]);
@@ -368,6 +396,7 @@ export class ProjectsService {
           completionVerifiedById: auth.userId,
           completionVerifiedAt: new Date(),
           completionVerificationNote: dto.note,
+          completionEvidenceIds: ids,
           version: { increment: 1 },
         },
       });
@@ -431,7 +460,7 @@ export class ProjectsService {
 
   createMilestone(auth: AuthContext, id: string, dto: CreateProjectMilestone): Promise<ProjectMilestone> {
     return this.prisma.tenantTx(async (tx) => {
-      const project = await this.load(tx, id);
+      const project = await this.load(tx, id, { lock: true });
       if (project.status === 'CANCELLED') throw immutableRecord('A cancelled project cannot take new milestones');
       const max = await tx.projectMilestone.aggregate({ where: { projectId: id }, _max: { sequence: true } });
       const sequence = dto.sequence ?? (max._max.sequence ?? 0) + 1;
@@ -449,6 +478,8 @@ export class ProjectsService {
         },
         include: MILESTONE_INCLUDE,
       });
+      const publicChanges = this.milestonePublicChanges(project);
+      if (publicChanges.length > 0) await this.withdrawPublication(tx, auth, project, publicChanges);
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -465,7 +496,7 @@ export class ProjectsService {
 
   updateMilestone(auth: AuthContext, id: string, milestoneId: string, dto: UpdateProjectMilestone): Promise<ProjectMilestone> {
     return this.prisma.tenantTx(async (tx) => {
-      const project = await this.load(tx, id);
+      const project = await this.load(tx, id, { lock: true });
       if (project.status === 'CANCELLED') throw immutableRecord('A cancelled project cannot be changed');
       const m = await tx.projectMilestone.findFirst({ where: { id: milestoneId, projectId: id } });
       if (!m) throw AppException.notFound('Milestone not found');
@@ -486,7 +517,11 @@ export class ProjectsService {
       if (diff.keys.length === 0) return toMilestone(await tx.projectMilestone.findUniqueOrThrow({ where: { id: milestoneId }, include: MILESTONE_INCLUDE }));
       const resetsVerification = diff.keys.includes('status') || diff.keys.includes('actualDate');
       if (resetsVerification) Object.assign(patch, { verificationStatus: 'UNVERIFIED', verifiedById: null, verifiedAt: null, verificationNote: null });
-      const updated = await tx.projectMilestone.update({ where: { id: milestoneId }, data: patch, include: MILESTONE_INCLUDE });
+      const result = await tx.projectMilestone.updateMany({ where: { id: milestoneId, updatedAt: m.updatedAt }, data: patch as Prisma.ProjectMilestoneUncheckedUpdateManyInput });
+      assertUpdated(result, 'milestone');
+      const updated = await tx.projectMilestone.findUniqueOrThrow({ where: { id: milestoneId }, include: MILESTONE_INCLUDE });
+      const publicChanges = diff.keys.some((k) => k === 'title' || k === 'sequence') ? this.milestonePublicChanges(project) : [];
+      if (publicChanges.length > 0) await this.withdrawPublication(tx, auth, project, publicChanges);
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -504,7 +539,7 @@ export class ProjectsService {
 
   verifyMilestone(auth: AuthContext, id: string, milestoneId: string, dto: VerifyRecord): Promise<ProjectMilestone> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      await this.load(tx, id, { lock: true });
       const m = await tx.projectMilestone.findFirst({ where: { id: milestoneId, projectId: id } });
       if (!m) throw AppException.notFound('Milestone not found');
       if (dto.status === 'VERIFIED' && m.status !== 'DONE') {
@@ -513,11 +548,14 @@ export class ProjectsService {
       if ((await this.lastEditorOf(tx, milestoneId, 'status', 'ProjectMilestone')) === auth.userId) {
         throw AppException.separationOfDuties('You recorded this milestone’s status, so another person must verify it.');
       }
-      const updated = await tx.projectMilestone.update({
-        where: { id: milestoneId },
+      // Conditional write: the milestone must still be the one checked above
+      // (a concurrent status change resets its verification).
+      const result = await tx.projectMilestone.updateMany({
+        where: { id: milestoneId, updatedAt: m.updatedAt, status: m.status },
         data: { verificationStatus: dto.status, verifiedById: auth.userId, verifiedAt: new Date(), verificationNote: dto.note },
-        include: MILESTONE_INCLUDE,
       });
+      assertUpdated(result, 'milestone');
+      const updated = await tx.projectMilestone.findUniqueOrThrow({ where: { id: milestoneId }, include: MILESTONE_INCLUDE });
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -593,21 +631,28 @@ export class ProjectsService {
 
   verifyEvidence(auth: AuthContext, id: string, evidenceId: string, dto: VerifyRecord): Promise<ProjectEvidence> {
     return this.prisma.tenantTx(async (tx) => {
-      await this.load(tx, id);
+      // Same lock order as verifyCompletion (project row first), so a dispute and
+      // a completion verification never both commit on stale reads.
+      const project = await this.load(tx, id, { lock: true });
       const e = await tx.projectEvidence.findFirst({ where: { id: evidenceId, projectId: id } });
       if (!e) throw AppException.notFound('Evidence not found');
       if (e.uploadedById === auth.userId) throw AppException.separationOfDuties('You uploaded this evidence, so another person must verify it.');
-      const updated = await tx.projectEvidence.update({
-        where: { id: evidenceId },
+      const result = await tx.projectEvidence.updateMany({
+        where: { id: evidenceId, verificationStatus: e.verificationStatus, verifiedAt: e.verifiedAt },
         data: {
           verificationStatus: dto.status,
           verifiedById: auth.userId,
           verifiedAt: new Date(),
           verificationNote: dto.note,
-          ...(dto.status === 'DISPUTED' ? { isPublic: false } : {}),
+          // Only verified evidence may be public.
+          ...(dto.status !== 'VERIFIED' ? { isPublic: false } : {}),
         },
-        include: EVIDENCE_INCLUDE,
       });
+      assertUpdated(result, 'evidence item');
+      const updated = await tx.projectEvidence.findUniqueOrThrow({ where: { id: evidenceId }, include: EVIDENCE_INCLUDE });
+      if (dto.status !== 'VERIFIED' && e.verificationStatus === 'VERIFIED') {
+        await this.recheckVerifiedCompletion(tx, auth, project, evidenceId);
+      }
       await this.audit.record(
         {
           tenantId: auth.tenantId,
@@ -651,9 +696,19 @@ export class ProjectsService {
       }
       const evidenceIds = [...new Set(dto.publicEvidenceIds)];
       if (evidenceIds.length > 0) {
-        const ok = await tx.projectEvidence.count({ where: { id: { in: evidenceIds }, projectId: id, verificationStatus: 'VERIFIED' } });
-        if (ok !== evidenceIds.length) {
+        const items = await tx.projectEvidence.findMany({
+          where: { id: { in: evidenceIds }, projectId: id, verificationStatus: 'VERIFIED' },
+          select: { id: true, storedFile: { select: { mimeType: true, malwareScanStatus: true } } },
+        });
+        if (items.length !== evidenceIds.length) {
           throw AppException.validation('Only verified evidence of this project can be published', [{ path: ['publicEvidenceIds'], message: 'Unverified or unknown evidence' }]);
+        }
+        const blocked = items.filter((i) => !publicEvidenceServable(i.storedFile));
+        if (blocked.length > 0) {
+          throw AppException.validation(
+            'Some evidence cannot be shown to the public yet: documents need a clean malware scan, and HEIC photos cannot be cleaned of location data.',
+            [{ path: ['publicEvidenceIds'], message: 'Not publishable', evidenceIds: blocked.map((b) => b.id) }],
+          );
         }
       }
       const publishing = dto.isPublic && !row.isPublic;
@@ -697,14 +752,14 @@ export class ProjectsService {
     });
   }
 
-  history(id: string): Promise<AuditEvent[]> {
+  history(auth: AuthContext, id: string): Promise<AuditEvent[]> {
     return this.prisma.tenantTx(async (tx) => {
       await this.load(tx, id);
       const [milestones, evidence] = await Promise.all([
         tx.projectMilestone.findMany({ where: { projectId: id }, select: { id: true } }),
         tx.projectEvidence.findMany({ where: { projectId: id }, select: { id: true, storedFileId: true } }),
       ]);
-      return auditEventsFor(tx, [id, ...milestones.map((m) => m.id), ...evidence.map((e) => e.id), ...evidence.map((e) => e.storedFileId)]);
+      return auditEventsFor(tx, [id, ...milestones.map((m) => m.id), ...evidence.map((e) => e.id), ...evidence.map((e) => e.storedFileId)], auth);
     });
   }
 
@@ -750,25 +805,116 @@ export class ProjectsService {
     });
   }
 
-  /** Signed URL for published, verified evidence of a public project (public record: not audited). */
-  publicEvidenceUrl(tenant: { id: string }, id: string, evidenceId: string): Promise<string> {
-    return this.prisma.withTenant(tenant.id, async (tx) => {
-      const e = await tx.projectEvidence.findFirst({
+  /**
+   * Published, verified evidence of a public project (public record: not
+   * audited). The stored original never reaches the public:
+   * - photographs are decoded and re-encoded without metadata (no GPS position,
+   *   device serial or capture time) and returned directly;
+   * - documents are served only after a clean malware scan, as a download with
+   *   a neutral file name (the original name can carry staff names).
+   */
+  async publicEvidenceFile(tenant: { id: string }, id: string, evidenceId: string): Promise<PublicEvidenceFile> {
+    const e = await this.prisma.withTenant(tenant.id, (tx) =>
+      tx.projectEvidence.findFirst({
         where: { id: evidenceId, projectId: id, isPublic: true, verificationStatus: 'VERIFIED', project: { isPublic: true, publicFields: { has: 'evidence' } } },
         include: { storedFile: true },
+      }),
+    );
+    if (!e || !publicEvidenceServable(e.storedFile)) throw AppException.notFound('Not found');
+    const f = e.storedFile;
+    if (isSanitizableImage(f.mimeType)) {
+      const original = await this.storage.readVerified(f);
+      const clean = await sanitizeImage(original, f.mimeType).catch((err: unknown) => {
+        if (err instanceof ImageSanitizeError) throw AppException.notFound('Not found');
+        throw err;
       });
-      if (!e) throw AppException.notFound('Not found');
-      const { url } = await this.storage.signedUrl(e.storedFile, 'inline');
-      return url;
-    });
+      return { kind: 'inline', buffer: clean.buffer, mimeType: clean.mimeType, filename: `evidence-${e.id}.${clean.extension}` };
+    }
+    const { url } = await this.storage.signedUrl({ storageKey: f.storageKey, mimeType: f.mimeType, originalFilename: `evidence-${e.id}.pdf` }, 'attachment');
+    return { kind: 'redirect', url };
   }
 
   /* -------------------------------- Internals -------------------------------- */
 
-  private async load(tx: TenantTx, id: string): Promise<ProjectRow> {
+  private async load(tx: TenantTx, id: string, opts: { lock?: boolean } = {}): Promise<ProjectRow> {
+    if (opts.lock) await tx.$queryRaw`SELECT id FROM projects WHERE id = ${id}::uuid FOR UPDATE`;
     const row = await tx.project.findUnique({ where: { id } });
     if (!row) throw AppException.notFound('Project not found');
     return row;
+  }
+
+  /** Approved and later stages need the authority that approved the project (blueprint 9.3). */
+  private assertApprovalAuthority(status: ProjectStatus, approvalAuthority: string | null | undefined): void {
+    if (projectStatusNeedsApproval(status) && !approvalAuthority?.trim()) {
+      throw AppException.validation('Record the approval authority (for example the County Assembly budget approval) before presenting the project as approved', [
+        { path: ['approvalAuthority'], message: 'Required from the approved stage on' },
+      ]);
+    }
+  }
+
+  private milestonePublicChanges(project: ProjectRow): string[] {
+    return project.isPublic ? publicFacingProjectChanges(['milestones'], project.publicFields) : [];
+  }
+
+  /** Take a published project off the public portal (a public field changed after approval). */
+  private async withdrawPublication(tx: TenantTx, auth: AuthContext, row: ProjectRow, changed: string[]): Promise<void> {
+    await tx.project.updateMany({ where: { id: row.id, isPublic: true }, data: { isPublic: false, version: { increment: 1 } } });
+    await this.auditPublicationWithdrawn(tx, auth, row, changed);
+  }
+
+  private auditPublicationWithdrawn(tx: TenantTx, auth: AuthContext, row: ProjectRow, changed: string[]) {
+    return this.audit.record(
+      {
+        tenantId: auth.tenantId,
+        action: AUDIT_ACTIONS.PROJECT_PUBLICATION_CHANGED,
+        entityType: PROJECT_ENTITY,
+        entityId: row.id,
+        before: { isPublic: true, publicFields: row.publicFields },
+        after: { isPublic: false, publicFields: row.publicFields, withdrawnBecauseChanged: changed },
+        reason: 'Published fields changed after approval; withdrawn from the public portal until approved again',
+      },
+      tx,
+    );
+  }
+
+  /**
+   * Evidence that supported a verified completion moved away from VERIFIED: if
+   * what remains no longer satisfies the completion rule, the verification is
+   * withdrawn (back to COMPLETED, reported but not verified) and audited.
+   */
+  private async recheckVerifiedCompletion(tx: TenantTx, auth: AuthContext, project: ProjectRow, changedEvidenceId: string): Promise<void> {
+    if (project.status !== 'VERIFIED_COMPLETED') return;
+    const cited = project.completionEvidenceIds;
+    // Older verifications did not store the cited ids: judge them on all of the project's evidence.
+    if (cited.length > 0 && !cited.includes(changedEvidenceId)) return;
+    const basis = await tx.projectEvidence.findMany({
+      where: { projectId: project.id, ...(cited.length > 0 ? { id: { in: cited } } : {}) },
+      select: { type: true, verificationStatus: true },
+    });
+    if (completionEvidenceSufficient(basis)) return;
+    await tx.project.updateMany({
+      where: { id: project.id, status: 'VERIFIED_COMPLETED' },
+      data: {
+        status: 'COMPLETED',
+        completionVerifiedById: null,
+        completionVerifiedAt: null,
+        completionVerificationNote: null,
+        completionEvidenceIds: [],
+        version: { increment: 1 },
+      },
+    });
+    await this.audit.record(
+      {
+        tenantId: auth.tenantId,
+        action: AUDIT_ACTIONS.PROJECT_STATUS_CHANGED,
+        entityType: PROJECT_ENTITY,
+        entityId: project.id,
+        before: { status: 'VERIFIED_COMPLETED', completionVerifiedById: project.completionVerifiedById },
+        after: { status: 'COMPLETED', verificationWithdrawn: true, evidenceId: changedEvidenceId },
+        reason: 'Evidence supporting the completion verification is no longer verified',
+      },
+      tx,
+    );
   }
 
   /** Decimal columns as strings so changedFields compares like with like. */

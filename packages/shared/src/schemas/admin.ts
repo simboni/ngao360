@@ -293,6 +293,7 @@ export const AUDIT_ACTIONS = {
   CASE_CONTACT_VIEWED: 'office.case.contact_viewed',
   CASE_CONTACT_UPDATED: 'office.case.contact_updated',
   CASE_CONTACT_ERASED: 'office.case.contact_erased',
+  CASE_REDACTED: 'office.case.redacted',
   CASE_REFERRED: 'office.case.referred',
   CASE_REFERRAL_UPDATED: 'office.case.referral_updated',
   CASE_CITIZEN_FEEDBACK: 'office.case.citizen_feedback',

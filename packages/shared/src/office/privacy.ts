@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 
-export const CURRENT_PORTAL_PRIVACY_NOTICE_VERSION = 'office-portal-2026-11-v1';
+export const CURRENT_PORTAL_PRIVACY_NOTICE_VERSION = 'office-portal-2026-11-v2';
 export const CURRENT_APPOINTMENT_PRIVACY_NOTICE_VERSION = 'office-appointment-2026-11-v1';
 
 export const PrivacyNoticeSectionSchema = z.object({
@@ -50,7 +50,8 @@ export function portalPrivacyNotice(ctx: PrivacyNoticeContext): PrivacyNotice {
         heading: 'What we collect',
         body:
           'The type of issue, your description, the ward it concerns and an optional photograph. Your name, phone number ' +
-          'or email address only if you choose to give them. We do not ask for your ID number, political views, ethnicity or religion; please do not include them.',
+          'or email address only if you choose to give them. We do not ask for your ID number, political views, ethnicity or religion; please do not include them. ' +
+          'We do not keep your IP address or device details with your request, and we remove location data hidden in photos before storing them.',
       },
       {
         heading: 'Why we collect it',
@@ -67,13 +68,14 @@ export function portalPrivacyNotice(ctx: PrivacyNoticeContext): PrivacyNotice {
       {
         heading: 'How long we keep it',
         body:
-          `Case records are kept for ${ctx.caseRetentionMonths} months after the case is closed. Contact details are deleted ` +
-          `${ctx.contactRetentionMonths} months after closure, or earlier if you ask.`,
+          `Contact details are deleted ${ctx.contactRetentionMonths} months after the case is closed, or earlier if you ask. ` +
+          `${ctx.caseRetentionMonths} months after closure, your description, messages and photo are removed too; an anonymised record ` +
+          '(type of issue, area, dates and what the office did) is kept.',
       },
       {
         heading: 'Your rights',
         body:
-          'You may ask to see, correct or delete your personal information, or object to its use, under the Data Protection Act, 2019. ' +
+          'You may ask to see or correct your personal information, to have it removed from your request earlier, or object to its use, under the Data Protection Act, 2019. ' +
           'You may also complain to the Office of the Data Protection Commissioner.',
       },
       {

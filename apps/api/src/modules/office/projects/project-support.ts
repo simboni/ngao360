@@ -21,6 +21,7 @@ import {
   type PublicProjectSummary,
   VERIFICATION_STATUS_LABELS,
 } from '@ngao360/shared';
+import { isSanitizableImage } from '../../../storage/image-sanitize';
 import { OFFICE_FILE_SELECT, OFFICE_UNIT_SELECT, USER_REF, decimalToNumber, iso, isoDate, money, toOfficeFile, toOfficeLocation } from '../common';
 
 export const PROJECT_ENTITY = 'Project';
@@ -262,7 +263,7 @@ export const PUBLIC_PROJECT_SELECT = {
   },
   evidence: {
     where: { isPublic: true, verificationStatus: 'VERIFIED' },
-    select: { id: true, type: true, description: true, capturedOn: true, verificationStatus: true, storedFile: { select: { mimeType: true } } },
+    select: { id: true, type: true, description: true, capturedOn: true, verificationStatus: true, storedFile: { select: { mimeType: true, malwareScanStatus: true } } },
     orderBy: { capturedOn: 'asc' },
   },
 } satisfies Prisma.ProjectSelect;
@@ -324,11 +325,20 @@ export function toPublicProjectDetail(r: PublicProjectRow, tenantSlug: string): 
       description: e.description,
       capturedOn: isoDate(e.capturedOn),
       verificationLabel: VERIFICATION_STATUS_LABELS[e.verificationStatus],
-      filePath: /^(image\/|application\/pdf)/.test(e.storedFile.mimeType) ? `/api/public/${tenantSlug}/projects/${r.id}/evidence/${e.id}/file` : null,
+      filePath: publicEvidenceServable(e.storedFile) ? `/api/public/${tenantSlug}/projects/${r.id}/evidence/${e.id}/file` : null,
     }));
   }
   if (fields.has('mapLocation')) {
     out.mapLocation = r.latitude !== null && r.longitude !== null ? { latitude: Number(r.latitude), longitude: Number(r.longitude) } : null;
   }
   return out;
+}
+
+/**
+ * Evidence the public may receive: photographs the server can re-encode
+ * (metadata removed), and PDFs whose malware scan came back clean.
+ */
+export function publicEvidenceServable(f: { mimeType: string; malwareScanStatus: string }): boolean {
+  if (isSanitizableImage(f.mimeType)) return true;
+  return f.mimeType === 'application/pdf' && f.malwareScanStatus === 'CLEAN';
 }

@@ -350,3 +350,44 @@ export const ProjectQuerySchema = PaginationQuerySchema.extend({
     .optional(),
 });
 export type ProjectQuery = z.infer<typeof ProjectQuerySchema>;
+
+/** Project fields always shown on a published project (whatever `publicFields` says). */
+const ALWAYS_PUBLIC_PROJECT_KEYS = [
+  'name',
+  'category',
+  'geographicUnitId',
+  'countyId',
+  'constituencyId',
+  'wardId',
+  'responsibleInstitutionId',
+  'commitmentSource',
+  'commitmentSourceDetail',
+  'currency',
+] as const;
+
+/** Record fields behind each optional public section. */
+const PUBLIC_FIELD_KEYS: Record<ProjectPublicField, readonly string[]> = {
+  description: ['description'],
+  implementingAgency: ['implementingAgencyId'],
+  projectOwner: ['ownerName'],
+  fundingSource: ['fundingSource'],
+  approvedAllocation: ['approvedAllocation'],
+  contractAmount: ['contractAmount', 'contractAmountIsPublic'],
+  expenditure: ['expenditureReported', 'expenditureSource', 'expenditureAsOf'],
+  schedule: ['startDate', 'expectedCompletionDate', 'actualCompletionDate', 'delayReason'],
+  milestones: ['milestones'],
+  evidence: [],
+  mapLocation: ['latitude', 'longitude'],
+};
+
+/**
+ * The changed record fields that would alter what the public sees on a
+ * published project. Publication approval covers what the fields say, so any
+ * such change withdraws the project from the public portal until someone with
+ * `office.projects.publish` approves it again.
+ */
+export function publicFacingProjectChanges(changedKeys: readonly string[], publicFields: readonly string[]): string[] {
+  const watched = new Set<string>(ALWAYS_PUBLIC_PROJECT_KEYS);
+  for (const f of publicFields) for (const k of PUBLIC_FIELD_KEYS[f as ProjectPublicField] ?? []) watched.add(k);
+  return changedKeys.filter((k) => watched.has(k));
+}

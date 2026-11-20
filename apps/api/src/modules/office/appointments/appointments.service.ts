@@ -120,6 +120,7 @@ export class AppointmentsService {
         { path: ['privacyNoticeVersion'], message: `Expected ${CURRENT_APPOINTMENT_PRIVACY_NOTICE_VERSION}` },
       ]);
     }
+    assertEndAfterStart(dto.preferredStart, dto.preferredEnd, 'preferredEnd');
     return this.prisma.tenantTx(async (tx) => {
       await this.assertLinks(tx, auth, dto);
       const reference = await nextReference(tx, auth.tenantId, OFFICE_REFERENCE_PREFIX.APPOINTMENT);
@@ -177,6 +178,7 @@ export class AppointmentsService {
       const row = await tx.appointment.findUnique({ where: { id } });
       if (!row) throw AppException.notFound('Appointment not found');
       const { expectedVersion, ...fields } = dto;
+      assertEndAfterStart(fields.preferredStart ?? row.preferredStart?.toISOString(), fields.preferredEnd ?? row.preferredEnd?.toISOString(), 'preferredEnd');
       const patch: Prisma.AppointmentUncheckedUpdateManyInput = {
         source: fields.source,
         requesterName: fields.requesterName,
@@ -231,9 +233,8 @@ export class AppointmentsService {
       const data: Prisma.AppointmentUncheckedUpdateManyInput = { status: dto.to };
       if (dto.to === 'CONFIRMED' || dto.to === 'RESCHEDULED') {
         if (!dto.confirmedStart) throw AppException.validation('Give the confirmed start time', [{ path: ['confirmedStart'], message: 'Required' }]);
-        if (dto.confirmedEnd && dto.confirmedEnd <= dto.confirmedStart) {
-          throw AppException.validation('The end must be after the start', [{ path: ['confirmedEnd'], message: 'Invalid' }]);
-        }
+        // Compare instants: ISO strings with different offsets do not sort as text.
+        assertEndAfterStart(dto.confirmedStart, dto.confirmedEnd, 'confirmedEnd');
         data.confirmedStart = new Date(dto.confirmedStart);
         data.confirmedEnd = dto.confirmedEnd ? new Date(dto.confirmedEnd) : null;
         if (dto.venue !== undefined) data.venue = dto.venue;
@@ -353,5 +354,13 @@ export class AppointmentsService {
     if (can('COMPLETED')) out.push('complete');
     if (can('NO_SHOW')) out.push('no_show');
     return out;
+  }
+}
+
+/** 400 unless `end` is strictly after `start`, compared as instants (offsets may differ). */
+export function assertEndAfterStart(start: string | null | undefined, end: string | null | undefined, path: string): void {
+  if (!start || !end) return;
+  if (new Date(end).getTime() <= new Date(start).getTime()) {
+    throw AppException.validation('The end must be after the start', [{ path: [path], message: 'Invalid' }]);
   }
 }

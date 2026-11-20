@@ -6,7 +6,7 @@
 import { type CaseAction, type CaseDetail, type CaseStatus, type CaseTransition, canTransitionCase } from '@ngao360/shared';
 
 export interface WorkspaceAction {
-  key: 'triage' | 'assign' | 'start' | 'refer' | 'propose' | 'feedback' | 'close' | 'reopen' | 'edit' | 'evidence';
+  key: 'triage' | 'assign' | 'start' | 'refer' | 'propose' | 'feedback' | 'close' | 'reopen' | 'redact' | 'edit' | 'evidence';
   label: string;
   /** Target of a generic transition (for `start`). */
   to?: CaseTransition['to'];
@@ -43,6 +43,7 @@ export function availableCaseActions(
   }
   if (has('close')) out.push({ key: 'close', label: s === 'SUBMITTED' || s === 'TRIAGE' ? 'Close at triage' : 'Close case', primary: s === 'RESOLUTION_PROPOSED' || s === 'CITIZEN_FEEDBACK' });
   if (has('reopen') && s === 'CLOSED') out.push({ key: 'reopen', label: 'Reopen', primary: true });
+  if (has('redact') && s === 'CLOSED') out.push({ key: 'redact', label: 'Remove personal details', primary: false });
   if (has('edit') && s !== 'CLOSED') out.push({ key: 'edit', label: 'Edit details', primary: false });
   if (has('add_evidence') && s !== 'CLOSED') out.push({ key: 'evidence', label: 'Add evidence', primary: false });
   return out;

@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CASE_ACTIONS, CASE_STATUSES, type CaseAction, type CaseDetail, type CaseEvent, type CaseStatus, canTransitionCase, REFERRAL_STATUSES } from '@ngao360/shared';
+import { CASE_ACTIONS, CASE_STATUSES, type CaseAction, type CaseDetail, type CaseEvent, type CaseStatus, canTransitionCase, caseClosureAllowed, REFERRAL_STATUSES } from '@ngao360/shared';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CaseStatusBadge, SlaBadge, VisibilityTag } from '../case-badges';
 import { REFERRAL_TRANSITIONS } from '../case-dialogs';
@@ -73,6 +73,17 @@ describe('workspace actions', () => {
     const acts = availableCaseActions(detail('CLOSED', all, true), { canManage: true });
     assert.deepEqual(acts.filter((a) => a.primary).map((a) => a.key), ['reopen']);
     assert.ok(!acts.some((a) => a.key === 'edit' || a.key === 'evidence'));
+  });
+  it('offers removal of personal details only on a closed case the API allows it for', () => {
+    assert.ok(availableCaseActions(detail('CLOSED', all, true), { canManage: true }).some((a) => a.key === 'redact'));
+    assert.ok(!availableCaseActions(detail('CLOSED', all.filter((a) => a !== 'redact'), true), { canManage: true }).some((a) => a.key === 'redact'));
+    assert.ok(!availableCaseActions(detail('IN_PROGRESS', all, true), { canManage: true }).some((a) => a.key === 'redact'));
+  });
+  it('offers close on referred and in-progress cases (closures other than resolved)', () => {
+    for (const s of ['REFERRED', 'IN_PROGRESS', 'ASSIGNED', 'REOPENED'] as const) {
+      assert.ok(availableCaseActions(detail(s, all, true), { canManage: true }).some((a) => a.key === 'close'), s);
+      assert.equal(caseClosureAllowed(s, 'RESOLVED'), false);
+    }
   });
 });
 

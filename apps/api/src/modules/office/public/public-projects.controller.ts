@@ -40,8 +40,15 @@ export class PublicProjectsController {
   @PublicRateLimit('read')
   async evidenceFile(@Param() p: PublicEvidenceParamDto, @Res() res: Response): Promise<void> {
     const tenant = await this.portal.resolve(p.tenantSlug, 'projects');
-    const url = await this.projects.publicEvidenceUrl(tenant, p.id, p.evidenceId);
+    const file = await this.projects.publicEvidenceFile(tenant, p.id, p.evidenceId);
     res.setHeader('Cache-Control', 'no-store');
-    res.redirect(302, url);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (file.kind === 'redirect') {
+      res.redirect(302, file.url);
+      return;
+    }
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${file.filename}"`);
+    res.send(file.buffer);
   }
 }

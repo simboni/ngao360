@@ -166,8 +166,14 @@ export async function notifyUser(
   });
 }
 
-/** Audit events for a set of entity ids, oldest first (record history endpoints). */
-export async function auditEventsFor(tx: TenantTx, entityIds: string[]): Promise<AuditEvent[]> {
+/**
+ * Audit events for a set of entity ids, oldest first (record history endpoints).
+ * Request metadata (source IP, user agent) is shown only to holders of
+ * `audit.view`: record history is open to every viewer of the record, and IP
+ * addresses could re-identify a requester who chose not to give contact details.
+ */
+export async function auditEventsFor(tx: TenantTx, entityIds: string[], auth: Pick<AuthContext, 'permissions'>): Promise<AuditEvent[]> {
+  const showRequestMetadata = auth.permissions.has('audit.view');
   const events = await tx.auditEvent.findMany({
     where: { entityId: { in: entityIds } },
     include: { actor: USER_REF },
@@ -187,8 +193,8 @@ export async function auditEventsFor(tx: TenantTx, entityIds: string[]): Promise
     before: e.before,
     after: e.after,
     reason: e.reason,
-    sourceIp: e.sourceIp,
-    userAgent: e.userAgent,
+    sourceIp: showRequestMetadata ? e.sourceIp : null,
+    userAgent: showRequestMetadata ? e.userAgent : null,
     requestId: e.requestId,
     eventHash: e.eventHash,
     occurredAt: e.occurredAt.toISOString(),

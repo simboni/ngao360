@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { sha256Hex, type StoredFile, type StoredFilePurpose, type TenantTx } from '@ngao360/db';
 import { ALLOWED_SOURCE_MIME_TYPES, AUDIT_ACTIONS, MAX_SOURCE_FILE_BYTES } from '@ngao360/shared';
 import { AuditService } from '../audit/audit.service';
@@ -23,6 +24,8 @@ export interface StoreFileInput {
   originalFilename: string;
   purpose: StoredFilePurpose;
   pageCount?: number | null;
+  /** Anonymous public upload: the FILE_STORED audit event keeps no IP or user agent. */
+  anonymousSource?: boolean;
 }
 
 export interface StoreFileResult {
@@ -80,21 +83,25 @@ export class StorageService {
 
     const storageKey = StorageService.keyFor(input.tenantId, sha256);
     await this.driver.putIfAbsent(storageKey, input.buffer, mimeType);
-    const file = await tx.storedFile.create({
-      data: {
-        tenantId: input.tenantId,
-        sha256,
-        mimeType,
-        sizeBytes: BigInt(input.buffer.length),
-        originalFilename: input.originalFilename.slice(0, 255),
-        purpose: input.purpose,
-        storageDriver: this.driver.kind,
-        storageKey,
-        pageCount: input.pageCount ?? null,
-        malwareScanStatus: 'PENDING',
-        uploadedById: input.uploadedById,
-      },
-    });
+    // Two uploads of the same bytes at the same moment both miss the lookup above.
+    // A plain INSERT would hit the (tenant_id, sha256) unique index and abort the
+    // caller's whole transaction (409), losing e.g. a citizen's submission. ON
+    // CONFLICT DO NOTHING waits for the other transaction and then yields nothing,
+    // so the existing row is returned as a duplicate instead.
+    const id = randomUUID();
+    const inserted = await tx.$executeRaw`
+      INSERT INTO stored_files (id, tenant_id, sha256, mime_type, size_bytes, original_filename, purpose,
+                                storage_driver, storage_key, page_count, malware_scan_status, uploaded_by_id)
+      VALUES (${id}::uuid, ${input.tenantId}::uuid, ${sha256}, ${mimeType}, ${BigInt(input.buffer.length)},
+              ${input.originalFilename.slice(0, 255)}, ${input.purpose}::"StoredFilePurpose",
+              ${this.driver.kind}::"StorageDriverKind", ${storageKey}, ${input.pageCount ?? null}::int,
+              'PENDING'::"MalwareScanStatus", ${input.uploadedById}::uuid)
+      ON CONFLICT (tenant_id, sha256) DO NOTHING`;
+    if (inserted === 0) {
+      const winner = await tx.storedFile.findUniqueOrThrow({ where: { tenantId_sha256: { tenantId: input.tenantId, sha256 } } });
+      return { file: winner, duplicate: true };
+    }
+    const file = await tx.storedFile.findUniqueOrThrow({ where: { id } });
     await this.audit.record(
       {
         tenantId: input.tenantId,
@@ -103,6 +110,7 @@ export class StorageService {
         entityType: 'StoredFile',
         entityId: file.id,
         after: { sha256, mimeType, sizeBytes: input.buffer.length, purpose: input.purpose },
+        omitRequestMetadata: input.anonymousSource ?? false,
       },
       tx,
     );

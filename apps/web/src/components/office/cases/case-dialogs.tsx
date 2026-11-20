@@ -5,6 +5,7 @@ import {
   CASE_CATEGORY_LABELS,
   CASE_CLOSURE_REASON_LABELS,
   CASE_CLOSURE_REASONS,
+  caseClosureAllowed,
   CASE_PRIORITIES,
   CASE_PRIORITY_LABELS,
   CASE_STATUS_LABELS,
@@ -451,8 +452,9 @@ export function ProposeResolutionDialog({ detail, onClose, onDone }: { detail: C
 export function CloseDialog({ detail, onClose, onDone }: { detail: CaseDetail; onClose: () => void; onDone: (d: CaseDetail) => void }) {
   const { me } = useAuth();
   const triage = detail.status === 'SUBMITTED' || detail.status === 'TRIAGE';
-  const reasons = CASE_CLOSURE_REASONS.filter((r) => (triage ? r !== 'RESOLVED' : true));
-  const [closureReason, setClosureReason] = useState<CaseClosureReason | ''>(triage ? '' : 'RESOLVED');
+  // "Resolved" only after a resolution was proposed; other reasons from any open stage.
+  const reasons = CASE_CLOSURE_REASONS.filter((r) => caseClosureAllowed(detail.status, r));
+  const [closureReason, setClosureReason] = useState<CaseClosureReason | ''>(reasons.includes('RESOLVED') ? 'RESOLVED' : '');
   const [note, setNote] = useState('');
   const [publicMessage, setPublicMessage] = useState('');
   const [dupQuery, setDupQuery] = useState('');

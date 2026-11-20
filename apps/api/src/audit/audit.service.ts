@@ -15,6 +15,12 @@ export interface AuditEntry {
   before?: unknown;
   after?: unknown;
   reason?: string | null;
+  /**
+   * Do not store the request IP address and user agent with this event. Used for
+   * anonymous public-portal requests (blueprint 15.2 minimisation): the privacy
+   * notice does not cover device data and the audit stream is kept indefinitely.
+   */
+  omitRequestMetadata?: boolean;
 }
 
 /** Keys removed from before/after snapshots (hashes are computed on the redacted form). */
@@ -100,8 +106,8 @@ export class AuditService {
       before: before === null ? Prisma.JsonNull : (before as Prisma.InputJsonValue),
       after: after === null ? Prisma.JsonNull : (after as Prisma.InputJsonValue),
       reason: core.reason,
-      sourceIp: ctx?.ip ?? null,
-      userAgent: ctx?.userAgent ?? null,
+      sourceIp: entry.omitRequestMetadata ? null : (ctx?.ip ?? null),
+      userAgent: entry.omitRequestMetadata ? null : (ctx?.userAgent ?? null),
       requestId: core.requestId,
       eventHash,
       occurredAt,

@@ -295,16 +295,33 @@ export const CASE_STATUS_LABELS: Record<CaseStatus, string> = {
 export const CASE_STATUS_TRANSITIONS: Record<CaseStatus, readonly CaseStatus[]> = {
   SUBMITTED: ['TRIAGE', 'CLOSED'],
   TRIAGE: ['ASSIGNED', 'REFERRED', 'CLOSED'],
-  ASSIGNED: ['IN_PROGRESS', 'REFERRED', 'RESOLUTION_PROPOSED'],
-  IN_PROGRESS: ['REFERRED', 'RESOLUTION_PROPOSED'],
-  REFERRED: ['IN_PROGRESS', 'RESOLUTION_PROPOSED'],
+  // CLOSED from these working states is for closures without a resolution
+  // (referred out, withdrawn, duplicate, no response, out of jurisdiction,
+  // abusive): see `caseClosureAllowed`. RESOLVED needs a proposed resolution.
+  ASSIGNED: ['IN_PROGRESS', 'REFERRED', 'RESOLUTION_PROPOSED', 'CLOSED'],
+  IN_PROGRESS: ['REFERRED', 'RESOLUTION_PROPOSED', 'CLOSED'],
+  REFERRED: ['IN_PROGRESS', 'RESOLUTION_PROPOSED', 'CLOSED'],
   RESOLUTION_PROPOSED: ['CITIZEN_FEEDBACK', 'IN_PROGRESS', 'CLOSED'],
   CITIZEN_FEEDBACK: ['IN_PROGRESS', 'CLOSED'],
   CLOSED: ['REOPENED'],
-  REOPENED: ['ASSIGNED', 'IN_PROGRESS'],
+  REOPENED: ['ASSIGNED', 'IN_PROGRESS', 'CLOSED'],
 };
 export function canTransitionCase(from: CaseStatus, to: CaseStatus): boolean {
   return CASE_STATUS_TRANSITIONS[from].includes(to);
+}
+
+/** Statuses in which a resolution has been proposed (blueprint 9.2: claimed action and evidence recorded). */
+export const CASE_RESOLUTION_STATES: readonly CaseStatus[] = ['RESOLUTION_PROPOSED', 'CITIZEN_FEEDBACK'];
+
+/**
+ * Whether a case in `from` may be closed with `reason`. "Resolved" is reachable
+ * only after a resolution was proposed; the other reasons (referred out,
+ * withdrawn, duplicate, ...) close a case from any open state, so an officer
+ * never has to record a resolution the office did not provide.
+ */
+export function caseClosureAllowed(from: CaseStatus, reason: CaseClosureReason): boolean {
+  if (!canTransitionCase(from, 'CLOSED')) return false;
+  return reason !== 'RESOLVED' || CASE_RESOLUTION_STATES.includes(from);
 }
 
 /**
@@ -664,4 +681,22 @@ export function completionEvidenceSufficient(
   evidence: ReadonlyArray<{ type: ProjectEvidenceType; verificationStatus: VerificationStatus }>,
 ): boolean {
   return evidence.some((e) => e.verificationStatus === 'VERIFIED' && COMPLETION_EVIDENCE_TYPES.includes(e.type));
+}
+
+/**
+ * Stages that present a project as approved (blueprint 9.3: commitment and
+ * approved project are kept apart). Reaching any of them needs a recorded
+ * approval authority.
+ */
+export const PROJECT_STATUSES_NEEDING_APPROVAL: readonly ProjectStatus[] = [
+  'APPROVED',
+  'FUNDED',
+  'PROCUREMENT',
+  'ONGOING',
+  'DELAYED',
+  'COMPLETED',
+  'VERIFIED_COMPLETED',
+];
+export function projectStatusNeedsApproval(status: ProjectStatus): boolean {
+  return PROJECT_STATUSES_NEEDING_APPROVAL.includes(status);
 }

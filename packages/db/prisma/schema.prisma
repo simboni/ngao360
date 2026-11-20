@@ -1900,6 +1900,10 @@ model CitizenCase {
   submittedAt            DateTime           @default(now()) @map("submitted_at") @db.Timestamptz(3)
   version                Int                @default(0)
   createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Set when personal content (description, location text, requester messages and photos) was redacted.
+  /// Only the SECURITY DEFINER function ngao_redact_citizen_case may set it; it is never cleared.
+  redactedAt             DateTime?          @map("redacted_at") @db.Timestamptz(3)
+  redactedById           String?            @map("redacted_by_id") @db.Uuid
   updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant               Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
@@ -1970,6 +1974,8 @@ model CaseEvent {
   toStatus     CaseStatus?         @map("to_status")
   storedFileId String?             @map("stored_file_id") @db.Uuid
   referralId   String?             @map("referral_id") @db.Uuid
+  /// Set when the requester-supplied body and photo link were removed by a redaction.
+  redactedAt   DateTime?           @map("redacted_at") @db.Timestamptz(3)
   createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
 
   tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
@@ -2057,6 +2063,8 @@ model Project {
   completionVerifiedById        String?            @map("completion_verified_by_id") @db.Uuid
   completionVerifiedAt          DateTime?          @map("completion_verified_at") @db.Timestamptz(3)
   completionVerificationNote    String?            @map("completion_verification_note")
+  /// Evidence cited by the completion verification (re-checked when one of them is disputed).
+  completionEvidenceIds      String[]             @default([]) @map("completion_evidence_ids") @db.Uuid
   isPublic                      Boolean            @default(false) @map("is_public")
   /// Approved optional public fields (PROJECT_PUBLIC_FIELD_KEYS).
   publicFields                  String[]           @default([]) @map("public_fields")

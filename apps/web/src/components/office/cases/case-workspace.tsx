@@ -14,6 +14,7 @@ import {
   ArrowRight,
   CalendarClock,
   CheckCheck,
+  Eraser as EraserIcon,
   Lock,
   MessageSquareReply,
   Paperclip,
@@ -28,6 +29,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { type ReactNode, useState } from 'react';
+import { ReasonDialog, useHighRisk } from '@/components/admin/reauth';
 import { Notice } from '@/components/tally/notice';
 import { useAsync } from '@/components/tally/use-async';
 import { Button } from '@/components/ui/button';
@@ -59,7 +61,7 @@ import { availableCaseActions, type WorkspaceAction } from './workspace-actions'
 
 type Open =
   | { kind: 'transition'; to: CaseTransition['to'] }
-  | { kind: 'assign' | 'refer' | 'propose' | 'close' | 'reopen' | 'edit' | 'evidence' }
+  | { kind: 'assign' | 'refer' | 'propose' | 'close' | 'reopen' | 'redact' | 'edit' | 'evidence' }
   | { kind: 'referral'; referral: CaseReferral }
   | null;
 
@@ -72,6 +74,7 @@ const ACTION_ICON: Record<WorkspaceAction['key'], typeof Search> = {
   feedback: CheckCheck,
   close: Archive,
   reopen: RotateCcw,
+  redact: EraserIcon,
   edit: Pencil,
   evidence: Paperclip,
 };
@@ -81,6 +84,7 @@ export function CaseWorkspace({ id }: { id: string }) {
   const { can } = useAuth();
   const { data: detail, error, loading, reload, setData } = useAsync(() => casesApi.get(id), [id]);
   const [open, setOpen] = useState<Open>(null);
+  const highRisk = useHighRisk();
 
   if (loading && !detail) {
     return (
@@ -190,6 +194,11 @@ export function CaseWorkspace({ id }: { id: string }) {
               }
             />
             <CardBody>
+              {detail.redactedAt ? (
+                <Notice tone="info" className="mb-3" title="Personal details removed">
+                  The description, location details, requester messages and photos were removed on {formatDateTime(detail.redactedAt)}. The record of what the office did is kept.
+                </Notice>
+              ) : null}
               <p className="whitespace-pre-line break-words text-body text-ink">{detail.description}</p>
               <p className="mt-3 text-meta text-slate">Privacy notice shown: {detail.privacyNoticeVersion}</p>
             </CardBody>
@@ -364,6 +373,17 @@ export function CaseWorkspace({ id }: { id: string }) {
       {open?.kind === 'propose' ? <ProposeResolutionDialog detail={detail} onClose={() => setOpen(null)} onDone={done} /> : null}
       {open?.kind === 'close' ? <CloseDialog detail={detail} onClose={() => setOpen(null)} onDone={done} /> : null}
       {open?.kind === 'reopen' ? <ReopenDialog detail={detail} onClose={() => setOpen(null)} onDone={done} /> : null}
+      <ReasonDialog
+        open={open?.kind === 'redact'}
+        onClose={() => setOpen(null)}
+        title="Remove personal details"
+        description="For a data-subject request or when the retention period ends. The description, location details, requester messages and photos are removed and contact details are erased. The case can no longer be reopened. This cannot be undone."
+        confirmLabel="Remove"
+        tone="danger"
+        onConfirm={async (reason) => {
+          done(await highRisk(() => casesApi.redact(detail.id, { reason })));
+        }}
+      />
       {open?.kind === 'edit' ? <EditCaseDialog detail={detail} onClose={() => setOpen(null)} onDone={done} /> : null}
       {open?.kind === 'evidence' ? <EvidenceDialog detail={detail} onClose={() => setOpen(null)} onDone={refresh} /> : null}
     </>

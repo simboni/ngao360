@@ -195,7 +195,7 @@ d('Office foundation (integration)', () => {
       ids.case = c.id;
       ids.event = (await owner.caseEvent.create({ data: { tenantId, caseId: c.id, type: 'SUBMITTED', visibility: 'PUBLIC', actorType: 'REQUESTER' } })).id;
       const p = await owner.project.create({
-        data: { tenantId, reference: 'PRJ-2026-990001', name: 'Synthetic water pan', category: 'WATER_SANITATION', responsibleInstitutionId: inst.id, commitmentSource: 'COUNTY_BUDGET', createdById: users.owner, status: 'COMPLETED', completionReportedById: users.owner, completionReportedAt: new Date() },
+        data: { tenantId, reference: 'PRJ-2026-990001', name: 'Synthetic water pan', category: 'WATER_SANITATION', responsibleInstitutionId: inst.id, commitmentSource: 'COUNTY_BUDGET', approvalAuthority: 'County Assembly (synthetic)', createdById: users.owner, status: 'COMPLETED', completionReportedById: users.owner, completionReportedAt: new Date() },
       });
       ids.project = p.id;
       const file = await owner.storedFile.create({

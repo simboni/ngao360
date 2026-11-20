@@ -48,6 +48,12 @@ export const ConfigSchema = z.object({
   PUBLIC_SUBMIT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
   PUBLIC_TRACK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   PUBLIC_READ_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
+  /**
+   * Minutes between runs of the Office retention job (contact erasure and case
+   * redaction after the retention periods in the office configuration). 0 turns
+   * the in-process schedule off (tests; or when an external scheduler runs it).
+   */
+  OFFICE_RETENTION_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(360),
 
   /** Seconds a password/TOTP re-authentication stays valid for high-risk actions. */
   REAUTH_WINDOW_SECONDS: z.coerce.number().int().positive().default(600),
