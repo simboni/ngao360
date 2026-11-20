@@ -251,6 +251,10 @@ export const AUDIT_ACTIONS = {
   FORM_TEMPLATE_STATE_CHANGED: 'form_template.state_changed',
   FILE_STORED: 'file.stored',
   FILE_SOURCE_ACCESSED: 'file.source_accessed',
+  /** A result-form image was marked "not for display until redacted" (personal data on real scans). */
+  FILE_DISPLAY_HOLD_CREATED: 'file.display_hold.created',
+  /** A redacted copy was attached to a held image; viewers now get the copy, the original is unchanged. */
+  FILE_REDACTED_COPY_ATTACHED: 'file.display_hold.redacted_copy_attached',
   SUBMISSION_CREATED: 'tally.submission.created',
   SUBMISSION_STATUS_CHANGED: 'tally.submission.status_changed',
   SUBMISSION_CANONICAL_DESIGNATED: 'tally.submission.canonical_designated',

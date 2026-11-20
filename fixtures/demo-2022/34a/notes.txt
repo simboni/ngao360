@@ -1,0 +1,1 @@
+SYNTHETIC fixture directory for pnpm demo:import-34a tests.

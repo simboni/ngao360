@@ -1,0 +1,131 @@
+{
+  "warning": "SYNTHETIC TEST FIXTURE. Fictional figures for automated tests only; not real 2022 results.",
+  "configVersion": 1,
+  "dataset": {
+    "key": "bungoma-2022-test",
+    "title": "Synthetic small historical demo (tests)",
+    "electionDate": "2022-08-09",
+    "seed": "synthetic-small-v1",
+    "tenantSlug": "bungoma-2022-test",
+    "tenantName": "Synthetic historical demo (tests)",
+    "cycleName": "2022 General Election (synthetic test demo)"
+  },
+  "county": {
+    "name": {
+      "value": "Bungoma",
+      "source": "Constitution of Kenya, 2010, First Schedule (county 39)",
+      "verified": true
+    },
+    "code": {
+      "value": "039",
+      "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+      "verified": false
+    }
+  },
+  "boundaries": {
+    "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+    "verified": false
+  },
+  "codes": {
+    "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+    "verified": false
+  },
+  "constituencies": [
+    {
+      "name": "Synthetic North",
+      "code": "001",
+      "wards": [
+        {
+          "name": "Synthetic Ward One",
+          "code": "0001"
+        },
+        {
+          "name": "Synthetic Ward Two",
+          "code": "0002"
+        }
+      ]
+    },
+    {
+      "name": "Synthetic South",
+      "code": "002",
+      "wards": [
+        {
+          "name": "Synthetic Ward Three",
+          "code": "0003"
+        },
+        {
+          "name": "Synthetic Ward Four",
+          "code": "0004"
+        }
+      ]
+    }
+  ],
+  "governor": {
+    "candidates": [
+      {
+        "label": "Candidate A (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 2000,
+          "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+          "verified": false
+        }
+      },
+      {
+        "label": "Candidate B (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 1500,
+          "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+          "verified": false
+        }
+      },
+      {
+        "label": "Candidate C (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 400,
+          "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+          "verified": false
+        }
+      }
+    ],
+    "rejected": {
+      "value": 50,
+      "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+      "verified": false
+    },
+    "registeredVoters": {
+      "value": 6000,
+      "source": "UNVERIFIED PLACEHOLDER (synthetic test fixture)",
+      "verified": false
+    },
+    "constituencyTotals": null
+  },
+  "presidential": {
+    "candidates": []
+  },
+  "simulation": {
+    "registeredPerStation": {
+      "min": 150,
+      "max": 700,
+      "mean": 450
+    },
+    "streamsPerCentre": {
+      "min": 1,
+      "max": 3
+    },
+    "turnout": {
+      "min": 0.45,
+      "max": 0.92
+    },
+    "workflow": {
+      "missingShare": 0.1,
+      "awaitingReviewShare": 0.1,
+      "discrepancyStations": 1
+    }
+  }
+}

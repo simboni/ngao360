@@ -82,7 +82,8 @@ export function SourceViewer({
           const hash = await sha256Hex(blob);
           if (cancelled) return;
           objectUrl = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: file.mimeType }));
-          setLoaded({ objectUrl, remoteUrl: signed.url, integrity: hash === file.sha256 ? 'match' : 'mismatch' });
+          // A held scan is served as its redacted copy: check against the hash of the file served.
+          setLoaded({ objectUrl, remoteUrl: signed.url, integrity: hash === (signed.redactedCopy ? signed.sha256 : file.sha256) ? 'match' : 'mismatch' });
         } catch {
           // Cross-origin storage without CORS: show the signed URL directly; integrity not checked in the browser.
           if (!cancelled) setLoaded({ objectUrl: null, remoteUrl: signed.url, integrity: 'unchecked' });

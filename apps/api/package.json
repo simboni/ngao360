@@ -15,7 +15,11 @@
     "test:rehearsal": "dotenv -e ../../.env -- jest test/governor-rehearsal",
     "test:rehearsal:office": "dotenv -e ../../.env -- jest test/office-governor-rehearsal",
     "test:rehearsal:field": "dotenv -e ../../.env -- jest test/election-day-rehearsal",
-    "test:rehearsal:campaign": "dotenv -e ../../.env -- jest test/campaign-rehearsal"
+    "test:rehearsal:campaign": "dotenv -e ../../.env -- jest test/campaign-rehearsal",
+    "demo:2022-bungoma": "dotenv -e ../../.env -- node dist/demo-2022/cli/demo-2022-bungoma.js",
+    "demo:import-34a": "dotenv -e ../../.env -- node dist/demo-2022/cli/import-34a.js",
+    "demo:redact-34a": "dotenv -e ../../.env -- node dist/demo-2022/cli/redact-34a.js",
+    "test:demo-2022": "dotenv -e ../../.env -- jest test/demo-2022 test/demo-34a"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.913.0",

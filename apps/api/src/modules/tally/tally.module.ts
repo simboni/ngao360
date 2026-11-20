@@ -12,6 +12,7 @@ import { createOcrProvider, OCR_PROVIDER } from './ocr/ocr-provider';
 import { TallyOcrService } from './ocr/ocr.service';
 import { CaptureService } from './services/capture.service';
 import { DiscrepancyService } from './services/discrepancy.service';
+import { DisplayHoldsService } from './services/display-holds.service';
 import { ExportsService } from './services/exports.service';
 import { ResultsService } from './services/results.service';
 import { StageComparisonService } from './services/stage-comparison.service';
@@ -43,6 +44,7 @@ import { VerificationService } from './services/verification.service';
     TallyWorkflowService,
     ValidationService,
     TallyOcrService,
+    DisplayHoldsService,
     SubmissionsService,
     CaptureService,
     ResultsService,
@@ -51,7 +53,7 @@ import { VerificationService } from './services/verification.service';
     DiscrepancyService,
     ExportsService,
   ],
-  exports: [TallyOcrService, ResultsService],
+  exports: [TallyOcrService, ResultsService, DisplayHoldsService],
 })
 export class TallyModule implements OnModuleInit {
   constructor(

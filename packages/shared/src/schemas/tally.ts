@@ -383,7 +383,10 @@ export type SubmissionDetail = z.infer<typeof SubmissionDetailSchema>;
 export const SignedUrlResponseSchema = z.object({
   url: z.string(),
   expiresAt: IsoDateTimeSchema,
+  /** SHA-256 of the file the URL serves (the redacted copy when `redactedCopy`). */
   sha256: z.string(),
+  /** True when the original is held for personal data and a redacted copy is served instead. */
+  redactedCopy: z.boolean().optional(),
 });
 export type SignedUrlResponse = z.infer<typeof SignedUrlResponseSchema>;
 

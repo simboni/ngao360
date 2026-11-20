@@ -28,6 +28,7 @@ import { allowedActions } from '../domain/allowed-actions';
 import { supervisorViolation } from '../domain/separation-of-duties';
 import { outcomeByCell, cellKey } from '../domain/validation-engine';
 import { TallyOcrService } from '../ocr/ocr.service';
+import { DisplayHoldsService } from './display-holds.service';
 import { ENTITY } from '../tally.constants';
 import {
   iso,
@@ -70,6 +71,7 @@ export class SubmissionsService {
     private readonly workflow: TallyWorkflowService,
     private readonly validation: ValidationService,
     private readonly ocr: TallyOcrService,
+    private readonly holds: DisplayHoldsService,
   ) {}
 
   /* --------------------------------- Intake ---------------------------------- */
@@ -621,18 +623,26 @@ export class SubmissionsService {
       if (download) await this.workflow.assertSubmissionInScope(tx, auth, 'tally.source.download', id);
       const s = await tx.resultSubmission.findUnique({ where: { id }, include: { sourceFile: true } });
       if (!s) throw AppException.notFound('Submission not found');
-      const { url, expiresAt } = await this.storage.signedUrl(s.sourceFile, download ? 'attachment' : 'inline');
+      // A scan held for personal data is never served; its redacted copy is, once attached.
+      const shown = await this.holds.displayableInTx(tx, auth.tenantId, s.sourceFile.id);
+      const served = shown.file ?? s.sourceFile;
+      const { url, expiresAt } = await this.storage.signedUrl(served, download ? 'attachment' : 'inline');
       await this.audit.record(
         {
           tenantId: auth.tenantId,
           action: AUDIT_ACTIONS.FILE_SOURCE_ACCESSED,
           entityType: ENTITY.STORED_FILE,
           entityId: s.sourceFile.id,
-          after: { submissionId: s.id, disposition: download ? 'attachment' : 'inline', sha256: s.sourceFile.sha256 },
+          after: {
+            submissionId: s.id,
+            disposition: download ? 'attachment' : 'inline',
+            sha256: served.sha256,
+            ...(shown.redactedCopy ? { redactedCopy: true, servedFileId: served.id } : {}),
+          },
         },
         tx,
       );
-      return { url, expiresAt: expiresAt.toISOString(), sha256: s.sourceFile.sha256 };
+      return { url, expiresAt: expiresAt.toISOString(), sha256: served.sha256, ...(shown.redactedCopy ? { redactedCopy: true } : {}) };
     });
   }
 

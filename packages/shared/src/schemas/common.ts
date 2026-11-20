@@ -71,6 +71,8 @@ export const ERROR_CODES = {
   APPROVAL_INCOMPLETE: 'APPROVAL_INCOMPLETE',
   /** A verified finance limit setting configured to BLOCK refuses the action (details carry the findings). */
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
+  /** A source image that may show personal data is held until a redacted copy is attached. */
+  NOT_FOR_DISPLAY_UNTIL_REDACTED: 'NOT_FOR_DISPLAY_UNTIL_REDACTED',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

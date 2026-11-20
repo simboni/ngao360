@@ -27,7 +27,12 @@
     "fixtures:forms": "python3 scripts/fixtures/generate-form-images.py",
     "smoke:office": "node scripts/smoke/office-smoke.cjs",
     "smoke:field": "node scripts/smoke/field-smoke.cjs",
-    "smoke:campaign": "node scripts/smoke/campaign-smoke.cjs"
+    "smoke:campaign": "node scripts/smoke/campaign-smoke.cjs",
+    "demo:2022-bungoma": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:2022-bungoma",
+    "demo:import-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:import-34a",
+    "demo:redact-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:redact-34a",
+    "test:demo-2022": "pnpm --filter @ngao360/api run test:demo-2022",
+    "fixtures:demo-2022": "node scripts/fixtures/generate-demo-2022-fixtures.mjs"
   },
   "devDependencies": {
     "prettier": "3.6.2",
