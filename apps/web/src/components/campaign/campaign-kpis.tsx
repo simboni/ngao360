@@ -154,13 +154,13 @@ export const CAMPAIGN_KPIS: readonly CampaignKpiSpec[] = [
   {
     key: 'finance_limit_findings',
     label: 'Limit findings',
-    sublabel: 'Warnings and blocks from the configured limit settings',
+    sublabel: 'Period warnings and blocks from your limit settings (unverified settings only warn)',
     href: '/finance',
     icon: ShieldAlert,
     anyOf: ['finance.view'],
     campaign: true,
     group: 'finance',
-    source: { kind: 'ledger', pick: (s) => s.compliance.length + s.pending.flagged },
+    source: { kind: 'ledger', pick: (s) => s.compliance.length },
     attention: true,
   },
   {
