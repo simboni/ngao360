@@ -25,6 +25,8 @@ export const RoleAssignmentSchema = z.object({
   geographicUnitName: z.string().nullable(),
   pollingStationId: UuidSchema.nullable(),
   pollingStationName: z.string().nullable(),
+  /** Station code of a POLLING_STATION grant; the grant follows this code across registry versions. */
+  pollingStationCode: z.string().nullable().optional(),
   electionCycleId: UuidSchema.nullable(),
   validFrom: IsoDateTimeSchema,
   expiresAt: IsoDateTimeSchema.nullable(),

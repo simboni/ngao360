@@ -118,8 +118,20 @@ export class DashboardService {
         const stationLevel: Prisma.ResultSubmissionWhereInput = {
           AND: [{ electionCycleId: cycle.id, contestId: contest.id, formTemplate: { formLevel: 'POLLING_STATION' } }, subScope],
         };
-        const stationsWith = (where: Prisma.ResultSubmissionWhereInput) =>
-          stationWhere ? tx.pollingStation.count({ where: { AND: [stationWhere, { submissions: { some: { AND: [stationLevel, where] } } }] } }) : Promise.resolve(0);
+        // Expected stations with a matching submission, matched by station code within
+        // the cycle: forms filed against an earlier registry version still count for
+        // the same station in the approved version (station lineage, never row id).
+        const stationsWith = async (where: Prisma.ResultSubmissionWhereInput): Promise<number> => {
+          if (!stationWhere) return 0;
+          const filed = await tx.resultSubmission.findMany({
+            where: { AND: [stationLevel, where, { pollingStationId: { not: null } }] },
+            select: { pollingStation: { select: { code: true } } },
+            distinct: ['pollingStationId'],
+          });
+          const codes = [...new Set(filed.map((f) => f.pollingStation?.code).filter((c): c is string => !!c))];
+          if (codes.length === 0) return 0;
+          return tx.pollingStation.count({ where: { AND: [stationWhere, { code: { in: codes } }] } });
+        };
 
         const [received, verified, pending, rejected, duplicates, awaiting] = await Promise.all([
           stationsWith({ status: { notIn: RECEIVED_EXCLUDED } }),

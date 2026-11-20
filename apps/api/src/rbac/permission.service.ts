@@ -71,7 +71,10 @@ export class PermissionService {
         validFrom: { lte: now },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
-      include: { role: { include: { permissions: { select: { permissionKey: true } } } } },
+      include: {
+        role: { include: { permissions: { select: { permissionKey: true } } } },
+        pollingStation: { select: { code: true, electionCycleId: true } },
+      },
     });
     const grants: PermissionGrant[] = [];
     const roles = new Map<string, { id: string; key: string; name: string }>();
@@ -85,6 +88,10 @@ export class PermissionService {
           scopeType: a.scopeType,
           geographicUnitId: a.geographicUnitId,
           pollingStationId: a.pollingStationId,
+          // Station lineage: the grant follows the station code within its cycle,
+          // so a new registry version (new station rows) keeps the access.
+          pollingStationCode: a.pollingStation ? (a.pollingStationCode ?? a.pollingStation.code) : null,
+          pollingStationCycleId: a.pollingStation?.electionCycleId ?? null,
           electionCycleId: a.electionCycleId,
           expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
         });

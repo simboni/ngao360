@@ -15,7 +15,7 @@ import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { AppConfig } from '../../../config/app-config';
 import { PermissionService } from '../../../rbac/permission.service';
-import { type GeoLocation, pathToUnitIds, scopeAllows } from '../../../rbac/scope';
+import { type GeoLocation, pathToUnitIds, scopeAllows, STATION_GEO_SELECT, stationGeoLocation } from '../../../rbac/scope';
 import {
   participantsOf,
   SOD_MESSAGES,
@@ -324,21 +324,12 @@ export class TallyWorkflowService {
       where: { id: submissionId },
       select: {
         electionCycleId: true,
-        pollingStation: {
-          select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
-        },
+        pollingStation: { select: STATION_GEO_SELECT },
         geographicUnit: { select: { path: true } },
       },
     });
     if (!s) return null;
-    if (s.pollingStation) {
-      const p = s.pollingStation;
-      return {
-        unitIds: [p.countyId, p.constituencyId, p.wardId, p.pollingCentreId].filter((v): v is string => !!v),
-        stationId: p.id,
-        electionCycleId: s.electionCycleId,
-      };
-    }
+    if (s.pollingStation) return { ...stationGeoLocation(s.pollingStation), electionCycleId: s.electionCycleId };
     return {
       unitIds: s.geographicUnit ? pathToUnitIds(s.geographicUnit.path) : [],
       stationId: null,
@@ -370,13 +361,17 @@ export class TallyWorkflowService {
     if (!c) return null;
     const unitIds = new Set<string>();
     let stationId: string | null = null;
+    let stationKey: string | null = null;
     for (const l of c.links) {
       const loc = await this.submissionLocation(tx, l.submissionId);
       if (!loc) continue;
       loc.unitIds.forEach((u) => unitIds.add(u));
-      stationId = stationId ?? loc.stationId;
+      if (!stationId) {
+        stationId = loc.stationId;
+        stationKey = loc.stationKey ?? null;
+      }
     }
-    return { unitIds: [...unitIds], stationId, electionCycleId: c.electionCycleId };
+    return { unitIds: [...unitIds], stationId, stationKey, electionCycleId: c.electionCycleId };
   }
 }
 

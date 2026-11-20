@@ -1,9 +1,11 @@
 import type { Prisma } from '@ngao360/db';
-import type { PermissionScope, ScopeArea } from '../../../rbac/scope';
+import { type PermissionScope, type ScopeArea, stationKeyWhere } from '../../../rbac/scope';
 
 function areaWhere(area: ScopeArea): Prisma.ResultSubmissionWhereInput[] {
   const or: Prisma.ResultSubmissionWhereInput[] = [];
   if (area.stationIds.length > 0) or.push({ pollingStationId: { in: area.stationIds } });
+  // Station-scoped grants follow the station code across registry versions.
+  for (const w of stationKeyWhere(area.stationKeys)) or.push({ pollingStation: { is: w } });
   for (const id of area.unitIds) or.push({ geographicUnit: { path: { contains: `/${id}/` } } });
   return or;
 }

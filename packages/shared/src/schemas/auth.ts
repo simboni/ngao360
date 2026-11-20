@@ -18,8 +18,15 @@ export const PermissionGrantSchema = z.object({
   scopeType: ScopeTypeSchema,
   /** Set when scopeType is COUNTY | CONSTITUENCY | WARD | POLLING_CENTRE. */
   geographicUnitId: UuidSchema.nullable(),
-  /** Set when scopeType is POLLING_STATION. */
+  /** Set when scopeType is POLLING_STATION: the station row the grant was made on. */
   pollingStationId: UuidSchema.nullable(),
+  /**
+   * Station lineage of a POLLING_STATION grant: the station code and the
+   * election cycle of the granted station. Grants match every registry version
+   * of the cycle by code, so an amended registry keeps station-scoped access.
+   */
+  pollingStationCode: z.string().nullable().optional(),
+  pollingStationCycleId: UuidSchema.nullable().optional(),
   electionCycleId: UuidSchema.nullable(),
   expiresAt: IsoDateTimeSchema.nullable(),
 });

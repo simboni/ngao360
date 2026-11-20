@@ -2,7 +2,7 @@ import type { PermissionGrant, PermissionKey } from '@ngao360/shared';
 import type { AuthContext } from '../auth/auth.types';
 import { assertGrantorCovers } from '../modules/admin/access-policy';
 import { submissionScopeWhere } from '../modules/tally/services/scope-where';
-import { geographyOf, scopeAllows, scopeFromGrants, stationScopeWhere } from './scope';
+import { geographyOf, scopeAllows, scopeFromGrants, stationLineageKey, stationScopeWhere } from './scope';
 
 const COUNTY = '11111111-1111-4111-8111-111111111111';
 const WARD_X = '22222222-2222-4222-8222-222222222222';
@@ -101,5 +101,29 @@ describe('grantor scope (roles.assign)', () => {
   it('an organisation-wide administrator can grant anywhere', () => {
     const owner = auth([grant('roles.assign')]);
     expect(() => assertGrantorCovers(owner, null, null, ['tally.approve'])).not.toThrow();
+  });
+});
+
+describe('station lineage (station-scoped grants keyed by cycle + code)', () => {
+  const STATION_V1 = '44444444-4444-4444-8444-444444444444';
+  const STATION_V2 = '55555555-5555-4555-8555-555555555555';
+  const g = grant('tally.view', {
+    scopeType: 'POLLING_STATION',
+    pollingStationId: STATION_V1,
+    pollingStationCode: '039001000100101',
+    pollingStationCycleId: CYCLE_A,
+  });
+
+  it('matches the same code in another registry version of the cycle, not other cycles or codes', () => {
+    const s = scopeFromGrants([g], 'tally.view');
+    expect(scopeAllows(s, { unitIds: [], stationId: STATION_V2, stationKey: stationLineageKey(CYCLE_A, '039001000100101') })).toBe(true);
+    expect(scopeAllows(s, { unitIds: [], stationId: STATION_V2, stationKey: stationLineageKey(CYCLE_B, '039001000100101') })).toBe(false);
+    expect(scopeAllows(s, { unitIds: [], stationId: STATION_V2, stationKey: stationLineageKey(CYCLE_A, '039001000100102') })).toBe(false);
+    expect(scopeAllows(s, { unitIds: [], stationId: STATION_V1 })).toBe(true);
+  });
+
+  it('station list filters include the code within the granted station cycle', () => {
+    const where = stationScopeWhere(scopeFromGrants([g], 'tally.view'));
+    expect(where?.OR).toEqual(expect.arrayContaining([{ electionCycleId: CYCLE_A, code: { in: ['039001000100101'] } }]));
   });
 });

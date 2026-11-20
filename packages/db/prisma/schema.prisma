@@ -788,6 +788,9 @@ model RoleAssignment {
   scopeType        ScopeType @default(ORGANISATION) @map("scope_type")
   geographicUnitId String?   @map("geographic_unit_id") @db.Uuid
   pollingStationId String?   @map("polling_station_id") @db.Uuid
+  /// Station lineage key of a POLLING_STATION grant (filled from polling_station_id by a trigger).
+  /// Grants match every registry version of the station's cycle by this code.
+  pollingStationCode String? @map("polling_station_code")
   electionCycleId  String?   @map("election_cycle_id") @db.Uuid
   validFrom        DateTime  @default(now()) @map("valid_from") @db.Timestamptz(3)
   expiresAt        DateTime? @map("expires_at") @db.Timestamptz(3)
@@ -809,6 +812,7 @@ model RoleAssignment {
 
   @@index([tenantId, userId])
   @@index([tenantId, roleId])
+  @@index([tenantId, pollingStationCode])
   @@map("role_assignments")
 }
 
@@ -1083,6 +1087,7 @@ model PollingStation {
   incidents       Incident[]
 
   @@unique([tenantId, registryVersionId, code])
+  @@index([tenantId, electionCycleId, code])
   @@index([tenantId, electionCycleId, countyId])
   @@index([tenantId, electionCycleId, constituencyId])
   @@index([tenantId, electionCycleId, wardId])

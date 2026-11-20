@@ -21,7 +21,7 @@ import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { PermissionService } from '../../../rbac/permission.service';
-import { pathToUnitIds } from '../../../rbac/scope';
+import { pathToUnitIds, stationGeoLocation } from '../../../rbac/scope';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { StorageService } from '../../../storage/storage.service';
 import { allowedActions } from '../domain/allowed-actions';
@@ -177,6 +177,7 @@ export class SubmissionsService {
     const metadataIssues: string[] = [];
     let geographicUnitId: string | null = null;
     let registryVersionId: string | null = null;
+    let stationCode: string | null = null;
     const approvedRegistry = await tx.registryVersion.findFirst({
       where: { electionCycleId: cycle.id, status: 'APPROVED' },
       select: { id: true, version: true },
@@ -184,10 +185,8 @@ export class SubmissionsService {
     if (meta.pollingStationId) {
       const st = await tx.pollingStation.findUnique({ where: { id: meta.pollingStationId } });
       if (!st) throw AppException.validation('Unknown polling station', [{ path: 'pollingStationId', message: 'Not found' }]);
-      this.workflow.assertInScope(auth, 'tally.submit', {
-        unitIds: [st.countyId, st.constituencyId, st.wardId, st.pollingCentreId].filter((v): v is string => !!v),
-        stationId: st.id,
-      });
+      this.workflow.assertInScope(auth, 'tally.submit', stationGeoLocation(st));
+      stationCode = st.code;
       geographicUnitId = st.geographicUnitId;
       registryVersionId = st.registryVersionId;
       if (st.electionCycleId !== cycle.id) metadataIssues.push('The polling station belongs to a different election cycle.');
@@ -258,8 +257,12 @@ export class SubmissionsService {
     );
 
     // Duplicate detection (blueprint 8.4): same hash, same location + form, same serial.
-    const locationWhere = meta.pollingStationId
-      ? { pollingStationId: meta.pollingStationId }
+    // Same station = same station code in this cycle (any registry version), so
+    // a form filed against an amended registry still meets earlier filings.
+    const locationWhere: Prisma.ResultSubmissionWhereInput = meta.pollingStationId
+      ? stationCode
+        ? { pollingStation: { is: { electionCycleId: cycle.id, code: stationCode } } }
+        : { pollingStationId: meta.pollingStationId }
       : { tallyCentreId: meta.tallyCentreId };
     const matches = new Map<string, { id: string; isCanonical: boolean; createdAt: Date; reasons: Set<string> }>();
     const addMatches = (rows: Array<{ id: string; isCanonical: boolean; createdAt: Date }>, reason: string) => {
@@ -557,7 +560,7 @@ export class SubmissionsService {
         id: { not: s.id },
         contestId: s.contestId,
         formNumber: s.formNumber,
-        ...(s.pollingStationId ? { pollingStationId: s.pollingStationId } : { tallyCentreId: s.tallyCentreId }),
+        ...(await sameLocationWhere(tx, s)),
       },
       select: { id: true },
     });
@@ -749,7 +752,7 @@ export class SubmissionsService {
           {
             contestId: s.contestId,
             formNumber: s.formNumber,
-            ...(s.pollingStationId ? { pollingStationId: s.pollingStationId } : { tallyCentreId: s.tallyCentreId }),
+            ...(await sameLocationWhere(tx, s)),
           },
           ...(s.duplicateOfId ? [{ id: s.duplicateOfId }] : []),
           { duplicateOfId: s.id },
@@ -849,4 +852,20 @@ export class SubmissionsService {
       }));
     });
   }
+}
+
+/**
+ * Records at the same location as `s`: for a station form, the same station
+ * code in the same election cycle (any registry version, so an amended
+ * registry never splits a duplicate group); otherwise the same tally centre.
+ */
+async function sameLocationWhere(
+  tx: TenantTx,
+  s: { pollingStationId: string | null; tallyCentreId: string | null; electionCycleId: string },
+): Promise<Prisma.ResultSubmissionWhereInput> {
+  if (!s.pollingStationId) return { tallyCentreId: s.tallyCentreId };
+  const st = await tx.pollingStation.findUnique({ where: { id: s.pollingStationId }, select: { code: true } });
+  return st
+    ? { pollingStation: { is: { electionCycleId: s.electionCycleId, code: st.code } } }
+    : { pollingStationId: s.pollingStationId };
 }

@@ -15,7 +15,7 @@ import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionService } from '../../rbac/permission.service';
-import { geographyOf, type PermissionScope, pathToUnitIds } from '../../rbac/scope';
+import { geographyOf, type PermissionScope, pathToUnitIds, stationKeyWhere } from '../../rbac/scope';
 import { dateOnly, pageArgs, sortArgs, toGeographicUnit } from './reference.common';
 
 const WITH_CHILD_COUNT = { _count: { select: { children: true } } } as const;
@@ -33,9 +33,9 @@ export async function unitScopeWhere(tx: TenantTx, full: PermissionScope): Promi
     const granted = await tx.geographicUnit.findMany({ where: { id: { in: scope.unitIds } }, select: { path: true } });
     for (const g of granted) for (const id of pathToUnitIds(g.path)) ancestorIds.add(id);
   }
-  if (scope.stationIds.length > 0) {
+  if (scope.stationIds.length > 0 || scope.stationKeys.length > 0) {
     const stations = await tx.pollingStation.findMany({
-      where: { id: { in: scope.stationIds } },
+      where: { OR: [{ id: { in: scope.stationIds } }, ...stationKeyWhere(scope.stationKeys)] },
       select: { countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
     });
     for (const s of stations) {

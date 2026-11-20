@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
-import { type GeoLocation, pathToUnitIds } from './scope';
+import { type GeoLocation, pathToUnitIds, STATION_GEO_SELECT, stationGeoLocation } from './scope';
 
 export type GeoResolver = (tx: TenantTx, id: string) => Promise<GeoLocation | null>;
 
@@ -38,14 +38,7 @@ export class GeoScopeService {
 
   /** Helper for resolvers of records that reference a polling station. */
   async stationLocation(tx: TenantTx, stationId: string): Promise<GeoLocation | null> {
-    const s = await tx.pollingStation.findUnique({
-      where: { id: stationId },
-      select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
-    });
-    if (!s) return null;
-    return {
-      unitIds: [s.countyId, s.constituencyId, s.wardId, s.pollingCentreId].filter((v): v is string => !!v),
-      stationId: s.id,
-    };
+    const s = await tx.pollingStation.findUnique({ where: { id: stationId }, select: STATION_GEO_SELECT });
+    return s ? stationGeoLocation(s) : null;
   }
 }

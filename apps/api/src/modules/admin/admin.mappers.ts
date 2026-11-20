@@ -24,6 +24,7 @@ export function toAssignment(a: AssignmentRow): RoleAssignment {
     geographicUnitName: a.geographicUnit?.officialName ?? null,
     pollingStationId: a.pollingStationId,
     pollingStationName: a.pollingStation?.name ?? null,
+    pollingStationCode: a.pollingStationCode,
     electionCycleId: a.electionCycleId,
     validFrom: a.validFrom.toISOString(),
     expiresAt: iso(a.expiresAt),

@@ -4,7 +4,7 @@ import { ACCESS_ADMIN_PERMISSIONS, findRoleSodConflicts, TALLY_VALUE_WRITE_PERMI
 import { HttpStatus } from '@nestjs/common';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
-import { type GeoLocation, pathToUnitIds, scopeAllows, scopeFromGrants } from '../../rbac/scope';
+import { type GeoLocation, pathToUnitIds, scopeAllows, scopeFromGrants, STATION_GEO_SELECT, stationGeoLocation } from '../../rbac/scope';
 import { activeAssignmentWhere } from './admin.mappers';
 
 export interface AssignmentRequest {
@@ -62,15 +62,9 @@ export async function assertAssignmentAllowed(
 
   let target: GeoLocation | null = null;
   if (req.scopeType === 'POLLING_STATION') {
-    const st = await tx.pollingStation.findUnique({
-      where: { id: req.pollingStationId! },
-      select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
-    });
+    const st = await tx.pollingStation.findUnique({ where: { id: req.pollingStationId! }, select: STATION_GEO_SELECT });
     if (!st) throw AppException.validation('The polling station does not exist', [{ path: 'pollingStationId', message: 'Not found' }]);
-    target = {
-      unitIds: [st.countyId, st.constituencyId, st.wardId, st.pollingCentreId].filter((v): v is string => !!v),
-      stationId: st.id,
-    };
+    target = stationGeoLocation(st);
   } else if (req.scopeType !== 'ORGANISATION') {
     const unit = await tx.geographicUnit.findUnique({ where: { id: req.geographicUnitId! }, select: { type: true, path: true } });
     if (!unit) throw AppException.validation('The geographic unit does not exist', [{ path: 'geographicUnitId', message: 'Not found' }]);
@@ -159,12 +153,9 @@ export async function assignmentTarget(
 ): Promise<GeoLocation | null> {
   if (a.scopeType === 'ORGANISATION') return null;
   if (a.scopeType === 'POLLING_STATION' && a.pollingStationId) {
-    const st = await tx.pollingStation.findUnique({
-      where: { id: a.pollingStationId },
-      select: { id: true, countyId: true, constituencyId: true, wardId: true, pollingCentreId: true },
-    });
+    const st = await tx.pollingStation.findUnique({ where: { id: a.pollingStationId }, select: STATION_GEO_SELECT });
     if (!st) return { unitIds: [], stationId: a.pollingStationId };
-    return { unitIds: [st.countyId, st.constituencyId, st.wardId, st.pollingCentreId].filter((v): v is string => !!v), stationId: st.id };
+    return stationGeoLocation(st);
   }
   const unit = a.geographicUnitId ? await tx.geographicUnit.findUnique({ where: { id: a.geographicUnitId }, select: { path: true } }) : null;
   return { unitIds: unit ? pathToUnitIds(unit.path) : a.geographicUnitId ? [a.geographicUnitId] : [], stationId: null };
