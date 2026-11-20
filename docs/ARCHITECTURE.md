@@ -169,3 +169,12 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 
 Staging and production use separate compose projects and env files. Secrets are supplied through
 environment files that are never committed.
+
+## 12. Open items for module work
+
+- **Presidential templates.** [DATA_SOURCES_2022.md](./DATA_SOURCES_2022.md) recommends a real 2022 presidential layer (34A/34B/34C) for the pilot county. Add 34A/34B/34C templates to the seed under `packages/db/src/seed/` (reference module). A presidential contest uses `geographicUnitId = null`.
+- **Station codes.** 2022 station codes are 15 digits (county 3 + constituency 3 + ward 4 + centre 3 + station 2; this split is inferred). `PollingStation.code` is a free string, and the registry import should accept that format.
+- **Historical data.** Import 2022 data into a separate cycle with `dataProvenance = HISTORICAL`. Simulated governor forms belong in a `SYNTHETIC` cycle. Every screen and export must show the provenance label.
+- **Personal data in scans.** Scanned forms show presiding officers' and agents' names and signatures. Image viewers for demos should support blurring or redaction overlays. Never alter the stored original.
+- **OCR.** There is no OCR engine yet. The worker is a stub that sets `NOT_CONFIGURED`. RESEARCH.md recommends PaddleOCR or docTR with field-box crops plus a digit classifier.
+- **Offline capture.** The PWA has a shell only. The encrypted IndexedDB draft queue with idempotency keys is not built yet (blueprint 13.4).
