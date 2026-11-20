@@ -15,3 +15,4 @@ export * from './modules';
 export * from './office';
 export * from './field';
 export * from './campaign';
+export * from './demo-2022';

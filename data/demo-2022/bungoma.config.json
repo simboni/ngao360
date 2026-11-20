@@ -1,0 +1,348 @@
+{
+  "warning": "UNVERIFIED PLACEHOLDERS. Every figure marked verified:false in this file is a placeholder, NOT a real 2022 result. Station-level figures are always SIMULATED. Do not present this dataset as real or official results. Plug in verified gazetted totals with their source (docs/DEMO_2022.md) before any demo that shows totals.",
+  "configVersion": 1,
+  "dataset": {
+    "key": "bungoma-2022",
+    "title": "Bungoma County, 2022 General Election (historical demo)",
+    "electionDate": "2022-08-09",
+    "seed": "bungoma-2022-demo-v1",
+    "tenantSlug": "bungoma-2022-demo",
+    "tenantName": "Bungoma 2022 historical demo (simulated data)",
+    "cycleName": "2022 General Election (Bungoma historical demo)"
+  },
+  "county": {
+    "name": {
+      "value": "Bungoma",
+      "source": "Constitution of Kenya, 2010, First Schedule (county 39)",
+      "verified": true
+    },
+    "code": {
+      "value": "039",
+      "source": "County number from the Constitution, First Schedule. Its use as the first three digits of IEBC polling-station codes is INFERRED from 34A file names (docs/DATA_SOURCES_2022.md).",
+      "verified": false
+    }
+  },
+  "boundaries": {
+    "source": "Constituency and ward names as commonly published for the 2012 IEBC boundaries (9 constituencies, 45 wards). Check against the IEBC boundaries list or github.com/Armani-T/2022-iebc-boundaries (MIT) before relying on them.",
+    "verified": false
+  },
+  "codes": {
+    "source": "INFERRED placeholder codes. Constituency (3 digits) and ward (4 digits) codes are numbered in list order; they are NOT the IEBC codes. Replace them with the codes read from the 34A file names (docs/DEMO_2022.md).",
+    "verified": false
+  },
+  "constituencies": [
+    {
+      "name": "Mt. Elgon",
+      "code": "001",
+      "wards": [
+        {
+          "name": "Cheptais",
+          "code": "0001"
+        },
+        {
+          "name": "Chesikaki",
+          "code": "0002"
+        },
+        {
+          "name": "Chepyuk",
+          "code": "0003"
+        },
+        {
+          "name": "Kapkateny",
+          "code": "0004"
+        },
+        {
+          "name": "Kaptama",
+          "code": "0005"
+        },
+        {
+          "name": "Elgon",
+          "code": "0006"
+        }
+      ]
+    },
+    {
+      "name": "Sirisia",
+      "code": "002",
+      "wards": [
+        {
+          "name": "Namwela",
+          "code": "0007"
+        },
+        {
+          "name": "Malakisi/South Kulisiru",
+          "code": "0008"
+        },
+        {
+          "name": "Lwandanyi",
+          "code": "0009"
+        }
+      ]
+    },
+    {
+      "name": "Kabuchai",
+      "code": "003",
+      "wards": [
+        {
+          "name": "Kabuchai/Chwele",
+          "code": "0010"
+        },
+        {
+          "name": "West Nalondo",
+          "code": "0011"
+        },
+        {
+          "name": "Bwake/Luuya",
+          "code": "0012"
+        },
+        {
+          "name": "Mukuyuni",
+          "code": "0013"
+        }
+      ]
+    },
+    {
+      "name": "Bumula",
+      "code": "004",
+      "wards": [
+        {
+          "name": "South Bukusu",
+          "code": "0014"
+        },
+        {
+          "name": "Bumula",
+          "code": "0015"
+        },
+        {
+          "name": "Khasoko",
+          "code": "0016"
+        },
+        {
+          "name": "Kabula",
+          "code": "0017"
+        },
+        {
+          "name": "Kimaeti",
+          "code": "0018"
+        },
+        {
+          "name": "West Bukusu",
+          "code": "0019"
+        },
+        {
+          "name": "Siboti",
+          "code": "0020"
+        }
+      ]
+    },
+    {
+      "name": "Kanduyi",
+      "code": "005",
+      "wards": [
+        {
+          "name": "Bukembe West",
+          "code": "0021"
+        },
+        {
+          "name": "Bukembe East",
+          "code": "0022"
+        },
+        {
+          "name": "Township",
+          "code": "0023"
+        },
+        {
+          "name": "Khalaba",
+          "code": "0024"
+        },
+        {
+          "name": "Musikoma",
+          "code": "0025"
+        },
+        {
+          "name": "East Sang'alo",
+          "code": "0026"
+        },
+        {
+          "name": "Marakaru/Tuuti",
+          "code": "0027"
+        },
+        {
+          "name": "West Sang'alo",
+          "code": "0028"
+        }
+      ]
+    },
+    {
+      "name": "Webuye East",
+      "code": "006",
+      "wards": [
+        {
+          "name": "Mihuu",
+          "code": "0029"
+        },
+        {
+          "name": "Ndivisi",
+          "code": "0030"
+        },
+        {
+          "name": "Maraka",
+          "code": "0031"
+        }
+      ]
+    },
+    {
+      "name": "Webuye West",
+      "code": "007",
+      "wards": [
+        {
+          "name": "Misikhu",
+          "code": "0032"
+        },
+        {
+          "name": "Sitikho",
+          "code": "0033"
+        },
+        {
+          "name": "Matulo",
+          "code": "0034"
+        },
+        {
+          "name": "Bokoli",
+          "code": "0035"
+        }
+      ]
+    },
+    {
+      "name": "Kimilili",
+      "code": "008",
+      "wards": [
+        {
+          "name": "Kibingei",
+          "code": "0036"
+        },
+        {
+          "name": "Kimilili",
+          "code": "0037"
+        },
+        {
+          "name": "Maeni",
+          "code": "0038"
+        },
+        {
+          "name": "Kamukuywa",
+          "code": "0039"
+        }
+      ]
+    },
+    {
+      "name": "Tongaren",
+      "code": "009",
+      "wards": [
+        {
+          "name": "Mbakalo",
+          "code": "0040"
+        },
+        {
+          "name": "Naitiri/Kabuyefwe",
+          "code": "0041"
+        },
+        {
+          "name": "Milima",
+          "code": "0042"
+        },
+        {
+          "name": "Ndalu/Tabani",
+          "code": "0043"
+        },
+        {
+          "name": "Tongaren",
+          "code": "0044"
+        },
+        {
+          "name": "Soysambu/Mitua",
+          "code": "0045"
+        }
+      ]
+    }
+  ],
+  "governor": {
+    "candidates": [
+      {
+        "label": "Candidate A (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 200000,
+          "source": "UNVERIFIED PLACEHOLDER: replace with the gazetted figure and its source (docs/DEMO_2022.md).",
+          "verified": false
+        }
+      },
+      {
+        "label": "Candidate B (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 160000,
+          "source": "UNVERIFIED PLACEHOLDER: replace with the gazetted figure and its source (docs/DEMO_2022.md).",
+          "verified": false
+        }
+      },
+      {
+        "label": "Candidate C (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 40000,
+          "source": "UNVERIFIED PLACEHOLDER: replace with the gazetted figure and its source (docs/DEMO_2022.md).",
+          "verified": false
+        }
+      },
+      {
+        "label": "Candidate D (simulated)",
+        "name": null,
+        "partyLabel": null,
+        "votes": {
+          "value": 20000,
+          "source": "UNVERIFIED PLACEHOLDER: replace with the gazetted figure and its source (docs/DEMO_2022.md).",
+          "verified": false
+        }
+      }
+    ],
+    "rejected": {
+      "value": 5000,
+      "source": "UNVERIFIED PLACEHOLDER: replace with the gazetted figure and its source (docs/DEMO_2022.md).",
+      "verified": false
+    },
+    "registeredVoters": {
+      "value": 600000,
+      "source": "UNVERIFIED PLACEHOLDER: replace with the IEBC 2022 register figure for Bungoma and its source (docs/DEMO_2022.md).",
+      "verified": false
+    },
+    "constituencyTotals": null
+  },
+  "presidential": {
+    "note": "Presidential (34A) scans are imported from local files with pnpm demo:import-34a. Candidate references are added by the operator from the published ballot (verified) before capture; none are configured here.",
+    "candidates": []
+  },
+  "simulation": {
+    "registeredPerStation": {
+      "min": 150,
+      "max": 700,
+      "mean": 520
+    },
+    "streamsPerCentre": {
+      "min": 1,
+      "max": 4
+    },
+    "turnout": {
+      "min": 0.45,
+      "max": 0.92
+    },
+    "workflow": {
+      "missingShare": 0.05,
+      "awaitingReviewShare": 0.07,
+      "discrepancyStations": 2
+    }
+  }
+}
