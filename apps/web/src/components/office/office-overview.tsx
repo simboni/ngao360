@@ -1,7 +1,7 @@
 'use client';
 
 import type { PermissionKey } from '@ngao360/shared';
-import { CalendarClock, FolderKanban, LifeBuoy, type LucideIcon, Mail } from 'lucide-react';
+import { CalendarClock, FolderKanban, LifeBuoy, type LucideIcon, Mail, ScrollText, Users } from 'lucide-react';
 import Link from 'next/link';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -24,15 +24,21 @@ const SCREENS: Array<{ label: string; description: string; href: string; icon: L
   { label: 'Projects', description: 'Track commitments and verify completion', href: '/office/projects', icon: FolderKanban, anyOf: ['office.projects.view'] },
 ];
 
+const ADMIN_LINKS: Array<{ label: string; description: string; href: string; icon: LucideIcon; anyOf: PermissionKey[] }> = [
+  { label: 'Users', description: 'Invite staff and manage access', href: '/admin/users', icon: Users, anyOf: ['users.view'] },
+  { label: 'Audit log', description: 'Every recorded change, append-only', href: '/admin/audit', icon: ScrollText, anyOf: ['audit.view'] },
+];
+
 /**
- * Dashboard (S04) for Office staff who do not hold `dashboard.view`: the
- * Office figures they may see and links to their screens. Hidden data stays
+ * Dashboard (S04) for an office without NGAO TALLY, or Office staff who do
+ * not hold `dashboard.view`: the Office figures they may see and links to
+ * their screens. Hidden data stays
  * hidden: every figure is scoped server-side.
  */
 export function OfficeOverview() {
   const { me, can, moduleEnabled } = useAuth();
   const firstName = me?.user.displayName.split(' ')[0] ?? '';
-  const screens = moduleEnabled('office') ? SCREENS.filter((s) => s.anyOf.some((p) => can(p))) : [];
+  const screens = [...(moduleEnabled('office') ? SCREENS : []), ...ADMIN_LINKS].filter((s) => s.anyOf.some((p) => can(p)));
   return (
     <>
       <PageHeader title={`Welcome, ${firstName}`} description="Your Office work at a glance." breadcrumbs={[{ label: 'Overview' }, { label: 'Dashboard' }]} />

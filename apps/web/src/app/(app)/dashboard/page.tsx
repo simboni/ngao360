@@ -6,16 +6,19 @@ import { RequirePagePermission } from '@/components/ui/permission-gate';
 import { useAuth } from '@/lib/auth-context';
 
 /**
- * S04 Executive / Tally Command Centre. API §7 GET /dashboard/summary.
- * Office staff without `dashboard.view` get the Office overview (office KPIs
- * and their screens); `dashboard.view` holders see the office KPIs on top of
- * the command centre when the module is on.
+ * S04 dashboard. API §7 GET /dashboard/summary for the executive / tally
+ * command centre, which also shows the Office KPIs when the office module is
+ * on. An office without NGAO TALLY (and Office staff without `dashboard.view`)
+ * gets the Office overview instead: the office KPIs the caller may see and
+ * their screens, with no tally or campaign figures (blueprint 15.2).
  */
 export default function DashboardPage() {
-  const { can } = useAuth();
+  const { can, moduleEnabled } = useAuth();
+  const officeStaff = moduleEnabled('office') && OFFICE_DASHBOARD_PERMISSIONS.some((p) => can(p));
+  const officeOnly = officeStaff && (!can('dashboard.view') || !moduleEnabled('tally'));
   return (
     <RequirePagePermission anyOf={['dashboard.view', ...OFFICE_DASHBOARD_PERMISSIONS]}>
-      {can('dashboard.view') ? <DashboardView /> : <OfficeOverview />}
+      {officeOnly ? <OfficeOverview /> : <DashboardView />}
     </RequirePagePermission>
   );
 }

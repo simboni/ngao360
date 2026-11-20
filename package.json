@@ -20,8 +20,10 @@
     "db:reset": "pnpm --filter @ngao360/db run reset",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css,yml,yaml}\"",
     "test:rehearsal": "pnpm --filter @ngao360/api run test:rehearsal",
+    "test:rehearsal:office": "pnpm --filter @ngao360/api run test:rehearsal:office",
     "smoke:web": "node scripts/smoke/web-smoke.cjs",
-    "fixtures:forms": "python3 scripts/fixtures/generate-form-images.py"
+    "fixtures:forms": "python3 scripts/fixtures/generate-form-images.py",
+    "smoke:office": "node scripts/smoke/office-smoke.cjs"
   },
   "devDependencies": {
     "prettier": "3.6.2",
