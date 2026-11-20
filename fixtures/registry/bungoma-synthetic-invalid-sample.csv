@@ -1,0 +1,10 @@
+county_code,county_name,constituency_code,constituency_name,ward_code,ward_name,centre_code,centre_name,station_code,station_name,registered_voters,stream_number,latitude,longitude,location_source
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-C01-W01-P01-S01,Synthetic Primary School C111 — Stream 1,395,1,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-C01-W01-P01-S02,Synthetic Primary School C111 — Stream 2,386,2,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P02,Synthetic Primary School C112,SYN-C01-W01-P02-S01,Synthetic Primary School C112 — Stream 1,443,1,,,SYNTHETIC (no real location)
+048,Atlantis,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-BAD-001,Bad county row,400,1,,,SYNTHETIC (no real location)
+039,Busia,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-BAD-002,Wrong county name,400,1,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-C01-W01-P01-S01,Synthetic Primary School C111 — Stream 1,395,1,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-BAD-003,Bad voters,many,1,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C02,Synthetic Constituency South,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-BAD-004,Inconsistent parent,400,1,,,SYNTHETIC (no real location)
+039,Bungoma,SYN-C01,Synthetic Constituency North,SYN-C01-W01,North Ward 1 (synthetic),SYN-C01-W01-P01,Synthetic Primary School C111,SYN-OK-005,No voter figure,,1,,,SYNTHETIC (no real location)

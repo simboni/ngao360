@@ -2,28 +2,44 @@
 /**
  * NGAO360 seed entrypoint. ALL DATA IS SYNTHETIC: organisations, people,
  * candidates, stations and figures are invented for rehearsal and testing.
- * No real voter data is ever seeded.
+ * Only the 47 county codes and names are real public reference data. No real
+ * voter data is ever seeded.
  *
  * Runs as the schema owner (DATABASE_URL), so RLS is bypassed. Idempotent.
  *
  *   pnpm db:seed
  *
- * Module agents may extend this by adding files under src/seed/ and calling them
- * from main() below (keep each module's seed in its own file).
+ * Environment:
+ *   SEED_DEMO_PASSWORD  password for every demo user (required when NODE_ENV=production)
+ *   SEED_DEMO_MFA       'disabled' (default): demo users have no authenticator; users whose
+ *                       role requires MFA enrol their own at first sign-in.
+ *                       'preenrolled': development only; privileged demo users share
+ *                       the fixed TOTP secret below so walkthroughs can skip enrolment.
  */
 import argon2 from 'argon2';
 import { PrismaClient, type ScopeType } from '@prisma/client';
 import { SYSTEM_ROLES, type SystemRoleKey } from '@ngao360/shared';
 import { provisionSystemRoles, syncPermissionCatalogue } from '../provisioning';
 import { sealSecret } from '../security';
-import { GOVERNOR_TEMPLATES } from './form-templates';
+import { seedFormTemplates } from './form-templates';
+import { approveSeedRegistry, seedReferenceData } from './reference-data';
 
 const prisma = new PrismaClient();
 
-/** Demo-only TOTP secret for privileged demo users (never used outside development). */
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+/** Demo-only TOTP secret, used only with SEED_DEMO_MFA=preenrolled outside production. */
 export const DEMO_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
-const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD ?? 'Demo-Password-2027';
+const DEMO_TOTP_LABEL = 'Demo authenticator (synthetic)';
 const MFA_KEY = process.env.MFA_ENCRYPTION_KEY;
+const DEMO_MFA_MODE = (process.env.SEED_DEMO_MFA ?? 'disabled').toLowerCase();
+
+function demoPassword(): string {
+  const fromEnv = process.env.SEED_DEMO_PASSWORD;
+  if (fromEnv && fromEnv.length >= 12) return fromEnv;
+  if (IS_PRODUCTION) throw new Error('Set SEED_DEMO_PASSWORD (at least 12 characters) to seed demo users in production');
+  if (fromEnv) console.warn('  SEED_DEMO_PASSWORD is shorter than 12 characters; using it anyway (development only)');
+  return fromEnv ?? 'Demo-Password-2027';
+}
 
 interface DemoUser {
   email: string;
@@ -35,7 +51,7 @@ async function upsertTenant(slug: string, name: string, type: 'PLATFORM' | 'CAMP
   return prisma.tenant.upsert({
     where: { slug },
     create: { slug, name, displayName: name, type },
-    update: { name, type },
+    update: { name, displayName: name, type },
   });
 }
 
@@ -54,122 +70,43 @@ async function upsertUser(tenantId: string, u: DemoUser, passwordHash: string) {
   });
 }
 
-async function ensureDemoMfa(tenantId: string, userId: string) {
-  if (!MFA_KEY || process.env.NODE_ENV === 'production') return false;
-  const existing = await prisma.mfaFactor.findFirst({ where: { tenantId, userId, status: 'ACTIVE' } });
-  if (!existing) {
-    await prisma.mfaFactor.create({
-      data: {
-        tenantId,
-        userId,
-        type: 'TOTP',
-        status: 'ACTIVE',
-        label: 'Demo authenticator (synthetic)',
-        secretEncrypted: sealSecret(DEMO_TOTP_SECRET, MFA_KEY),
-        verifiedAt: new Date(),
-      },
-    });
-  }
-  await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
-  return true;
-}
-
-async function seedGeography(tenantId: string, cycleId: string, registryVersionId: string) {
-  const units = new Map<string, string>();
-  const stations = new Map<string, string>();
-  const sourceVersion = 'SYNTHETIC-2027-R1';
-
-  const mkUnit = async (
-    key: string,
-    type: 'COUNTY' | 'CONSTITUENCY' | 'WARD' | 'POLLING_CENTRE',
-    code: string,
-    name: string,
-    parentKey: string | null,
-  ) => {
-    const parentId = parentKey ? units.get(parentKey)! : null;
-    const parent = parentId ? await prisma.geographicUnit.findUniqueOrThrow({ where: { id: parentId } }) : null;
-    const unit = await prisma.geographicUnit.upsert({
-      where: {
-        tenantId_electionCycleId_type_officialCode_sourceVersion: {
+/**
+ * Apply SEED_DEMO_MFA to a privileged demo user. 'disabled' removes only the
+ * shared demo factor (never a factor the user enrolled themselves).
+ */
+async function applyDemoMfa(tenantId: string, userId: string): Promise<'preenrolled' | 'enrol-at-sign-in'> {
+  if (DEMO_MFA_MODE === 'preenrolled' && MFA_KEY && !IS_PRODUCTION) {
+    const existing = await prisma.mfaFactor.findFirst({ where: { tenantId, userId, status: 'ACTIVE' } });
+    if (!existing) {
+      await prisma.mfaFactor.create({
+        data: {
           tenantId,
-          electionCycleId: cycleId,
-          type,
-          officialCode: code,
-          sourceVersion,
+          userId,
+          type: 'TOTP',
+          status: 'ACTIVE',
+          label: DEMO_TOTP_LABEL,
+          secretEncrypted: sealSecret(DEMO_TOTP_SECRET, MFA_KEY),
+          verifiedAt: new Date(),
         },
-      },
-      create: {
-        tenantId,
-        electionCycleId: cycleId,
-        registryVersionId,
-        type,
-        officialCode: code,
-        officialName: name,
-        parentId,
-        path: '/',
-        sourceVersion,
-      },
-      update: { officialName: name, parentId, registryVersionId },
-    });
-    const path = `${parent ? parent.path : '/'}${unit.id}/`;
-    await prisma.geographicUnit.update({ where: { id: unit.id }, data: { path } });
-    units.set(key, unit.id);
-    return unit.id;
-  };
-
-  // County name/code are public reference data; everything below is synthetic.
-  const countyId = await mkUnit('county', 'COUNTY', '039', 'Bungoma', null);
-  const constituencies = [
-    { key: 'c1', code: 'SYN-C01', name: 'Synthetic Constituency North' },
-    { key: 'c2', code: 'SYN-C02', name: 'Synthetic Constituency South' },
-  ];
-  let stationIndex = 0;
-  for (const c of constituencies) {
-    const constituencyId = await mkUnit(c.key, 'CONSTITUENCY', c.code, c.name, 'county');
-    for (let w = 1; w <= 2; w++) {
-      const wardKey = `${c.key}w${w}`;
-      const wardId = await mkUnit(wardKey, 'WARD', `${c.code}-W0${w}`, `${c.name.replace('Synthetic Constituency ', '')} Ward ${w} (synthetic)`, c.key);
-      for (let p = 1; p <= 2; p++) {
-        const centreKey = `${wardKey}p${p}`;
-        const centreCode = `${c.code}-W0${w}-P0${p}`;
-        const centreId = await mkUnit(centreKey, 'POLLING_CENTRE', centreCode, `Synthetic Primary School ${c.key.toUpperCase()}${w}${p}`, wardKey);
-        for (let s = 1; s <= 2; s++) {
-          stationIndex++;
-          const code = `${centreCode}-S0${s}`;
-          const station = await prisma.pollingStation.upsert({
-            where: { tenantId_registryVersionId_code: { tenantId, registryVersionId, code } },
-            create: {
-              tenantId,
-              electionCycleId: cycleId,
-              registryVersionId,
-              geographicUnitId: centreId,
-              countyId,
-              constituencyId,
-              wardId,
-              pollingCentreId: centreId,
-              code,
-              name: `Synthetic Primary School ${c.key.toUpperCase()}${w}${p} — Stream ${s}`,
-              streamNumber: s,
-              registeredVoters: 380 + ((stationIndex * 37) % 220),
-              locationSource: 'synthetic',
-            },
-            update: { geographicUnitId: centreId, countyId, constituencyId, wardId, pollingCentreId: centreId },
-          });
-          stations.set(`s${stationIndex}`, station.id);
-        }
-      }
+      });
     }
+    await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
+    return 'preenrolled';
   }
-  await prisma.registryVersion.update({
-    where: { id: registryVersionId },
-    data: { stationCount: stations.size },
+  await prisma.mfaFactor.updateMany({
+    where: { tenantId, userId, label: DEMO_TOTP_LABEL, status: { in: ['ACTIVE', 'PENDING'] } },
+    data: { status: 'REVOKED' },
   });
-  return { units, stations, countyId };
+  const remaining = await prisma.mfaFactor.count({ where: { tenantId, userId, status: 'ACTIVE' } });
+  if (remaining === 0) await prisma.user.update({ where: { id: userId }, data: { mfaEnabled: false } });
+  return 'enrol-at-sign-in';
 }
 
 async function main() {
   console.log('Seeding NGAO360 (synthetic data only)…');
-  const passwordHash = await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id });
+  const password = demoPassword();
+  const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+  const mfaRoles = new Set(SYSTEM_ROLES.filter((r) => r.mfaRequired).map((r) => r.key));
 
   const permissionCount = await syncPermissionCatalogue(prisma);
   console.log(`  permissions: ${permissionCount}`);
@@ -186,175 +123,77 @@ async function main() {
   await prisma.roleAssignment.create({
     data: { tenantId: platform.id, userId: operator.id, roleId: platformRoles.PLATFORM_OPERATOR!, reason: 'Seed' },
   });
-  await ensureDemoMfa(platform.id, operator.id);
+  await applyDemoMfa(platform.id, operator.id);
 
   /* -------------------------------- Demo tenant ------------------------------- */
-  const tenant = await upsertTenant('demo', 'Demo Campaign Organisation (synthetic)', 'CAMPAIGN');
+  const tenant = await upsertTenant('demo', 'Demo Organisation', 'CAMPAIGN');
   const roleIds = await provisionSystemRoles(prisma, tenant.id);
-
-  const cycle = await prisma.electionCycle.upsert({
-    where: { tenantId_name: { tenantId: tenant.id, name: '2027 General Election rehearsal (synthetic)' } },
-    create: {
-      tenantId: tenant.id,
-      name: '2027 General Election rehearsal (synthetic)',
-      electionDate: new Date('2027-08-10T00:00:00Z'),
-      jurisdiction: 'Kenya',
-      legalConfigVersion: 'LN72-2017-baseline',
-      status: 'ACTIVE',
-      dataProvenance: 'SYNTHETIC',
-      officialSources: [
-        {
-          title: 'Elections (General) (Amendment) Regulations, 2017 — Legal Notice No. 72 of 2017',
-          reference: 'Baseline; must be revalidated against 2027 IEBC forms',
-        },
-      ],
-    },
-    update: { status: 'ACTIVE', dataProvenance: 'SYNTHETIC' },
-  });
-
-  const registry = await prisma.registryVersion.upsert({
-    where: { tenantId_electionCycleId_version: { tenantId: tenant.id, electionCycleId: cycle.id, version: 'SYNTHETIC-2027-R1' } },
-    create: {
-      tenantId: tenant.id,
-      electionCycleId: cycle.id,
-      version: 'SYNTHETIC-2027-R1',
-      source: 'Synthetic rehearsal registry generated by seed (not real IEBC data)',
-      status: 'APPROVED',
-      approvedAt: new Date(),
-    },
-    update: { status: 'APPROVED' },
-  });
-
-  const geo = await seedGeography(tenant.id, cycle.id, registry.id);
-  console.log(`  geography: ${geo.units.size} units, ${geo.stations.size} stations`);
-
-  // Tally centres
-  for (const [key, level, code, name] of [
-    ['c1', 'CONSTITUENCY', 'TC-SYN-C01', 'Synthetic Constituency North tallying centre'],
-    ['c2', 'CONSTITUENCY', 'TC-SYN-C02', 'Synthetic Constituency South tallying centre'],
-    ['county', 'COUNTY', 'TC-039', 'Bungoma county tallying centre (synthetic)'],
-  ] as const) {
-    await prisma.tallyCentre.upsert({
-      where: { tenantId_electionCycleId_code: { tenantId: tenant.id, electionCycleId: cycle.id, code } },
-      create: { tenantId: tenant.id, electionCycleId: cycle.id, level, code, name, geographicUnitId: geo.units.get(key)! },
-      update: { name, geographicUnitId: geo.units.get(key)! },
-    });
-  }
-
-  // Governor contest + synthetic candidates
-  let contest = await prisma.contest.findFirst({
-    where: { tenantId: tenant.id, electionCycleId: cycle.id, officeType: 'GOVERNOR', geographicUnitId: geo.countyId },
-  });
-  if (!contest) {
-    contest = await prisma.contest.create({
-      data: {
-        tenantId: tenant.id,
-        electionCycleId: cycle.id,
-        officeType: 'GOVERNOR',
-        name: 'County Governor — Bungoma (synthetic rehearsal)',
-        geographicUnitId: geo.countyId,
-        formSeries: '37',
-        status: 'ACTIVE',
-      },
-    });
-  }
-  const candidates = [
-    ['Amani Synthetic Wekesa', 'Party Alpha (synthetic)'],
-    ['Baraka Synthetic Nanjala', 'Party Beta (synthetic)'],
-    ['Chanya Synthetic Wafula', null],
-    ['Dalili Synthetic Simiyu', 'Party Gamma (synthetic)'],
-  ] as const;
-  for (const [i, [name, party]] of candidates.entries()) {
-    await prisma.candidateReference.upsert({
-      where: { tenantId_contestId_ballotOrder: { tenantId: tenant.id, contestId: contest.id, ballotOrder: i + 1 } },
-      create: {
-        tenantId: tenant.id,
-        contestId: contest.id,
-        ballotOrder: i + 1,
-        candidateNameAsPublished: name,
-        partyLabel: party,
-        isIndependent: party === null,
-        source: 'Synthetic rehearsal candidate list',
-      },
-      update: { candidateNameAsPublished: name, partyLabel: party, isIndependent: party === null },
-    });
-  }
+  const ref = await seedReferenceData(prisma, tenant.id);
+  console.log(
+    `  reference: cycle "2027 General Election" (10 Aug 2027, SYNTHETIC), ${ref.counties} counties, ` +
+      `${ref.units.size - 1} synthetic Bungoma units, ${ref.stations.size} synthetic stations`,
+  );
 
   /* ----------------------------------- Users ---------------------------------- */
+  // One demo user per tenant role (blueprint section 3). The platform operator lives in the platform tenant.
   const demoUsers: DemoUser[] = [
     { email: 'owner@demo.example.org', displayName: 'Olive Owner (synthetic)', roles: [{ key: 'ORGANISATION_OWNER' }] },
     { email: 'director@demo.example.org', displayName: 'Daniel Director (synthetic)', roles: [{ key: 'CAMPAIGN_DIRECTOR' }] },
-    { email: 'supervisor@demo.example.org', displayName: 'Sarah Supervisor (synthetic)', roles: [{ key: 'TALLY_SUPERVISOR' }] },
-    { email: 'verifier@demo.example.org', displayName: 'Victor Verifier (synthetic)', roles: [{ key: 'RESULTS_VERIFIER' }] },
-    { email: 'verifier.north@demo.example.org', displayName: 'Vera Verifier North (synthetic)', roles: [{ key: 'RESULTS_VERIFIER', scope: { type: 'CONSTITUENCY', unitKey: 'c1' } }] },
-    { email: 'clerk@demo.example.org', displayName: 'Clara Clerk (synthetic)', roles: [{ key: 'DATA_ENTRY_CLERK' }] },
-    { email: 'clerk2@demo.example.org', displayName: 'Cyrus Clerk (synthetic)', roles: [{ key: 'DATA_ENTRY_CLERK' }] },
+    { email: 'ops@demo.example.org', displayName: 'Oscar Operations (synthetic)', roles: [{ key: 'OPERATIONS_DIRECTOR' }] },
+    { email: 'lead@demo.example.org', displayName: 'Dora Department Lead (synthetic)', roles: [{ key: 'DEPARTMENT_LEAD' }] },
+    { email: 'coordinator@demo.example.org', displayName: 'Cosmas Coordinator North (synthetic)', roles: [{ key: 'COORDINATOR', scope: { type: 'CONSTITUENCY', unitKey: 'c1' } }] },
     { email: 'agent1@demo.example.org', displayName: 'Agnes Agent (synthetic)', roles: [{ key: 'POLLING_AGENT', scope: { type: 'POLLING_STATION', stationKey: 's1' } }] },
     { email: 'agent2@demo.example.org', displayName: 'Arthur Agent (synthetic)', roles: [{ key: 'POLLING_AGENT', scope: { type: 'POLLING_STATION', stationKey: 's2' } }] },
+    { email: 'clerk@demo.example.org', displayName: 'Clara Clerk (synthetic)', roles: [{ key: 'DATA_ENTRY_CLERK' }] },
+    { email: 'clerk2@demo.example.org', displayName: 'Cyrus Clerk (synthetic)', roles: [{ key: 'DATA_ENTRY_CLERK' }] },
+    { email: 'verifier@demo.example.org', displayName: 'Victor Verifier (synthetic)', roles: [{ key: 'RESULTS_VERIFIER' }] },
+    { email: 'verifier.north@demo.example.org', displayName: 'Vera Verifier North (synthetic)', roles: [{ key: 'RESULTS_VERIFIER', scope: { type: 'CONSTITUENCY', unitKey: 'c1' } }] },
+    { email: 'supervisor@demo.example.org', displayName: 'Sarah Supervisor (synthetic)', roles: [{ key: 'TALLY_SUPERVISOR' }] },
+    { email: 'finance@demo.example.org', displayName: 'Fiona Finance (synthetic)', roles: [{ key: 'FINANCE_OFFICER' }] },
     { email: 'legal@demo.example.org', displayName: 'Lena Legal (synthetic)', roles: [{ key: 'LEGAL_COMPLIANCE_OFFICER' }] },
-    { email: 'ops@demo.example.org', displayName: 'Oscar Operations (synthetic)', roles: [{ key: 'OPERATIONS_DIRECTOR' }] },
     { email: 'comms@demo.example.org', displayName: 'Cora Comms (synthetic)', roles: [{ key: 'COMMUNICATIONS_EDITOR' }] },
   ];
-  const mfaRoles = new Set(SYSTEM_ROLES.filter((r) => r.mfaRequired).map((r) => r.key));
   for (const u of demoUsers) {
     const user = await upsertUser(tenant.id, u, passwordHash);
     await prisma.roleAssignment.deleteMany({ where: { userId: user.id } });
     for (const r of u.roles) {
+      const roleId = roleIds[r.key];
+      if (!roleId) throw new Error(`System role ${r.key} is not provisioned`);
       const scopeType = r.scope?.type ?? 'ORGANISATION';
       await prisma.roleAssignment.create({
         data: {
           tenantId: tenant.id,
           userId: user.id,
-          roleId: roleIds[r.key]!,
+          roleId,
           scopeType,
-          geographicUnitId: r.scope?.unitKey ? geo.units.get(r.scope.unitKey)! : null,
-          pollingStationId: r.scope?.stationKey ? geo.stations.get(r.scope.stationKey)! : null,
-          electionCycleId: r.scope ? cycle.id : null,
+          geographicUnitId: r.scope?.unitKey ? ref.units.get(r.scope.unitKey)! : null,
+          pollingStationId: r.scope?.stationKey ? ref.stations.get(r.scope.stationKey)! : null,
+          electionCycleId: r.scope ? ref.cycleId : null,
           reason: 'Seed (synthetic demo)',
         },
       });
     }
-    if (u.roles.some((r) => mfaRoles.has(r.key))) await ensureDemoMfa(tenant.id, user.id);
+    if (u.roles.some((r) => mfaRoles.has(r.key))) await applyDemoMfa(tenant.id, user.id);
   }
   console.log(`  demo users: ${demoUsers.length}`);
 
-  const owner = await prisma.user.findUniqueOrThrow({
-    where: { tenantId_email: { tenantId: tenant.id, email: 'owner@demo.example.org' } },
-  });
+  const owner = await prisma.user.findUniqueOrThrow({ where: { tenantId_email: { tenantId: tenant.id, email: 'owner@demo.example.org' } } });
+  const legal = await prisma.user.findUniqueOrThrow({ where: { tenantId_email: { tenantId: tenant.id, email: 'legal@demo.example.org' } } });
 
-  // Form templates 37A/37B/37C (approved for the synthetic rehearsal only)
-  for (const t of GOVERNOR_TEMPLATES) {
-    await prisma.formTemplate.upsert({
-      where: {
-        tenantId_electionCycleId_formNumber_version: {
-          tenantId: tenant.id,
-          electionCycleId: cycle.id,
-          formNumber: t.formNumber,
-          version: 1,
-        },
-      },
-      create: {
-        tenantId: tenant.id,
-        electionCycleId: cycle.id,
-        contestType: 'GOVERNOR',
-        formNumber: t.formNumber,
-        formLevel: t.formLevel,
-        version: 1,
-        title: t.title,
-        effectiveDate: new Date('2027-01-01T00:00:00Z'),
-        fieldSchema: t.fieldSchema,
-        validationRules: t.validationRules,
-        officialSource: t.officialSource,
-        approvalState: 'APPROVED',
-        approvedById: owner.id,
-        approvedAt: new Date(),
-        createdById: owner.id,
-        notes: 'Approved for synthetic rehearsal only. Replace with approved 2027 IEBC form before production.',
-      },
-      update: {},
-    });
-  }
-  console.log(`  form templates: ${GOVERNOR_TEMPLATES.map((t) => t.formNumber).join(', ')}`);
+  // Registry source metadata names the approving user (blueprint 6.2).
+  await approveSeedRegistry(prisma, tenant.id, ref.registryVersionId, owner.id);
+
+  // Form templates: owner configures, legal officer approves (maker-checker).
+  const templates = await seedFormTemplates(prisma, {
+    tenantId: tenant.id,
+    electionCycleId: ref.cycleId,
+    creatorId: owner.id,
+    approverId: legal.id,
+  });
+  console.log(
+    `  form templates: ${templates.created.length ? `created ${templates.created.join(', ')}` : 'no changes'}` +
+      (templates.unchanged ? ` (${templates.unchanged} unchanged)` : ''),
+  );
 
   /* ------------------- Second tenant (cross-tenant isolation tests) ------------------- */
   const other = await upsertTenant('other', 'Other Organisation (synthetic)', 'CAMPAIGN');
@@ -368,11 +207,15 @@ async function main() {
   await prisma.roleAssignment.create({
     data: { tenantId: other.id, userId: otherOwner.id, roleId: otherRoles.ORGANISATION_OWNER!, reason: 'Seed' },
   });
-  await ensureDemoMfa(other.id, otherOwner.id);
+  await applyDemoMfa(other.id, otherOwner.id);
 
   console.log('Done.');
-  console.log(`  Login: tenant "demo", e.g. clerk@demo.example.org / ${DEMO_PASSWORD}`);
-  console.log(`  Privileged demo users have TOTP secret ${DEMO_TOTP_SECRET} (development only).`);
+  console.log(`  Sign in: organisation "demo", e.g. clerk@demo.example.org with SEED_DEMO_PASSWORD${process.env.SEED_DEMO_PASSWORD ? '' : ' (default Demo-Password-2027)'}`);
+  if (DEMO_MFA_MODE === 'preenrolled' && !IS_PRODUCTION) {
+    console.log(`  Privileged demo users share the development TOTP secret ${DEMO_TOTP_SECRET}.`);
+  } else {
+    console.log('  Demo MFA is disabled: users whose role requires MFA enrol an authenticator at first sign-in.');
+  }
 }
 
 main()
