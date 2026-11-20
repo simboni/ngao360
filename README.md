@@ -20,6 +20,7 @@ What this build covers (see [docs/DECISIONS.md](docs/DECISIONS.md)):
 - **Platform:** platform foundation, NGAO TALLY MVP, NGAO360 Office and field and election operations (roadmap stages 1, 3, 4 and 5).
 - **Rehearsals:** County Governor tally (Forms 37A, 37B and 37C), a County Governor's office (citizen request to closure, project to verified public view) and election day in the field (deployment to War Room).
 - **Demo data:** all synthetic. Fictional candidates, a synthetic Bungoma registry of 153 stations, invented figures. Only the 47 county codes and names are real public reference data.
+- **2022 Bungoma historical demo** (separate organisation, [docs/DEMO_2022.md](docs/DEMO_2022.md)): public administrative names with a SIMULATED governor layer whose totals come from a config of UNVERIFIED placeholders, plus a local-file importer for 34A scans. Every screen, snapshot and export says **HISTORICAL DEMO / SIMULATED DATA** next to the unofficial disclaimer.
 
 ## Quick start
 
@@ -42,6 +43,15 @@ pnpm smoke:web                    # Playwright smoke against the running app; wr
 pnpm smoke:office                 # Office smoke: public portal, case workspace, project register; docs/screenshots/office-*.png
 pnpm smoke:field                  # Field smoke: War Room, planner, masked agent profile, /m and the offline queue; docs/screenshots/field-*.png
 pnpm smoke:campaign               # Campaign smoke: dashboard tiles, org tree, task board, event, finance ledger, report builder, notifications; docs/screenshots/campaign-*.png
+```
+
+2022 historical demo (no network access; see [docs/DEMO_2022.md](docs/DEMO_2022.md) before using any real scan):
+
+```bash
+pnpm demo:2022-bungoma                                                     # organisation bungoma-2022-demo, idempotent
+pnpm demo:import-34a --dir <local 34A scans> --tenant bungoma-2022-demo --dry-run
+pnpm demo:redact-34a --tenant bungoma-2022-demo --submission <SUB-…> --file <redacted image>
+pnpm test:demo-2022                                                        # e2e demo + importer tests (synthetic fixtures)
 ```
 
 To run the Governor rehearsal on its own: `pnpm test:rehearsal`. It runs the whole flow through the API: upload, capture, a separation-of-duties refusal, verification, an arithmetic discrepancy, the snapshot, an export, a 37B cross-stage variance case and the audit trail.
@@ -107,6 +117,10 @@ The `demo` tenant has the `campaign` module on with synthetic data: a department
 
 Offline queue: items are sealed with AES-GCM under a non-extractable per-user key in IndexedDB; this protects only against other origins and casual inspection of the stored records, not against a copy of the browser profile (the key material is stored beside the ciphertext) or someone using the phone (a PIN-wrapped key is the priority next step). Uploads run while a tab is open. See docs/ARCHITECTURE.md §14 and docs/STATUS.md.
 
+### 2022 Bungoma historical demo (tenant `bungoma-2022-demo`)
+
+Created by `pnpm demo:2022-bungoma`, same password. Users `owner@`, `registrar@` (both organisation owners: one imports the registry, the other approves it), `legal@`, `clerk1@`–`clerk3@`, `verifier1@`–`verifier3@`, `supervisor@`, `supervisor2@`, all `@bungoma-2022-demo.example.org`. About 1,150 simulated stations; most verified, some missing, some awaiting review and two held by arithmetic cases. Red **HISTORICAL DEMO / SIMULATED DATA** banner on every screen. Details: [docs/DEMO_2022.md](docs/DEMO_2022.md).
+
 Other tenants: `platform` (`operator@platform.example.org`, platform operator) and `other` (`owner@other.example.org`, used to test cross-tenant isolation).
 
 ### NGAO360 Office demo (synthetic County Governor's office, Bungoma)
@@ -135,10 +149,11 @@ Tally walkthrough: sign in as the clerk and upload `fixtures/forms/synthetic-37a
 | `apps/web` | Next.js PWA: command centre, NGAO TALLY screens S18–S22, Office screens S23–S27 and the public portal (`/p/[tenantSlug]`), admin and reference screens |
 | `packages/db` | Prisma schema, migrations with row-level security and immutability triggers, synthetic seed |
 | `packages/shared` | zod contracts, permissions and roles, form-template catalogue, validation-rule evaluator |
-| `fixtures/` | Synthetic registry CSVs and rehearsal form images |
+| `fixtures/` | Synthetic registry CSVs, rehearsal form images and the 2022 demo test fixtures (`fixtures/demo-2022`) |
+| `data/demo-2022/` | 2022 historical demo config (UNVERIFIED placeholders, `verified: false`) |
 | `infra/`, `docker-compose*.yml` | Container deployment |
 
-Docs: [blueprint](docs/BLUEPRINT.md) · [decisions](docs/DECISIONS.md) · [architecture](docs/ARCHITECTURE.md) · [API contract](docs/API_CONTRACT.md) · [development](docs/DEVELOPMENT.md) · [change requests](docs/CHANGE_REQUESTS.md) · [open questions](docs/QUESTIONS.md)
+Docs: [blueprint](docs/BLUEPRINT.md) · [decisions](docs/DECISIONS.md) · [architecture](docs/ARCHITECTURE.md) · [API contract](docs/API_CONTRACT.md) · [development](docs/DEVELOPMENT.md) · [change requests](docs/CHANGE_REQUESTS.md) · [open questions](docs/QUESTIONS.md) · [2022 data sources](docs/DATA_SOURCES_2022.md) · [2022 historical demo](docs/DEMO_2022.md)
 
 ![Parallel tally results (synthetic data)](docs/screenshots/05-supervisor-results.png)
 

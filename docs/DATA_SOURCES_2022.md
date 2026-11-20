@@ -40,6 +40,13 @@ This session could not reach forms.iebc.or.ke, iebc.or.ke or HDX, so anything ma
   - Lamu (005) is small enough for a quick end-to-end test.
   - Avoid Kakamega and Mombasa (governor races postponed) and Nairobi (too large).
 
+## What this build implements (docs/DEMO_2022.md)
+- **Separate demo organisation** `bungoma-2022-demo` built by `pnpm demo:2022-bungoma`, never mixed with the synthetic `demo` organisation. Its cycle has provenance `HISTORICAL_DEMO` with the simulated-data flag; every screen, snapshot and export shows "HISTORICAL DEMO / SIMULATED DATA" next to the parallel-tally disclaimer, and the labels cannot be removed.
+- **Governor layer: simulated, as recommended above.** A deterministic generator builds a synthetic station registry (inferred 15-digit codes) and 37A/37B/37C figures whose sums equal the county totals in `data/demo-2022/bungoma.config.json` exactly. Those totals ship as **UNVERIFIED placeholders** (`verified: false`); candidates are neutral labels ("Candidate A (simulated)") until verified names and totals are supplied with their source. The loader refuses `verified: true` without a source.
+- **Presidential layer: local scans only.** `pnpm demo:import-34a` reads a local directory, parses the 34A file-name pattern, maps codes to the registry (unknown codes go to a draft registry version that needs maker-checker approval) and ingests files through the normal intake. Images are held "not for display until redacted" unless the operator declares them redacted; `pnpm demo:redact-34a` attaches a redacted copy and the original is never shown.
+- **Not done, by design:** no network fetch of forms.iebc.or.ke, iebc.or.ke or any other data host; the ib0b CSV is not used; no real per-station figure is attributed to a real person.
+- **Still to confirm** (docs/QUESTIONS.md): gazetted governor totals and names, the real constituency and ward codes, the ward list and written IEBC permission.
+
 ## Sources
 - Carter Center 2022 final report: https://www.cartercenter.org/resources/pdfs/news/peace_publications/election_reports/kenya-2022-elections-final-report.pdf
 - KICTANet: https://www.kictanet.or.ke/?mdocs-file=48220

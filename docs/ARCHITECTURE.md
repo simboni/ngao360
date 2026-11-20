@@ -164,7 +164,8 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 - `Verification`: independent values, a checklist, mismatched fields and the supervisor action.
 - `DiscrepancyCase`: linked submissions (source A and B) and an append-only `DiscrepancyCaseAction` log. Closure needs a different approver.
 - `TallySnapshot`: immutable `included_submission_ids`, `totals_json`, `coverage_json`, `calculation_version` and `content_hash`. Release fields can be set only once.
-- `ElectionCycle.data_provenance` (SYNTHETIC, HISTORICAL or LIVE) labels historical 2022 or synthetic data (DECISIONS.md update).
+- `ElectionCycle.data_provenance` (SYNTHETIC, HISTORICAL, LIVE or HISTORICAL_DEMO) labels historical 2022 or synthetic data (DECISIONS.md update). `contains_simulated_data`, `provenance_notes` and `tenants.historical_demo` add the "HISTORICAL DEMO / SIMULATED DATA" label to every screen, snapshot and export (`common/provenance/data-label.ts`); triggers refuse to remove them.
+- `StoredFileDisplayHold`: "not for display until redacted" on a stored image (real scans with personal data). The source URL refuses a held original and serves its redacted copy once attached; the original is never altered.
 
 ## 10. Web shell
 
@@ -225,7 +226,7 @@ tenancy, identity, RBAC, audit and storage. Contract: [API_CONTRACT.md](./API_CO
 
 - **Presidential templates.** [DATA_SOURCES_2022.md](./DATA_SOURCES_2022.md) recommends a real 2022 presidential layer (34A/34B/34C) for the pilot county. Add 34A/34B/34C templates to the seed under `packages/db/src/seed/` (reference module). A presidential contest uses `geographicUnitId = null`.
 - **Station codes.** 2022 station codes are 15 digits (county 3 + constituency 3 + ward 4 + centre 3 + station 2; this split is inferred). `PollingStation.code` is a free string, and the registry import should accept that format.
-- **Historical data.** Import 2022 data into a separate cycle with `dataProvenance = HISTORICAL`. Simulated governor forms belong in a `SYNTHETIC` cycle. Every screen and export must show the provenance label.
+- **Historical data.** Built: the 2022 Bungoma historical demo ([DEMO_2022.md](./DEMO_2022.md)) is a separate organisation with a `HISTORICAL_DEMO` cycle flagged as containing simulated data; the simulated governor layer and imported 34A scans live in that one cycle, and every screen, snapshot and export shows both the unofficial disclaimer and "HISTORICAL DEMO / SIMULATED DATA". The tools are in `apps/api/src/demo-2022/` (CLI over the API services, no HTTP); the generator, config loader and 34A file-name parser in `packages/shared/src/demo-2022/`.
 - **Personal data in scans.** Scanned forms show presiding officers' and agents' names and signatures. Image viewers for demos should support blurring or redaction overlays. Never alter the stored original.
 - **OCR.** There is no OCR engine yet. The worker is a stub that sets `NOT_CONFIGURED`. RESEARCH.md recommends PaddleOCR or docTR with field-box crops plus a digit classifier.
 - **Offline capture.** The PWA has the `/m` shell and route stubs; the encrypted IndexedDB queue is designed in §14.1 and built by the field module work (server side: the idempotency ledger exists).

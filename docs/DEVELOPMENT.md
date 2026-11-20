@@ -113,6 +113,17 @@ The field module (`apps/api/src/modules/field`, web `/field/*`, `/warroom`, mobi
 
 `OCR_PROVIDER=none` (default) means every value is captured by hand. `OCR_PROVIDER=stub` writes synthetic, low-confidence draft values (development only). In both cases OCR output is only ever a draft (`ocrValue`), never a confirmed value. With Redis queues enabled the OCR worker runs the provider; with `QUEUES_ENABLED=false` it runs in process.
 
+### 2022 Bungoma historical demo
+
+`pnpm demo:2022-bungoma` builds the API and creates or refreshes the separate organisation `bungoma-2022-demo` from `data/demo-2022/bungoma.config.json` (about 2 minutes for ~1,150 simulated stations; a re-run is a no-op). `pnpm demo:import-34a --dir <path> --tenant <slug> [--dry-run] [--redacted]` imports local 34A scans and `pnpm demo:redact-34a` attaches a redacted copy to a held scan. Full guide, legal notes and how to plug in verified totals: [DEMO_2022.md](./DEMO_2022.md).
+
+- The tools (`apps/api/src/demo-2022/`) never fetch anything. They boot the API's Nest application context without an HTTP listener and call the same services as the endpoints, acting as named users of the organisation; each step checks the acting user's permission first because the route guard is not in the path. Only tenant, role and user provisioning uses the owner role (`DATABASE_URL`), as `pnpm db:seed` does.
+- Queues are forced off for the tools (`QUEUES_ENABLED=false`), so they do not need Redis. Files go to `STORAGE_LOCAL_ROOT` relative to `apps/api` (the same place `pnpm dev` reads them).
+- The demo password is `SEED_DEMO_PASSWORD`; `SEED_DEMO_MFA=preenrolled` gives privileged demo users the shared development TOTP secret.
+- Provenance: `ElectionCycle.dataProvenance = HISTORICAL_DEMO`, `containsSimulatedData`, `provenanceNotes` and `Tenant.historicalDemo` drive the "HISTORICAL DEMO / SIMULATED DATA" label (`apps/api/src/common/provenance/data-label.ts`): `/auth/me` (`tenant.dataLabel`, web banner in the desktop and mobile shells), live aggregates, snapshots (stored in the hashed content) and every export. Triggers in `20261127000000_historical_demo_provenance` refuse to remove the labels.
+- Display holds: `stored_file_display_holds` marks a stored image "not for display until redacted"; `GET /tally/submissions/:id/source-url` answers 403 `NOT_FOR_DISPLAY_UNTIL_REDACTED` until a redacted copy is attached, then serves the copy (`redactedCopy: true`).
+- Synthetic test fixtures: `fixtures/demo-2022/bungoma-small.config.json` and `fixtures/demo-2022/34a/` (regenerate with `pnpm fixtures:demo-2022`). Tests: `pnpm test:demo-2022` (also part of `pnpm test`).
+
 ### Synthetic form images
 
 `fixtures/forms/` holds plain mock-ups of a Governor 37A and 37B, each labelled "SYNTHETIC REHEARSAL COPY – NOT AN IEBC FORM". The printed figures are in `governor-rehearsal.json`. To regenerate them (requires Pillow):
@@ -134,6 +145,7 @@ pnpm test:rehearsal   # County Governor end-to-end rehearsal only
 pnpm test:rehearsal:office   # NGAO360 Office end-to-end rehearsal only
 pnpm test:rehearsal:field    # election-day end-to-end rehearsal only
 pnpm test:rehearsal:campaign # campaign and organisation end-to-end rehearsal only
+pnpm test:demo-2022          # 2022 historical demo e2e + 34A importer (synthetic fixtures)
 ```
 
 The test layers:
@@ -146,6 +158,7 @@ The test layers:
 | API integration (jest + supertest) | `apps/api/src/modules/*/__tests__`, `apps/api/test` | full HTTP stack against `ngao360_test`, with the runtime role under RLS |
 | RLS and guards | `apps/api/test/rls.integration.spec.ts` | cross-tenant reads by id return nothing; append-only and immutability triggers |
 | Governor rehearsal | `apps/api/test/governor-rehearsal.e2e.spec.ts` | the demo seed in a fresh synthetic tenant, with real sign-in and TOTP, and the 37A/37B flow from start to finish |
+| 2022 historical demo | `apps/api/test/demo-2022.e2e.spec.ts`, `apps/api/test/demo-34a-import.integration.spec.ts`, `packages/shared/src/demo-2022/demo-2022.test.ts` (`pnpm test:demo-2022`) | the demo at small scale from a synthetic config (maker-checker registry, distinct verifiers, parallel tally equal to the generated figures for the verified share, 37B/37C equal to the config totals, holding cases, both labels on `/auth/me`, snapshot and exports, labels cannot be removed, idempotent re-run); the 34A importer (dry run, real run, re-run, draft registry for unknown codes, display hold and redacted copy); generator property tests |
 | Station lineage | `apps/api/test/registry-lineage.integration.spec.ts` | a station-scoped grant survives a newly approved registry version, duplicates are found across versions, dashboard station counts stay correct |
 | Field foundation | `apps/api/test/field-foundation.integration.spec.ts`, `apps/api/src/modules/field/__tests__`, `packages/shared/src/field/field.test.ts`, `apps/web/src/components/field/__tests__` | RLS on every field table, no deletes, append-only histories, immutable incident reports and field reports, deployment slot rules, closure separation, idempotency ledger, scope by station code, War Room module gating, roles and SoD, contracts and navigation |
 | Field operations | `apps/api/test/field-operations.integration.spec.ts`, `sync.integration.spec.ts`, `warroom.integration.spec.ts` (shared fixture `test/field-fixtures.ts`) | agents (masking, audited reveal with re-auth), deployment conflicts and coverage, readiness roll-ups, versioned report templates, the incident 7.3 workflow with corrections as new events, War Room counts with missing stations (including a 55,000-station registry), offline sync replay / conflict / stale handling, cross-tenant isolation |
