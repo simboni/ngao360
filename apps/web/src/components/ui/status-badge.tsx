@@ -117,6 +117,7 @@ const PROVENANCE: Record<DataProvenance, Omit<Spec, 'label'>> = {
   SYNTHETIC: { tone: 'info', icon: FlaskConical },
   HISTORICAL: { tone: 'pending', icon: History },
   LIVE: { tone: 'neutral', icon: Radio },
+  HISTORICAL_DEMO: { tone: 'danger', icon: History },
 };
 
 export type StatusBadgeProps =

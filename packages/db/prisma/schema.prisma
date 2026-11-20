@@ -81,6 +81,8 @@ enum DataProvenance {
   SYNTHETIC
   HISTORICAL
   LIVE
+  /// Historical demo: built on public historical data with simulated layers (docs/DEMO_2022.md).
+  HISTORICAL_DEMO
 }
 
 enum ElectionCycleStatus {
@@ -576,39 +578,43 @@ model Tenant {
   retentionProfile String       @default("standard") @map("retention_profile")
   dataRegion       String       @default("ke") @map("data_region")
   settings         Json         @default("{}")
+  /// Demo tenant built on historical data with simulated layers: every screen and export is labelled
+  /// "HISTORICAL DEMO / SIMULATED DATA". Can be set, never cleared (trigger).
+  historicalDemo   Boolean      @default(false) @map("historical_demo")
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users                User[]
-  roles                Role[]
-  rolePermissions      RolePermission[]
-  roleAssignments      RoleAssignment[]
-  sessions             Session[]
-  mfaFactors           MfaFactor[]
-  auditEvents          AuditEvent[]
-  electionCycles       ElectionCycle[]
-  geographicUnits      GeographicUnit[]
-  registryVersions     RegistryVersion[]
-  registryImports      RegistryImport[]
-  pollingStations      PollingStation[]
-  tallyCentres         TallyCentre[]
-  contests             Contest[]
-  candidateReferences  CandidateReference[]
-  formTemplates        FormTemplate[]
-  storedFiles          StoredFile[]
-  resultSubmissions    ResultSubmission[]
-  resultValues         ResultValue[]
-  resultValueChanges   ResultValueChange[]
-  ocrExtractions       OcrExtraction[]
-  validationResults    ValidationResult[]
-  verifications        Verification[]
-  discrepancyCases     DiscrepancyCase[]
-  discrepancyCaseLinks DiscrepancyCaseSubmission[]
-  discrepancyActions   DiscrepancyCaseAction[]
-  tallySnapshots       TallySnapshot[]
-  tallyExports         TallyExport[]
-  notifications        Notification[]
-  referenceSequences   ReferenceSequence[]
+  users                  User[]
+  roles                  Role[]
+  rolePermissions        RolePermission[]
+  roleAssignments        RoleAssignment[]
+  sessions               Session[]
+  mfaFactors             MfaFactor[]
+  auditEvents            AuditEvent[]
+  electionCycles         ElectionCycle[]
+  geographicUnits        GeographicUnit[]
+  registryVersions       RegistryVersion[]
+  registryImports        RegistryImport[]
+  pollingStations        PollingStation[]
+  tallyCentres           TallyCentre[]
+  contests               Contest[]
+  candidateReferences    CandidateReference[]
+  formTemplates          FormTemplate[]
+  storedFiles            StoredFile[]
+  storedFileDisplayHolds StoredFileDisplayHold[]
+  resultSubmissions      ResultSubmission[]
+  resultValues           ResultValue[]
+  resultValueChanges     ResultValueChange[]
+  ocrExtractions         OcrExtraction[]
+  validationResults      ValidationResult[]
+  verifications          Verification[]
+  discrepancyCases       DiscrepancyCase[]
+  discrepancyCaseLinks   DiscrepancyCaseSubmission[]
+  discrepancyActions     DiscrepancyCaseAction[]
+  tallySnapshots         TallySnapshot[]
+  tallyExports           TallyExport[]
+  notifications          Notification[]
+  referenceSequences     ReferenceSequence[]
 
   modules                   TenantModule[]
   institutions              Institution[]
@@ -726,6 +732,8 @@ model User {
   notifications      Notification[]
 
   uploadedFiles           StoredFile[]            @relation("FileUploader")
+  displayHoldsCreated     StoredFileDisplayHold[] @relation("DisplayHoldCreator")
+  displayHoldsRedacted    StoredFileDisplayHold[] @relation("DisplayHoldRedactor")
   submissions             ResultSubmission[]      @relation("SubmissionSubmitter")
   confirmedValues         ResultValue[]           @relation("ValueConfirmedBy")
   valueChanges            ResultValueChange[]     @relation("ValueChangeActor")
@@ -800,62 +808,62 @@ model User {
   fieldFileClaims            FieldFileClaim[]      @relation("FieldFileClaimUser")
 
   // Campaign and organisation
-  departmentsLed           Department[]                  @relation("DepartmentLead")
-  departmentsCreated       Department[]                  @relation("DepartmentCreatedBy")
-  teamsCoordinated         Team[]                        @relation("TeamCoordinator")
-  teamsCreated             Team[]                        @relation("TeamCreatedBy")
-  teamMemberships          TeamMember[]                  @relation("TeamMemberUser")
-  teamMembersAdded         TeamMember[]                  @relation("TeamMemberAddedBy")
-  teamMembersRemoved       TeamMember[]                  @relation("TeamMemberRemovedBy")
-  tasksOwned               Task[]                        @relation("TaskOwner")
-  tasksReviewing           Task[]                        @relation("TaskReviewer")
-  tasksCreated             Task[]                        @relation("TaskCreatedBy")
-  taskCollaborations       TaskCollaborator[]            @relation("TaskCollaboratorUser")
-  taskCollaboratorsAdded   TaskCollaborator[]            @relation("TaskCollaboratorAddedBy")
-  taskDependenciesCreated  TaskDependency[]              @relation("TaskDependencyCreatedBy")
-  taskChecklistDone        TaskChecklistItem[]           @relation("TaskChecklistDoneBy")
-  taskChecklistCreated     TaskChecklistItem[]           @relation("TaskChecklistCreatedBy")
-  taskComments             TaskComment[]                 @relation("TaskCommentAuthor")
-  taskAttachments          TaskAttachment[]              @relation("TaskAttachmentAddedBy")
-  taskEvents               TaskEvent[]                   @relation("TaskEventActor")
-  eventsOrganised          CampaignEvent[]               @relation("EventOrganiser")
-  eventsCreated            CampaignEvent[]               @relation("EventCreatedBy")
-  agendaItemsOwned         EventAgendaItem[]             @relation("AgendaOwner")
-  logisticsCustody         EventLogisticsItem[]          @relation("LogisticsCustodian")
-  logisticsCreated         EventLogisticsItem[]          @relation("LogisticsCreatedBy")
-  attendances              EventAttendance[]             @relation("AttendanceUser")
-  attendancesRecorded      EventAttendance[]             @relation("AttendanceRecordedBy")
-  eventDocumentsAdded      EventDocument[]               @relation("EventDocumentAddedBy")
-  afterActionAuthored      EventAfterActionReport[]      @relation("AfterActionAuthor")
-  afterActionReviewed      EventAfterActionReport[]      @relation("AfterActionReviewer")
-  contentAuthored          ContentItem[]                 @relation("ContentAuthor")
-  contentEdited            ContentItem[]                 @relation("ContentEditor")
-  contentApproved          ContentItem[]                 @relation("ContentApprover")
-  contentPublished         ContentItem[]                 @relation("ContentPublisher")
-  contentRevisions         ContentRevision[]             @relation("ContentRevisionActor")
-  financeAccountsCreated   FinanceAccount[]              @relation("FinanceAccountCreatedBy")
-  financePayeesCreated     FinancePayee[]                @relation("FinancePayeeCreatedBy")
-  contributionSourcesAdded ContributionSource[]          @relation("ContributionSourceCreatedBy")
-  budgetLinesApproved      FinanceBudgetLine[]           @relation("BudgetLineApprovedBy")
-  budgetLinesCreated       FinanceBudgetLine[]           @relation("BudgetLineCreatedBy")
-  financeRequested         FinanceTransaction[]          @relation("FinanceRequestedBy")
-  financeApproved          FinanceTransaction[]          @relation("FinanceApprovedBy")
-  financeRejected          FinanceTransaction[]          @relation("FinanceRejectedBy")
-  financePaid              FinanceTransaction[]          @relation("FinancePaidBy")
-  financeDocumentsAdded    FinanceTransactionDocument[]  @relation("FinanceDocumentAddedBy")
-  financeEvents            FinanceTransactionEvent[]     @relation("FinanceEventActor")
-  limitSettingsCreated     FinanceLimitSetting[]         @relation("LimitSettingCreatedBy")
-  limitSettingsVerified    FinanceLimitSetting[]         @relation("LimitSettingVerifiedBy")
-  limitSettingsVerificationChanged FinanceLimitSetting[] @relation("LimitSettingVerificationChangedBy")
-  contributionSourcesDeclared ContributionSource[]       @relation("ContributionSourceDeclaredBy")
-  reportTemplates          ReportTemplate[]              @relation("ReportTemplateOwner")
-  reportExports            ReportExport[]                @relation("ReportExportGeneratedBy")
-  notificationPreferences  NotificationPreference[]      @relation("NotificationPreferenceUser")
-  notificationAcks         NotificationAcknowledgement[] @relation("NotificationAckUser")
-  breachesOwned            BreachRecord[]                @relation("BreachOwner")
-  breachesReported         BreachRecord[]                @relation("BreachReporter")
-  breachesClosed           BreachRecord[]                @relation("BreachCloser")
-  breachEvents             BreachEvent[]                 @relation("BreachEventActor")
+  departmentsLed                   Department[]                  @relation("DepartmentLead")
+  departmentsCreated               Department[]                  @relation("DepartmentCreatedBy")
+  teamsCoordinated                 Team[]                        @relation("TeamCoordinator")
+  teamsCreated                     Team[]                        @relation("TeamCreatedBy")
+  teamMemberships                  TeamMember[]                  @relation("TeamMemberUser")
+  teamMembersAdded                 TeamMember[]                  @relation("TeamMemberAddedBy")
+  teamMembersRemoved               TeamMember[]                  @relation("TeamMemberRemovedBy")
+  tasksOwned                       Task[]                        @relation("TaskOwner")
+  tasksReviewing                   Task[]                        @relation("TaskReviewer")
+  tasksCreated                     Task[]                        @relation("TaskCreatedBy")
+  taskCollaborations               TaskCollaborator[]            @relation("TaskCollaboratorUser")
+  taskCollaboratorsAdded           TaskCollaborator[]            @relation("TaskCollaboratorAddedBy")
+  taskDependenciesCreated          TaskDependency[]              @relation("TaskDependencyCreatedBy")
+  taskChecklistDone                TaskChecklistItem[]           @relation("TaskChecklistDoneBy")
+  taskChecklistCreated             TaskChecklistItem[]           @relation("TaskChecklistCreatedBy")
+  taskComments                     TaskComment[]                 @relation("TaskCommentAuthor")
+  taskAttachments                  TaskAttachment[]              @relation("TaskAttachmentAddedBy")
+  taskEvents                       TaskEvent[]                   @relation("TaskEventActor")
+  eventsOrganised                  CampaignEvent[]               @relation("EventOrganiser")
+  eventsCreated                    CampaignEvent[]               @relation("EventCreatedBy")
+  agendaItemsOwned                 EventAgendaItem[]             @relation("AgendaOwner")
+  logisticsCustody                 EventLogisticsItem[]          @relation("LogisticsCustodian")
+  logisticsCreated                 EventLogisticsItem[]          @relation("LogisticsCreatedBy")
+  attendances                      EventAttendance[]             @relation("AttendanceUser")
+  attendancesRecorded              EventAttendance[]             @relation("AttendanceRecordedBy")
+  eventDocumentsAdded              EventDocument[]               @relation("EventDocumentAddedBy")
+  afterActionAuthored              EventAfterActionReport[]      @relation("AfterActionAuthor")
+  afterActionReviewed              EventAfterActionReport[]      @relation("AfterActionReviewer")
+  contentAuthored                  ContentItem[]                 @relation("ContentAuthor")
+  contentEdited                    ContentItem[]                 @relation("ContentEditor")
+  contentApproved                  ContentItem[]                 @relation("ContentApprover")
+  contentPublished                 ContentItem[]                 @relation("ContentPublisher")
+  contentRevisions                 ContentRevision[]             @relation("ContentRevisionActor")
+  financeAccountsCreated           FinanceAccount[]              @relation("FinanceAccountCreatedBy")
+  financePayeesCreated             FinancePayee[]                @relation("FinancePayeeCreatedBy")
+  contributionSourcesAdded         ContributionSource[]          @relation("ContributionSourceCreatedBy")
+  budgetLinesApproved              FinanceBudgetLine[]           @relation("BudgetLineApprovedBy")
+  budgetLinesCreated               FinanceBudgetLine[]           @relation("BudgetLineCreatedBy")
+  financeRequested                 FinanceTransaction[]          @relation("FinanceRequestedBy")
+  financeApproved                  FinanceTransaction[]          @relation("FinanceApprovedBy")
+  financeRejected                  FinanceTransaction[]          @relation("FinanceRejectedBy")
+  financePaid                      FinanceTransaction[]          @relation("FinancePaidBy")
+  financeDocumentsAdded            FinanceTransactionDocument[]  @relation("FinanceDocumentAddedBy")
+  financeEvents                    FinanceTransactionEvent[]     @relation("FinanceEventActor")
+  limitSettingsCreated             FinanceLimitSetting[]         @relation("LimitSettingCreatedBy")
+  limitSettingsVerified            FinanceLimitSetting[]         @relation("LimitSettingVerifiedBy")
+  limitSettingsVerificationChanged FinanceLimitSetting[]         @relation("LimitSettingVerificationChangedBy")
+  contributionSourcesDeclared      ContributionSource[]          @relation("ContributionSourceDeclaredBy")
+  reportTemplates                  ReportTemplate[]              @relation("ReportTemplateOwner")
+  reportExports                    ReportExport[]                @relation("ReportExportGeneratedBy")
+  notificationPreferences          NotificationPreference[]      @relation("NotificationPreferenceUser")
+  notificationAcks                 NotificationAcknowledgement[] @relation("NotificationAckUser")
+  breachesOwned                    BreachRecord[]                @relation("BreachOwner")
+  breachesReported                 BreachRecord[]                @relation("BreachReporter")
+  breachesClosed                   BreachRecord[]                @relation("BreachCloser")
+  breachEvents                     BreachEvent[]                 @relation("BreachEventActor")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -1044,17 +1052,21 @@ model ReferenceSequence {
 // ============================================================================
 
 model ElectionCycle {
-  id                 String              @id @default(uuid()) @db.Uuid
-  tenantId           String              @map("tenant_id") @db.Uuid
-  name               String
-  electionDate       DateTime            @map("election_date") @db.Date
-  jurisdiction       String              @default("Kenya")
-  legalConfigVersion String              @map("legal_config_version")
-  status             ElectionCycleStatus @default(DRAFT)
-  dataProvenance     DataProvenance      @default(LIVE) @map("data_provenance")
-  officialSources    Json                @default("[]") @map("official_sources")
-  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                    String              @id @default(uuid()) @db.Uuid
+  tenantId              String              @map("tenant_id") @db.Uuid
+  name                  String
+  electionDate          DateTime            @map("election_date") @db.Date
+  jurisdiction          String              @default("Kenya")
+  legalConfigVersion    String              @map("legal_config_version")
+  status                ElectionCycleStatus @default(DRAFT)
+  dataProvenance        DataProvenance      @default(LIVE) @map("data_provenance")
+  /// True when any figure in the cycle is simulated; labels every screen, snapshot and export. Never cleared (trigger).
+  containsSimulatedData Boolean             @default(false) @map("contains_simulated_data")
+  /// Where the cycle's data comes from and what is simulated (shown with the provenance label).
+  provenanceNotes       String?             @map("provenance_notes")
+  officialSources       Json                @default("[]") @map("official_sources")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   geographicUnits  GeographicUnit[]
@@ -1395,8 +1407,36 @@ model StoredFile {
   reportExports    ReportExport[]
   breachEvents     BreachEvent[]
 
+  displayHolds        StoredFileDisplayHold[] @relation("DisplayHoldOriginal")
+  displayHoldRedacted StoredFileDisplayHold[] @relation("DisplayHoldRedacted")
+
   @@unique([tenantId, sha256])
   @@map("stored_files")
+}
+
+/// "Not for display until redacted" hold on a stored image (e.g. a real 34A scan showing officers'
+/// and agents' names and signatures). While `redactedFileId` is null no signed URL is issued for the
+/// original; once a redacted copy is attached, viewers get the redacted copy. The original is never
+/// altered. Never deleted; the redacted copy is attached once (trigger).
+model StoredFileDisplayHold {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  storedFileId   String    @map("stored_file_id") @db.Uuid
+  reason         String
+  redactedFileId String?   @map("redacted_file_id") @db.Uuid
+  redactedById   String?   @map("redacted_by_id") @db.Uuid
+  redactedAt     DateTime? @map("redacted_at") @db.Timestamptz(3)
+  createdById    String    @map("created_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  storedFile   StoredFile  @relation("DisplayHoldOriginal", fields: [storedFileId], references: [id], onDelete: Restrict)
+  redactedFile StoredFile? @relation("DisplayHoldRedacted", fields: [redactedFileId], references: [id], onDelete: Restrict)
+  redactedBy   User?       @relation("DisplayHoldRedactor", fields: [redactedById], references: [id], onDelete: Restrict)
+  createdBy    User        @relation("DisplayHoldCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, storedFileId])
+  @@map("stored_file_display_holds")
 }
 
 // ============================================================================
@@ -4319,43 +4359,43 @@ model FinanceTransactionEvent {
 /// Tenant-configured finance limit (blueprint 15.3: never hardcoded). Versioned: value columns are
 /// immutable (DB trigger); a change creates a new row that supersedes this one.
 model FinanceLimitSetting {
-  id               String           @id @default(uuid()) @db.Uuid
-  tenantId         String           @map("tenant_id") @db.Uuid
-  kind             FinanceLimitKind
-  label            String
+  id                      String           @id @default(uuid()) @db.Uuid
+  tenantId                String           @map("tenant_id") @db.Uuid
+  kind                    FinanceLimitKind
+  label                   String
   /// SINGLE_SOURCE_CAP_PCT in basis points (2000 = 20 %).
-  valueBasisPoints Int?             @map("value_basis_points")
-  capBasis         FinanceCapBasis? @map("cap_basis")
+  valueBasisPoints        Int?             @map("value_basis_points")
+  capBasis                FinanceCapBasis? @map("cap_basis")
   /// SPENDING_LIMIT in minor units.
-  valueMinor       BigInt?          @map("value_minor")
-  currency         String?          @db.Char(3)
-  deadlineDate     DateTime?        @map("deadline_date") @db.Date
-  electionCycleId  String?          @map("election_cycle_id") @db.Uuid
-  periodLabel      String           @map("period_label")
-  officeType       OfficeType?      @map("office_type")
-  effectiveFrom    DateTime         @map("effective_from") @db.Date
-  effectiveTo      DateTime?        @map("effective_to") @db.Date
-  legalSourceNote  String           @map("legal_source_note")
-  verified         Boolean          @default(false)
-  verifiedById     String?          @map("verified_by_id") @db.Uuid
-  verifiedAt       DateTime?        @map("verified_at") @db.Timestamptz(3)
+  valueMinor              BigInt?          @map("value_minor")
+  currency                String?          @db.Char(3)
+  deadlineDate            DateTime?        @map("deadline_date") @db.Date
+  electionCycleId         String?          @map("election_cycle_id") @db.Uuid
+  periodLabel             String           @map("period_label")
+  officeType              OfficeType?      @map("office_type")
+  effectiveFrom           DateTime         @map("effective_from") @db.Date
+  effectiveTo             DateTime?        @map("effective_to") @db.Date
+  legalSourceNote         String           @map("legal_source_note")
+  verified                Boolean          @default(false)
+  verifiedById            String?          @map("verified_by_id") @db.Uuid
+  verifiedAt              DateTime?        @map("verified_at") @db.Timestamptz(3)
   /// Last person to change the verified flag (set or clear) and when; such a person
   /// cannot approve an entry that setting governs while it is not blocking.
-  verificationChangedById String?   @map("verification_changed_by_id") @db.Uuid
-  verificationChangedAt   DateTime? @map("verification_changed_at") @db.Timestamptz(3)
-  enforcement      LimitEnforcement @default(WARN)
-  supersedesId     String?          @unique @map("supersedes_id") @db.Uuid
-  createdById      String           @map("created_by_id") @db.Uuid
-  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  verificationChangedById String?          @map("verification_changed_by_id") @db.Uuid
+  verificationChangedAt   DateTime?        @map("verification_changed_at") @db.Timestamptz(3)
+  enforcement             LimitEnforcement @default(WARN)
+  supersedesId            String?          @unique @map("supersedes_id") @db.Uuid
+  createdById             String           @map("created_by_id") @db.Uuid
+  createdAt               DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  electionCycle ElectionCycle?       @relation("LimitSettingCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
-  verifiedBy    User?                @relation("LimitSettingVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
-  verificationChangedBy User?        @relation("LimitSettingVerificationChangedBy", fields: [verificationChangedById], references: [id], onDelete: Restrict)
-  createdBy     User                 @relation("LimitSettingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  supersedes    FinanceLimitSetting? @relation("LimitSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
-  supersededBy  FinanceLimitSetting? @relation("LimitSupersedes")
+  tenant                Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  electionCycle         ElectionCycle?       @relation("LimitSettingCycle", fields: [electionCycleId], references: [id], onDelete: Restrict)
+  verifiedBy            User?                @relation("LimitSettingVerifiedBy", fields: [verifiedById], references: [id], onDelete: Restrict)
+  verificationChangedBy User?                @relation("LimitSettingVerificationChangedBy", fields: [verificationChangedById], references: [id], onDelete: Restrict)
+  createdBy             User                 @relation("LimitSettingCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  supersedes            FinanceLimitSetting? @relation("LimitSupersedes", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy          FinanceLimitSetting? @relation("LimitSupersedes")
 
   @@index([tenantId, kind, effectiveFrom])
   @@map("finance_limit_settings")

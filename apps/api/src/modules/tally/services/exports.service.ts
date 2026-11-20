@@ -6,6 +6,7 @@ import {
   DATA_PROVENANCE_LABELS,
   type ExportFormat,
   findForbiddenTallyLanguage,
+  HISTORICAL_DEMO_NOTICE,
   OFFICE_TYPE_LABELS,
   type Paginated,
   type PaginationQuery,
@@ -17,6 +18,7 @@ import {
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
+import { cycleOrTenantDataLabel, dataLabelLines } from '../../../common/provenance/data-label';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { StorageService } from '../../../storage/storage.service';
 import type { CandidateTotalRow, StationRow } from '../domain/aggregation';
@@ -37,15 +39,31 @@ const FORMAT_META: Record<ExportFormat, { mime: string; ext: string }> = {
   PDF: { mime: 'application/pdf', ext: 'pdf' },
 };
 
-export function renderExport(doc: ExportDocument, format: ExportFormat): Buffer {
+/**
+ * Render an export. Every format ends with a footer carrying the parallel-tally
+ * banner and disclaimer, plus the "HISTORICAL DEMO / SIMULATED DATA" label when
+ * the dataset is a historical demo (`dataLabel`).
+ */
+export function renderExport(doc: ExportDocument, format: ExportFormat, dataLabel: string | null = null): Buffer {
+  const footer = exportFooter(dataLabel);
+  // CSV and XLSX have no page footer: a labelled dataset gets a closing footer section instead.
+  const tabular = dataLabel ? withFooter(doc, footer) : doc;
   switch (format) {
     case 'CSV':
-      return renderCsv(doc);
+      return renderCsv(tabular);
     case 'XLSX':
-      return renderXlsx(doc);
+      return renderXlsx(tabular);
     case 'PDF':
-      return renderPdf(doc, `${PARALLEL_TALLY_BANNER}. ${PARALLEL_TALLY_DISCLAIMER}`);
+      return renderPdf(doc, footer);
   }
+}
+
+export function exportFooter(dataLabel: string | null): string {
+  return `${dataLabel ? `${dataLabel}. ` : ''}${PARALLEL_TALLY_BANNER}. ${PARALLEL_TALLY_DISCLAIMER}`;
+}
+
+function withFooter(doc: ExportDocument, footer: string): ExportDocument {
+  return { ...doc, sections: [...doc.sections, { kind: 'text', name: 'Footer', lines: [footer] }] };
 }
 
 @Injectable()
@@ -110,6 +128,10 @@ export class ExportsService {
           refs.set(r.id, r.reference);
         }
         const generatedAt = new Date().toISOString();
+        // Label from the cycle / tenant now, or from the immutable snapshot content.
+        const snapLabel = (snap.totalsJson as { dataLabel?: string } | null)?.dataLabel ?? null;
+        const live = await cycleOrTenantDataLabel(tx, auth.tenantId, snap.electionCycleId);
+        const dataLabel = live ?? (snapLabel ? { label: snapLabel, notice: HISTORICAL_DEMO_NOTICE, notes: null } : null);
         const doc = buildExportDocument({
           snapshot: {
             id: snap.id,
@@ -125,6 +147,7 @@ export class ExportsService {
           },
           cycleName: cycle.name,
           provenanceLabel: DATA_PROVENANCE_LABELS[cycle.dataProvenance],
+          dataLabelLines: dataLabelLines(dataLabel),
           contestName: contest.name,
           officeLabel: OFFICE_TYPE_LABELS[contest.officeType],
           stationFormNumber: (snap.totalsJson as { stationFormNumber?: string }).stationFormNumber ?? `${contest.formSeries}A`,
@@ -162,7 +185,7 @@ export class ExportsService {
             `Export blocked: the content contains "${forbidden}", which must not be used for a parallel tally. Check candidate names and notes.`,
           );
         }
-        const buffer = renderExport(doc, body.format);
+        const buffer = renderExport(doc, body.format, dataLabel?.label ?? null);
         const meta = FORMAT_META[body.format];
         const { file } = await this.storage.storeImmutable(
           {

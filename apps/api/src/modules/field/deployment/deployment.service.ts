@@ -29,6 +29,7 @@ import {
 } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
+import { cycleOrTenantDataLabel } from '../../../common/provenance/data-label';
 import { AppException } from '../../../common/http/app-exception';
 import { AllExceptionsFilter } from '../../../common/http/all-exceptions.filter';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -754,7 +755,9 @@ export class DeploymentService {
         const s = (v ?? '').replace(/^[=+\-@\t\r]/, "'$&");
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       };
+      const demoLabel = await cycleOrTenantDataLabel(tx, auth.tenantId, cycle.id);
       const lines = [
+        ...(demoLabel ? [`# ${demoLabel.label}. ${demoLabel.notice}`] : []),
         `# ${DATA_PROVENANCE_LABELS[cycle.dataProvenance]}. Internal deployment roster for ${cycle.name}. Contact values are masked.`,
         'station_code,station_name,role,shift,status,agent_reference,agent_name,phone_masked',
         ...rows.map((d) =>

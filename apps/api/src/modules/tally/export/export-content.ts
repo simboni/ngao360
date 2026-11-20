@@ -30,6 +30,8 @@ export interface ExportContentInput {
   };
   cycleName: string;
   provenanceLabel: string;
+  /** "HISTORICAL DEMO / SIMULATED DATA" lines (label, notice, notes) for a historical demo; empty otherwise. */
+  dataLabelLines?: string[];
   contestName: string;
   officeLabel: string;
   stationFormNumber: string;
@@ -84,7 +86,13 @@ export function buildExportDocument(i: ExportContentInput): ExportDocument {
     {
       kind: 'text',
       name: 'Disclaimer',
-      lines: [PARALLEL_TALLY_BANNER, PARALLEL_TALLY_DISCLAIMER, `Data provenance: ${i.provenanceLabel}`, HASH_CAVEAT],
+      lines: [
+        PARALLEL_TALLY_BANNER,
+        PARALLEL_TALLY_DISCLAIMER,
+        ...(i.dataLabelLines ?? []),
+        `Data provenance: ${i.provenanceLabel}`,
+        HASH_CAVEAT,
+      ],
     },
     {
       kind: 'table',
@@ -179,5 +187,9 @@ export function buildExportDocument(i: ExportContentInput): ExportDocument {
       m.verifiedAt,
     ]),
   });
-  return { title: `NGAO TALLY internal parallel tally export - ${i.snapshot.reference}`, sections };
+  const demo = i.dataLabelLines?.[0];
+  return {
+    title: `NGAO TALLY internal parallel tally export - ${i.snapshot.reference}${demo ? ` - ${demo}` : ''}`,
+    sections,
+  };
 }

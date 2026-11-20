@@ -28,6 +28,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PermissionService } from '../rbac/permission.service';
 import type { AuthContext, MfaChallengeClaims } from './auth.types';
 import { TokenService } from './token.service';
+import { tenantDataLabel } from '../common/provenance/data-label';
 
 const INVALID_CREDENTIALS = 'Organisation, email or password is incorrect';
 // Precomputed hash used to equalise timing when the user does not exist.
@@ -490,6 +491,7 @@ export class AuthService {
       const { grants, roles, roleRequiresMfa } = await this.permissions.loadGrants(tx, userId);
       const permissions = [...new Set(grants.map((g) => g.permission))].sort();
       const moduleRows = await tx.tenantModule.findMany({ select: { moduleKey: true, enabled: true } });
+      const dataLabel = await tenantDataLabel(tx, tenantId);
       return {
         user: {
           id: user.id,
@@ -505,6 +507,8 @@ export class AuthService {
           type: tenant.type,
           timezone: tenant.timezone,
           locale: tenant.locale,
+          dataLabel: dataLabel?.label ?? null,
+          dataNotice: dataLabel ? [dataLabel.notice, dataLabel.notes].filter(Boolean).join(' ') : null,
         },
         roles,
         permissions,

@@ -4,6 +4,7 @@ import { AUDIT_ACTIONS, type AuditEvent, type AuditQuery, type Paginated, type S
 import { AUDIT_EXPORT_MAX_ROWS, type AuditEventDetail, auditEventsToCsv } from '@ngao360/shared';
 import { AuditService } from '../../audit/audit.service';
 import type { AuthContext } from '../../auth/auth.types';
+import { tenantDataLabel } from '../../common/provenance/data-label';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
@@ -109,7 +110,7 @@ export class AuditLogService {
             afterHash: e.afterHash,
             eventHash: e.eventHash,
           })),
-          { exportedAt, exportedBy: auth.displayName, filters },
+          { exportedAt, exportedBy: auth.displayName, filters, dataLabel: (await tenantDataLabel(tx, auth.tenantId))?.label ?? null },
         );
         const stored = await this.storage.storeImmutable(
           {

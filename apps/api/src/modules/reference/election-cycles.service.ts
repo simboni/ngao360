@@ -50,6 +50,8 @@ export class ElectionCyclesService {
           jurisdiction: dto.jurisdiction,
           legalConfigVersion: dto.legalConfigVersion,
           dataProvenance: dto.dataProvenance,
+          containsSimulatedData: dto.containsSimulatedData ?? dto.dataProvenance === 'HISTORICAL_DEMO',
+          provenanceNotes: dto.provenanceNotes ?? null,
           officialSources: dto.officialSources,
           status: 'DRAFT',
         },
@@ -75,6 +77,13 @@ export class ElectionCyclesService {
       if (dto.dataProvenance && dto.dataProvenance !== current.dataProvenance && current.status !== 'DRAFT') {
         throw immutable('Data provenance can only be changed while the election cycle is a draft');
       }
+      // The historical-demo / simulated-data label can be added, never removed (also a database guard).
+      if (current.dataProvenance === 'HISTORICAL_DEMO' && dto.dataProvenance && dto.dataProvenance !== 'HISTORICAL_DEMO') {
+        throw immutable('A historical demo election cycle keeps its provenance label');
+      }
+      if (current.containsSimulatedData && dto.containsSimulatedData === false) {
+        throw immutable('The simulated-data label of an election cycle cannot be removed');
+      }
       const row = await tx.electionCycle.update({
         where: { id },
         data: {
@@ -83,6 +92,8 @@ export class ElectionCyclesService {
           ...(dto.jurisdiction !== undefined ? { jurisdiction: dto.jurisdiction } : {}),
           ...(dto.legalConfigVersion !== undefined ? { legalConfigVersion: dto.legalConfigVersion } : {}),
           ...(dto.dataProvenance !== undefined ? { dataProvenance: dto.dataProvenance } : {}),
+          ...(dto.containsSimulatedData || dto.dataProvenance === 'HISTORICAL_DEMO' ? { containsSimulatedData: true } : {}),
+          ...(dto.provenanceNotes !== undefined ? { provenanceNotes: dto.provenanceNotes } : {}),
           ...(dto.officialSources !== undefined ? { officialSources: dto.officialSources } : {}),
           ...(dto.status !== undefined ? { status: dto.status } : {}),
         },

@@ -13,6 +13,7 @@ import { usePathname } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { MOBILE_PERMISSIONS, visibleMobileNav } from '@/components/field/mobile/mobile-nav';
 import { EmptyState } from '@/components/ui/empty-state';
+import { HistoricalDemoBanner } from '@/components/ui/historical-demo-banner';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
 import { unsentCount } from '@/lib/offline/queue';
@@ -107,6 +108,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
           </button>
         </div>
       </header>
+      <HistoricalDemoBanner label={auth.me?.tenant.dataLabel} notice={auth.me?.tenant.dataNotice} compact />
 
       {!s.online ? (
         <p className="bg-deep-blue px-3 py-1.5 text-meta text-white" role="status">

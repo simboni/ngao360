@@ -21,6 +21,7 @@ import {
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
+import { cycleOrTenantDataLabel } from '../../../common/provenance/data-label';
 import { PermissionService } from '../../../rbac/permission.service';
 import { type PermissionScope, stationScopeWhere } from '../../../rbac/scope';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -207,13 +208,14 @@ export class ResultsService {
           caseScopeWhere(scope) ?? {},
         ],
       };
-      const [openDiscrepancyCount, latest] = await Promise.all([
+      const [openDiscrepancyCount, latest, dataLabel] = await Promise.all([
         tx.discrepancyCase.count({ where: caseWhere }),
         tx.tallySnapshot.findFirst({
           where: { contestId: q.contestId, geographicUnitId: q.geographicUnitId ?? null },
           orderBy: { createdAt: 'desc' },
           select: { id: true },
         }),
+        cycleOrTenantDataLabel(tx, auth.tenantId, q.electionCycleId),
       ]);
       const a = c.aggregate;
       return {
@@ -231,6 +233,7 @@ export class ResultsService {
         openDiscrepancyCount,
         latestSnapshotId: latest?.id ?? null,
         disclaimer: PARALLEL_TALLY_DISCLAIMER,
+        dataLabel: dataLabel?.label ?? null,
       };
     });
   }
@@ -396,12 +399,15 @@ export class ResultsService {
       const c = await this.compute(tx, { ...body, scope });
       const a = c.aggregate;
       const includedSubmissionIds = [...a.includedSubmissionIds].sort();
+      // A historical demo snapshot carries its label inside the immutable, hashed content.
+      const dataLabel = await cycleOrTenantDataLabel(tx, auth.tenantId, body.electionCycleId);
       const totals = {
         totalVerifiedValidVotes: a.totalVerifiedValidVotes,
         rejectedBallots: a.rejectedBallots,
         candidates: a.candidates,
         stationFormNumber: c.stationFormNumber,
         stations: a.stations,
+        ...(dataLabel ? { dataLabel: dataLabel.label, dataNotice: dataLabel.notice } : {}),
       };
       const content = {
         electionCycleId: body.electionCycleId,
@@ -564,5 +570,6 @@ export function toSnapshot(s: SnapshotRow): TallySnapshot {
     releasedAt: iso(s.releasedAt),
     releasedBy: s.releasedBy,
     disclaimer: PARALLEL_TALLY_DISCLAIMER,
+    dataLabel: (s.totalsJson as { dataLabel?: string } | null)?.dataLabel ?? null,
   };
 }

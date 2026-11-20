@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
+import { HistoricalDemoBanner } from '@/components/ui/historical-demo-banner';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
@@ -51,6 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen ? <div className="fixed inset-0 z-30 bg-navy/40 md:hidden" onClick={() => setMobileOpen(false)} aria-hidden /> : null}
       <div className={cn('transition-[padding] duration-200', collapsed ? 'md:pl-sidebar-collapsed' : 'md:pl-sidebar')}>
         <Topbar onMenu={() => setMobileOpen(true)} />
+        <HistoricalDemoBanner label={me.tenant.dataLabel} notice={me.tenant.dataNotice} />
         <main id="main" className="px-4 py-6 md:px-8">
           {children}
         </main>

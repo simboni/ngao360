@@ -8,7 +8,7 @@
  * presents tally figures as official results.
  */
 import { z } from 'zod';
-import { OperationalStatusSchema } from '../enums';
+import { DataProvenanceSchema, OperationalStatusSchema } from '../enums';
 import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { FieldLocationSchema } from './common';
 import {
@@ -69,7 +69,7 @@ export const WarRoomOverviewSchema = z.object({
   label: z.literal(WAR_ROOM_LABEL),
   electionCycleId: UuidSchema,
   electionCycleName: z.string(),
-  dataProvenance: z.enum(['LIVE', 'HISTORICAL', 'SYNTHETIC']),
+  dataProvenance: DataProvenanceSchema,
   asOf: IsoDateTimeSchema,
   agentOperations: panel(
     z.object({

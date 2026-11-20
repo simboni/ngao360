@@ -91,6 +91,8 @@ export function toElectionCycle(r: Row<'ElectionCycle'>): ElectionCycle {
     legalConfigVersion: r.legalConfigVersion,
     status: r.status,
     dataProvenance: r.dataProvenance,
+    containsSimulatedData: r.containsSimulatedData,
+    provenanceNotes: r.provenanceNotes,
     officialSources: (Array.isArray(r.officialSources) ? r.officialSources : []) as OfficialSource[],
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),

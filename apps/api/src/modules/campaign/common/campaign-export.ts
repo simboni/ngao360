@@ -9,6 +9,7 @@
 import type { StoredFile, TenantTx } from '@ngao360/db';
 import type { ExportFormat, SensitivityLevel } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
+import { tenantDataLabel } from '../../../common/provenance/data-label';
 import type { StorageService } from '../../../storage/storage.service';
 import { renderCsv } from '../../tally/export/csv';
 import type { Cell, ExportDocument } from '../../tally/export/document';
@@ -51,6 +52,8 @@ export interface ExportHeader {
   classification: SensitivityLevel;
   disclaimer?: string | null;
   extraLines?: string[];
+  /** "HISTORICAL DEMO / SIMULATED DATA" for a historical demo organisation (set by storeExport). */
+  dataLabel?: string | null;
 }
 
 export function headerLines(h: ExportHeader): string[] {
@@ -61,6 +64,7 @@ export function headerLines(h: ExportHeader): string[] {
     `Filters: ${h.filtersDescription || 'None'}`,
     `Scope: ${h.appliedScope}`,
     `Data classification: ${CLASSIFICATION_LABELS[h.classification]}`,
+    ...(h.dataLabel ? [`Data label: ${h.dataLabel}`] : []),
     ...(h.disclaimer ? [`Disclaimer: ${h.disclaimer}`] : []),
     ...(h.extraLines ?? []),
   ];
@@ -80,7 +84,7 @@ export function renderDocument(doc: ExportDocument, format: ExportFormat, h: Exp
     case 'XLSX':
       return renderXlsx(doc);
     case 'PDF':
-      return renderPdf(doc, `${h.classification}${h.disclaimer ? `. ${h.disclaimer}` : ''}`);
+      return renderPdf(doc, `${h.dataLabel ? `${h.dataLabel}. ` : ''}${h.classification}${h.disclaimer ? `. ${h.disclaimer}` : ''}`);
   }
 }
 
@@ -94,8 +98,13 @@ export async function storeExport(
   format: ExportFormat,
   filenameStem: string,
 ): Promise<StoredFile> {
-  const doc = buildDocument(h, tables);
-  const buffer = renderDocument(doc, format, h);
+  // A historical demo organisation labels every export (docs/DEMO_2022.md).
+  const label = await tenantDataLabel(tx, auth.tenantId);
+  const labelled: ExportHeader = label
+    ? { ...h, dataLabel: label.label, extraLines: [...(h.extraLines ?? []), label.notice] }
+    : h;
+  const doc = buildDocument(labelled, tables);
+  const buffer = renderDocument(doc, format, labelled);
   const meta = EXPORT_FORMAT_META[format];
   const { file } = await storage.storeImmutable(
     {

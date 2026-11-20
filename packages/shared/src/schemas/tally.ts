@@ -535,6 +535,8 @@ export const LiveAggregateSchema = z.object({
   openDiscrepancyCount: z.number().int(),
   latestSnapshotId: UuidSchema.nullable(),
   disclaimer: z.string(),
+  /** "HISTORICAL DEMO / SIMULATED DATA" for a historical demo cycle (shown with the disclaimer). */
+  dataLabel: z.string().nullable().optional(),
 });
 export type LiveAggregate = z.infer<typeof LiveAggregateSchema>;
 
@@ -583,6 +585,8 @@ export const TallySnapshotSchema = z.object({
   releasedAt: IsoDateTimeSchema.nullable(),
   releasedBy: UserRefSchema.nullable(),
   disclaimer: z.string(),
+  /** Demo label stored inside the immutable snapshot content (covered by the content hash). */
+  dataLabel: z.string().nullable().optional(),
 });
 export type TallySnapshot = z.infer<typeof TallySnapshotSchema>;
 

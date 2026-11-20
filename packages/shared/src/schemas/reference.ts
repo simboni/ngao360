@@ -36,6 +36,10 @@ export const ElectionCycleSchema = z.object({
   legalConfigVersion: z.string(),
   status: ElectionCycleStatusSchema,
   dataProvenance: DataProvenanceSchema,
+  /** True when any figure in the cycle is simulated (labels every screen, snapshot and export). */
+  containsSimulatedData: z.boolean().optional(),
+  /** Where the data comes from and what is simulated. */
+  provenanceNotes: z.string().nullable().optional(),
   officialSources: z.array(OfficialSourceSchema),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
@@ -48,6 +52,9 @@ export const CreateElectionCycleSchema = z.object({
   jurisdiction: z.string().trim().min(2).max(100).default('Kenya'),
   legalConfigVersion: z.string().trim().min(1).max(100),
   dataProvenance: DataProvenanceSchema.default('LIVE'),
+  /** Can be set, never cleared once saved (database guard). */
+  containsSimulatedData: z.boolean().optional(),
+  provenanceNotes: z.string().trim().max(4000).nullable().optional(),
   officialSources: z.array(OfficialSourceSchema).default([]),
 });
 export type CreateElectionCycle = z.infer<typeof CreateElectionCycleSchema>;

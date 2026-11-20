@@ -47,6 +47,12 @@ export const MeResponseSchema = z.object({
     type: TenantTypeSchema,
     timezone: z.string(),
     locale: z.string(),
+    /**
+     * "HISTORICAL DEMO / SIMULATED DATA" for a historical demo organisation (shown on every
+     * screen next to the unofficial disclaimer); null otherwise.
+     */
+    dataLabel: z.string().nullable().optional(),
+    dataNotice: z.string().nullable().optional(),
   }),
   roles: z.array(z.object({ id: UuidSchema, key: z.string(), name: z.string() })),
   /** Flattened permission keys (any scope). Navigation only; API re-checks every request. */

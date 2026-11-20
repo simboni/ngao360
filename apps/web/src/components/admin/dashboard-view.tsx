@@ -215,7 +215,7 @@ export function DashboardView() {
       {data?.includesTally ? <ParallelTallyBanner /> : null}
       {provenance && provenance !== 'LIVE' ? (
         <Notice tone="info" className="mb-4">
-          {DATA_PROVENANCE_LABELS[provenance]}: figures on this page come from a {provenance === 'SYNTHETIC' ? 'synthetic rehearsal dataset' : 'historical dataset'}, not live returns.
+          {DATA_PROVENANCE_LABELS[provenance]}: figures on this page come from a {provenance === 'SYNTHETIC' ? 'synthetic rehearsal dataset' : provenance === 'HISTORICAL_DEMO' ? 'historical demo dataset with SIMULATED figures' : 'historical dataset'}, not live returns.
         </Notice>
       ) : null}
       {error ? (

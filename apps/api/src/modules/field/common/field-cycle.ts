@@ -1,5 +1,5 @@
 import type { TenantTx } from '@ngao360/db';
-import { type FieldModuleConfig, FieldModuleConfigSchema } from '@ngao360/shared';
+import { type DataProvenance, type FieldModuleConfig, FieldModuleConfigSchema } from '@ngao360/shared';
 import { AppException } from '../../../common/http/app-exception';
 
 /**
@@ -11,7 +11,7 @@ export async function resolveFieldCycle(
   tx: TenantTx,
   config: FieldModuleConfig,
   requested?: string | null,
-): Promise<{ id: string; name: string; electionDate: Date; dataProvenance: 'LIVE' | 'HISTORICAL' | 'SYNTHETIC' }> {
+): Promise<{ id: string; name: string; electionDate: Date; dataProvenance: DataProvenance }> {
   const select = { id: true, name: true, electionDate: true, dataProvenance: true } as const;
   const id = requested ?? config.electionCycleId;
   const cycle = id

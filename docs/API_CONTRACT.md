@@ -37,6 +37,7 @@ as true.
 | Tenancy | All data access goes through `PrismaService.tenantTx()` / `withTenant()`, so Postgres RLS (`app.tenant_id`) applies. Never accept `tenantId` from the client. |
 | Language | No endpoint or export may label a candidate "winner", "elected" or "declared". Aggregate responses carry `disclaimer: PARALLEL_TALLY_DISCLAIMER`. |
 | Provenance | Data from a cycle with `dataProvenance` of `HISTORICAL` or `SYNTHETIC` must be labelled with `DATA_PROVENANCE_LABELS` in the UI and in exports. |
+| Historical demo | A cycle with `dataProvenance = HISTORICAL_DEMO` or `containsSimulatedData = true`, or a tenant with `historical_demo`, also carries `HISTORICAL_DEMO_LABEL` ("HISTORICAL DEMO / SIMULATED DATA") next to the parallel-tally disclaimer: `GET /auth/me` returns `tenant.dataLabel` / `tenant.dataNotice` (web shell banner on every screen), `GET /tally/results/live` and every snapshot return `dataLabel` (stored inside the hashed snapshot content), and every export (tally, report builder, finance, attendance, breach, audit log, deployment roster) prints it in its header and footer. The label can be added, never removed (database triggers). See `docs/DEMO_2022.md`. |
 
 ---
 
@@ -75,7 +76,7 @@ unless another action is named.
 | --- | --- | --- | --- | --- | --- |
 | GET | `/reference/election-cycles` | `reference.view` | `PaginationQuery` | `Paginated<ElectionCycle>` | |
 | GET | `/reference/election-cycles/:id` | `reference.view` | `IdParam` | `ElectionCycle` | |
-| POST | `/reference/election-cycles` | `reference.edit` | `CreateElectionCycle` | `ElectionCycle` (201) | Takes `dataProvenance` (`LIVE`, `HISTORICAL` or `SYNTHETIC`). |
+| POST | `/reference/election-cycles` | `reference.edit` | `CreateElectionCycle` | `ElectionCycle` (201) | Takes `dataProvenance` (`LIVE`, `HISTORICAL`, `SYNTHETIC` or `HISTORICAL_DEMO`), optional `containsSimulatedData` (implied by `HISTORICAL_DEMO`) and `provenanceNotes`. The simulated flag and the `HISTORICAL_DEMO` provenance can be set but never cleared (409 `IMMUTABLE_RECORD`). |
 | PATCH | `/reference/election-cycles/:id` | `reference.edit` | `UpdateElectionCycle` | `ElectionCycle` | Status follows `DRAFT → ACTIVE → CLOSED → ARCHIVED`. |
 
 ### 4.2 Geography

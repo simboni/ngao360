@@ -10,6 +10,7 @@ import {
   type GeographyBreakdownRow,
   PARALLEL_TALLY_BANNER,
   PARALLEL_TALLY_DISCLAIMER,
+  historicalDemoLabelFor,
   type ScopeType,
   type TallySnapshot,
 } from '@ngao360/shared';
@@ -205,6 +206,9 @@ function ContestDashboard({ cycle, contest }: { cycle: ElectionCycle; contest: C
   const exportTarget = selectedSnapshot ?? latestSnapshot;
   const openCases = live.data?.openDiscrepancyCount ?? 0;
   const loadError = live.error ?? breakdown.error;
+  // Historical demo label: from the live aggregate, the snapshot shown or the cycle itself.
+  const dataLabel =
+    live.data?.dataLabel ?? selectedSnapshot?.dataLabel ?? historicalDemoLabelFor(cycle);
 
   return (
     <div className="space-y-4">
@@ -218,6 +222,7 @@ function ContestDashboard({ cycle, contest }: { cycle: ElectionCycle; contest: C
             </h2>
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge kind="provenance" status={cycle.dataProvenance} />
+              {dataLabel ? <StatusBadge kind="custom" status="historical-demo" label={dataLabel} tone="danger" icon={Info} /> : null}
               <StatusBadge kind="custom" status="parallel" label={PARALLEL_TALLY_BANNER} tone="pending" icon={Info} />
             </div>
             {view ? (
@@ -367,7 +372,10 @@ function ContestDashboard({ cycle, contest }: { cycle: ElectionCycle; contest: C
         onOpen={(id) => router.push(`/tally/verify/${id}`)}
       />
 
-      <p className="rounded-card border border-line bg-surface p-4 text-meta text-slate">{PARALLEL_TALLY_DISCLAIMER}</p>
+      <p className="rounded-card border border-line bg-surface p-4 text-meta text-slate">
+        {dataLabel ? <strong className="block text-error">{dataLabel}</strong> : null}
+        {PARALLEL_TALLY_DISCLAIMER}
+      </p>
     </div>
   );
 }

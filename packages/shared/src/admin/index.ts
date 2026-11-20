@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { AuditEventSchema } from '../schemas/admin';
+import { DataProvenanceSchema } from '../enums';
 import { IsoDateTimeSchema, UuidSchema } from '../schemas/common';
 import { KpiSchema } from '../schemas/dashboard';
 import {
@@ -231,8 +232,12 @@ export interface AuditCsvRow {
   eventHash: string;
 }
 
-export function auditEventsToCsv(rows: readonly AuditCsvRow[], header: { exportedAt: string; exportedBy: string; filters: string }): string {
+export function auditEventsToCsv(
+  rows: readonly AuditCsvRow[],
+  header: { exportedAt: string; exportedBy: string; filters: string; dataLabel?: string | null },
+): string {
   const lines = [
+    ...(header.dataLabel ? [`# ${header.dataLabel}`] : []),
     `# NGAO360 audit export; exported ${header.exportedAt} by ${header.exportedBy}; filters: ${header.filters}`,
     AUDIT_CSV_COLUMNS.join(','),
   ];
@@ -314,7 +319,7 @@ export const DashboardSummaryExtendedSchema = z.object({
   recentActivity: z.array(DashboardActivitySchema),
   priorityQueue: z.array(DashboardQueueItemSchema),
   electionCycle: z
-    .object({ id: UuidSchema, name: z.string(), dataProvenance: z.enum(['LIVE', 'HISTORICAL', 'SYNTHETIC']) })
+    .object({ id: UuidSchema, name: z.string(), dataProvenance: DataProvenanceSchema })
     .nullable(),
   registryVersion: z.object({ id: UuidSchema, version: z.string(), stationCount: z.number().int() }).nullable(),
   /** Contest the tally KPIs refer to (station-level forms of one contest). */

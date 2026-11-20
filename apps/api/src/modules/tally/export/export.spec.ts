@@ -1,6 +1,13 @@
 import { inflateRawSync } from 'node:zlib';
-import { findForbiddenTallyLanguage, PARALLEL_TALLY_BANNER, PARALLEL_TALLY_DISCLAIMER } from '@ngao360/shared';
-import { renderExport } from '../services/exports.service';
+import {
+  exportLabelLines,
+  findForbiddenTallyLanguage,
+  HISTORICAL_DEMO_LABEL,
+  HISTORICAL_DEMO_NOTICE,
+  PARALLEL_TALLY_BANNER,
+  PARALLEL_TALLY_DISCLAIMER,
+} from '@ngao360/shared';
+import { exportFooter, renderExport } from '../services/exports.service';
 import { csvCell, renderCsv } from './csv';
 import { documentText } from './document';
 import { buildExportDocument, type ExportContentInput } from './export-content';
@@ -153,5 +160,46 @@ describe('PDF writer', () => {
     expect(renderExport(d, 'CSV').length).toBeGreaterThan(100);
     expect(renderExport(d, 'XLSX').subarray(0, 2).toString()).toBe('PK');
     expect(renderExport(d, 'PDF').subarray(0, 4).toString()).toBe('%PDF');
+  });
+});
+
+describe('historical demo label (docs/DEMO_2022.md)', () => {
+  const demo: ExportContentInput = {
+    ...input,
+    provenanceLabel: 'Historical demo — simulated data, not live or official results',
+    dataLabelLines: exportLabelLines(HISTORICAL_DEMO_LABEL).slice(2),
+  };
+  const doc = buildExportDocument(demo);
+
+  it('puts the demo label next to the unofficial disclaimer in the document', () => {
+    const text = documentText(doc);
+    expect(text).toContain(PARALLEL_TALLY_DISCLAIMER);
+    expect(text).toContain(PARALLEL_TALLY_BANNER);
+    expect(text).toContain(HISTORICAL_DEMO_LABEL);
+    expect(text).toContain(HISTORICAL_DEMO_NOTICE);
+    expect(doc.title).toContain(HISTORICAL_DEMO_LABEL);
+    expect(findForbiddenTallyLanguage(text)).toBeNull();
+  });
+
+  it('every format carries both labels, the PDF on every page footer', () => {
+    const csv = renderExport(doc, 'CSV', HISTORICAL_DEMO_LABEL).toString('utf8');
+    expect(csv).toContain(HISTORICAL_DEMO_LABEL);
+    expect(csv).toContain('internal parallel tally');
+    expect(csv).toContain('# Footer');
+    const xlsx = [...unzip(renderExport(doc, 'XLSX', HISTORICAL_DEMO_LABEL)).values()].join('\n');
+    expect(xlsx).toContain(HISTORICAL_DEMO_LABEL);
+    expect(xlsx).toContain('not an official IEBC result');
+    const many = { ...demo, stations: Array.from({ length: 200 }, (_, i) => ({ ...input.stations![1]!, code: `S${i}` })) };
+    const pdf = renderExport(buildExportDocument(many), 'PDF', HISTORICAL_DEMO_LABEL).toString('latin1');
+    const pages = (pdf.match(/\/Type \/Page /g) ?? []).length;
+    expect(pages).toBeGreaterThan(2);
+    expect((pdf.match(/HISTORICAL DEMO \/ SIMULATED DATA\. Parallel tally - not an official IEBC result/g) ?? []).length).toBe(pages);
+    expect(exportFooter(HISTORICAL_DEMO_LABEL)).toContain(PARALLEL_TALLY_DISCLAIMER);
+  });
+
+  it('an ordinary dataset has no demo label and no extra footer section', () => {
+    const csv = renderExport(buildExportDocument(input), 'CSV').toString('utf8');
+    expect(csv).not.toContain(HISTORICAL_DEMO_LABEL);
+    expect(csv).not.toContain('# Footer');
   });
 });

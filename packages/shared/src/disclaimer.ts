@@ -53,3 +53,50 @@ export function findForbiddenTallyLanguage(text: string): string | null {
   const m = FORBIDDEN_RE.exec(stripped);
   return m ? (m[1] ?? m[0]) : null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Historical demo / simulated data label (docs/DEMO_2022.md)                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Label carried by every screen, snapshot and export of a historical demo
+ * (a cycle with provenance HISTORICAL_DEMO or a simulated-data flag, or a tenant
+ * marked as a historical demo). It is shown IN ADDITION to the parallel-tally
+ * banner and disclaimer, never instead of them.
+ */
+export const HISTORICAL_DEMO_LABEL = 'HISTORICAL DEMO / SIMULATED DATA';
+
+export const HISTORICAL_DEMO_NOTICE =
+  'Historical demonstration dataset. Public administrative names come from historical (2022) ' +
+  'reference data; station-level figures, form images, agents and reviewers are SIMULATED and ' +
+  'must not be read as real results for any real person or polling station. Nothing here is an ' +
+  'official IEBC result.';
+
+export interface ProvenanceMarker {
+  dataProvenance: string;
+  containsSimulatedData?: boolean | null;
+}
+
+/** True when a cycle must carry the "HISTORICAL DEMO / SIMULATED DATA" label. */
+export function requiresHistoricalDemoLabel(cycle: ProvenanceMarker | null | undefined): boolean {
+  if (!cycle) return false;
+  return cycle.dataProvenance === 'HISTORICAL_DEMO' || cycle.containsSimulatedData === true;
+}
+
+/** The demo label for a cycle (null when none applies). */
+export function historicalDemoLabelFor(cycle: ProvenanceMarker | null | undefined): string | null {
+  return requiresHistoricalDemoLabel(cycle) ? HISTORICAL_DEMO_LABEL : null;
+}
+
+/**
+ * Lines every export footer / disclaimer block of a labelled dataset carries:
+ * the existing unofficial wording first, then the demo label and notice.
+ */
+export function exportLabelLines(dataLabel: string | null | undefined, provenanceNotes?: string | null): string[] {
+  const lines = [PARALLEL_TALLY_BANNER, PARALLEL_TALLY_DISCLAIMER];
+  if (dataLabel) {
+    lines.push(dataLabel, HISTORICAL_DEMO_NOTICE);
+    if (provenanceNotes) lines.push(`Data provenance notes: ${provenanceNotes}`);
+  }
+  return lines;
+}
