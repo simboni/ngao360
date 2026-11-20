@@ -1,4 +1,5 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { CaptureWorkspace } from '@/components/tally/capture-workspace';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Form capture' };
 
@@ -6,12 +7,8 @@ export const metadata = { title: 'Form capture' };
 export default async function CapturePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Form capture"
-      screen="S19 Form capture"
-      description={`Capture metadata and figures for submission ${id}. The original image is never hidden or overwritten.`}
-      breadcrumbs={[{ label: 'NGAO TALLY' }, { label: 'Form inbox', href: '/tally/inbox' }, { label: 'Capture' }]}
-      anyOf={['tally.capture']}
-    />
+    <RequirePagePermission anyOf={['tally.capture', 'tally.submit', 'tally.view']}>
+      <CaptureWorkspace id={id} />
+    </RequirePagePermission>
   );
 }

@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { DiscrepancyList } from '@/components/tally/discrepancy-list';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Discrepancies' };
 
 /** Discrepancy case list. API §5.5. */
 export default function DiscrepanciesPage() {
   return (
-    <ModulePlaceholder
-      title="Discrepancies"
-      screen="Discrepancy case list"
-      description="Open variance cases by type, severity, age and assigned reviewer."
-      breadcrumbs={[{ label: 'NGAO TALLY' }, { label: 'Discrepancies' }]}
-      anyOf={['tally.discrepancy.view']}
-    />
+    <RequirePagePermission anyOf={['tally.discrepancy.view']}>
+      <Suspense fallback={<p className="text-slate">Loading…</p>}>
+        <DiscrepancyList />
+      </Suspense>
+    </RequirePagePermission>
   );
 }

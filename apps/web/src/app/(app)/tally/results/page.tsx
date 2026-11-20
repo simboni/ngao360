@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { ResultsDashboard } from '@/components/tally/results-dashboard';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Parallel tally' };
 
-/** S21 Parallel tally (verified aggregate only, with coverage and denominator). API §5.6. */
+/** S21 Parallel tally (verified aggregate only, with coverage and denominator). API §5.6–5.7. */
 export default function ResultsPage() {
   return (
-    <ModulePlaceholder
-      title="Parallel tally"
-      screen="S21 Parallel tally"
-      description="Verified aggregate only. Every total shows included stations against the approved registry denominator; missing stations are never counted as zero."
-      breadcrumbs={[{ label: 'NGAO TALLY' }, { label: 'Parallel tally' }]}
-      anyOf={['tally.results.view']}
-    />
+    <RequirePagePermission anyOf={['tally.results.view']}>
+      <Suspense fallback={<p className="text-slate">Loading…</p>}>
+        <ResultsDashboard />
+      </Suspense>
+    </RequirePagePermission>
   );
 }

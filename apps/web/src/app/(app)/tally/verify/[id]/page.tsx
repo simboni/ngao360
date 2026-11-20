@@ -1,17 +1,18 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { VerifyWorkspace } from '@/components/tally/verify-workspace';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Verification' };
 
-/** S20 Verification workspace (second-person review). API §5.4. */
+/**
+ * S20 Verification workspace (second-person review). API §5.4. Viewers with
+ * `tally.view` can open it read-only (for example from a dashboard station
+ * row); decision controls follow the server-computed allowed actions.
+ */
 export default async function VerifyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <ModulePlaceholder
-      title="Verification"
-      screen="S20 Verification workspace"
-      description={`Independently compare the original image with captured values for submission ${id}. You cannot verify your own submission.`}
-      breadcrumbs={[{ label: 'NGAO TALLY' }, { label: 'Verification queue', href: '/tally/inbox?view=awaiting_me' }, { label: 'Verify' }]}
-      anyOf={['tally.verify', 'tally.approve']}
-    />
+    <RequirePagePermission anyOf={['tally.verify', 'tally.approve', 'tally.view']}>
+      <VerifyWorkspace id={id} />
+    </RequirePagePermission>
   );
 }
