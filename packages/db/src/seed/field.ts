@@ -190,6 +190,7 @@ export async function seedField(prisma: PrismaClient, o: FieldSeedOptions): Prom
 
   if (await prisma.agent.findUnique({ where: { tenantId_reference: { tenantId, reference: ref('AGT', 1) } } })) {
     console.log('  field: operational data already present (unchanged)');
+    await syncFieldReferenceSequences(prisma, tenantId);
     return;
   }
 
@@ -642,4 +643,26 @@ export async function seedField(prisma: PrismaClient, o: FieldSeedOptions): Prom
     statuses++;
   }
   console.log(`  field: ${checklists} readiness checklists, 2 report templates, ${reportNo} field reports, ${incNo} incidents, ${statuses} station statuses`);
+  await syncFieldReferenceSequences(prisma, tenantId);
+}
+
+/**
+ * The seed writes AGT / FRP / INC references directly, so move the tenant's
+ * reference counters past them; otherwise the API's next reference collides
+ * with a seeded one (unique violation). Never moves a counter backwards.
+ */
+async function syncFieldReferenceSequences(prisma: PrismaClient, tenantId: string): Promise<void> {
+  const tables = { AGT: 'agents', FRP: 'field_reports', INC: 'incidents' } as const;
+  for (const [prefix, table] of Object.entries(tables)) {
+    const name = `${prefix}-${YEAR}`;
+    const rows = await prisma.$queryRawUnsafe<Array<{ max: number | null }>>(
+      `SELECT max(substring(reference from '([0-9]+)$')::int) AS max FROM ${table} WHERE tenant_id = $1::uuid AND reference LIKE $2`,
+      tenantId,
+      `${name}-%`,
+    );
+    const next = (rows[0]?.max ?? 0) + 1;
+    await prisma.$executeRaw`
+      INSERT INTO reference_sequences (tenant_id, name, next_value) VALUES (${tenantId}::uuid, ${name}, ${next})
+      ON CONFLICT (tenant_id, name) DO UPDATE SET next_value = GREATEST(reference_sequences.next_value, EXCLUDED.next_value)`;
+  }
 }

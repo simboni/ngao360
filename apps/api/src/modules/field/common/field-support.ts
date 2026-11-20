@@ -283,3 +283,29 @@ export async function storeFieldFile(
     tx,
   );
 }
+
+/**
+ * A caller linked to a field agent record (the mobile polling-agent account)
+ * reports only for stations they are deployed to in the cycle (assigned,
+ * confirmed, checked in or checked out; not replaced or cancelled), even when
+ * their grant is wider. Callers not linked to an agent record (coordinators,
+ * desk officers) are limited by their grant scope alone. Area-level locations
+ * (no station code) are left to the scope check.
+ */
+export async function assertAgentDeployedAt(tx: TenantTx, auth: AuthContext, electionCycleId: string, pollingStationCode: string | null, message: string): Promise<void> {
+  if (!pollingStationCode) return;
+  const agent = await tx.agent.findUnique({ where: { userId: auth.userId }, select: { id: true } });
+  if (!agent) return;
+  const deployed = await tx.deployment.findFirst({
+    where: { agentId: agent.id, electionCycleId, pollingStationCode, status: { in: ['ASSIGNED', 'CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'] } },
+    select: { id: true },
+  });
+  if (!deployed) throw AppException.outOfScope(message);
+}
+
+/** True when a P2002 unique violation is on a client idempotency key index (not a reference or other key). */
+export function isIdempotencyKeyViolation(e: { meta?: Record<string, unknown> }): boolean {
+  const target = e.meta?.target;
+  const text = Array.isArray(target) ? target.join(',') : String(target ?? '');
+  return /idempotency/i.test(text);
+}

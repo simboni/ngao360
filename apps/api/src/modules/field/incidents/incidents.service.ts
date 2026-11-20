@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { nextReference, Prisma, type TenantTx } from '@ngao360/db';
 import {
+  type UserRef,
   AUDIT_ACTIONS,
   type AddIncidentEvent,
   type AssignIncident,
@@ -40,6 +41,8 @@ import { ClientSubmissionLedger } from '../common/client-submission.ledger';
 import { resolveFieldCycle } from '../common/field-cycle';
 import { fieldGeoLocation, fieldScopeWhere, loadFieldLocations, resolveFieldLocation } from '../common/field-location';
 import {
+  isIdempotencyKeyViolation,
+  assertAgentDeployedAt,
   USER_REF,
   asArray,
   assertOfflineAge,
@@ -149,6 +152,19 @@ export class IncidentsService {
     };
   }
 
+  /**
+   * Active users who may be assigned this incident: field.incidents.triage over
+   * its location (the same rule assign/escalate re-check). Names only.
+   */
+  assignableUsers(_auth: AuthContext, id: string): Promise<UserRef[]> {
+    return this.prisma.tenantTx(async (tx) => {
+      const i = await this.load(tx, id);
+      const ids = await usersWithPermission(tx, 'field.incidents.triage', fieldGeoLocation(i));
+      if (ids.length === 0) return [];
+      return tx.user.findMany({ where: { id: { in: ids }, status: 'ACTIVE' }, select: { id: true, displayName: true }, orderBy: { displayName: 'asc' }, take: 500 });
+    });
+  }
+
   /** The assignee must be ACTIVE and hold field.incidents.triage over the incident location (400). */
   private async assertAssignee(tx: TenantTx, i: IncidentRow, assigneeId: string): Promise<void> {
     const ok = await usersWithPermission(tx, 'field.incidents.triage', fieldGeoLocation(i), { only: [assigneeId] });
@@ -165,6 +181,7 @@ export class IncidentsService {
       reference: i.reference,
       category: i.category,
       reportedCategory: i.reportedCategory,
+      initialSeverity: i.initialSeverity,
       severity: i.severity,
       status: i.status,
       outcome: i.outcome,
@@ -315,6 +332,7 @@ export class IncidentsService {
     if (!scopeAllows(this.permissions.scopeFor(auth, 'field.incidents.report'), fieldGeoLocation(loc))) {
       throw AppException.outOfScope('You can only report incidents at your own station(s) or area');
     }
+    await assertAgentDeployedAt(tx, auth, cycle.id, loc.pollingStationCode, 'You can only report incidents at the station(s) you are deployed to');
     const files = await loadOwnEvidenceFiles(tx, auth, dto.evidenceFileIds, ['evidenceFileIds']);
     const severity = config.incidentSeverityDefaults[dto.category];
     const reference = await nextReference(tx, auth.tenantId, 'INC', cycle.electionDate.getUTCFullYear());
@@ -349,7 +367,9 @@ export class IncidentsService {
         select: { id: true },
       });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // Only the client idempotency key's unique index means "sent before"; any other
+      // unique violation (e.g. a reference collision) is a server error, not the device's.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002' && isIdempotencyKeyViolation(e)) {
         throw new AppException(ERROR_CODES.IDEMPOTENCY_KEY_REUSED, HttpStatus.CONFLICT, 'This incident was already sent with different content. Save it again as a new report.');
       }
       throw e;

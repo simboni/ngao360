@@ -35,6 +35,8 @@ import { ClientSubmissionLedger } from '../common/client-submission.ledger';
 import { resolveFieldCycle } from '../common/field-cycle';
 import { fieldGeoLocation, fieldScopeWhere, loadFieldLocations, resolveFieldLocation } from '../common/field-location';
 import {
+  isIdempotencyKeyViolation,
+  assertAgentDeployedAt,
   USER_REF,
   asArray,
   assertOfflineAge,
@@ -336,6 +338,7 @@ export class ReportsService {
     if (!scopeAllows(this.permissions.scopeFor(auth, 'field.reports.submit'), fieldGeoLocation(loc))) {
       throw AppException.outOfScope('You can only report on your own station(s) or area');
     }
+    await assertAgentDeployedAt(tx, auth, cycle.id, loc.pollingStationCode, 'You can only report on the station(s) you are deployed to');
     const issues = validateFieldAnswers(this.templateSchema(template), dto.answers);
     if (issues.length > 0) {
       throw AppException.validation('Some answers need attention', issues.map((i) => ({ path: ['answers', i.questionKey], message: i.message })));
@@ -378,7 +381,9 @@ export class ReportsService {
         select: { id: true },
       });
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // Only the client idempotency key's unique index means "sent before"; any other
+      // unique violation (e.g. a reference collision) is a server error, not the device's.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002' && isIdempotencyKeyViolation(e)) {
         throw new AppException(ERROR_CODES.IDEMPOTENCY_KEY_REUSED, HttpStatus.CONFLICT, 'This report was already sent with different content. Save it again as a new report.');
       }
       throw e;
