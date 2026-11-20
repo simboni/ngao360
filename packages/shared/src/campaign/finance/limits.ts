@@ -9,7 +9,7 @@
  */
 import { z } from 'zod';
 import { OfficeTypeSchema } from '../../enums';
-import { IsoDateSchema, IsoDateTimeSchema, ReasonSchema, UserRefSchema, UuidSchema } from '../../schemas/common';
+import { IsoDateSchema, IsoDateTimeSchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../../schemas/common';
 import { FinanceCapBasisSchema, FinanceLimitKindSchema, LimitEnforcementSchema, type FinanceCapBasis, type FinanceLimitKind, type LimitEnforcement } from '../enums';
 import { basisPoints, CurrencySchema, MinorUnitsSchema } from './money';
 
@@ -94,7 +94,7 @@ export const FinanceLimitQuerySchema = z.object({
   electionCycleId: UuidSchema.optional(),
   /** Only settings in effect on this date. */
   activeOn: IsoDateSchema.optional(),
-  includeSuperseded: z.coerce.boolean().default(false),
+  includeSuperseded: QueryBooleanSchema.default(false),
 });
 export type FinanceLimitQuery = z.infer<typeof FinanceLimitQuerySchema>;
 

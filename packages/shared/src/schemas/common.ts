@@ -76,6 +76,15 @@ export const ERROR_CODES = {
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 
 /** A reason is mandatory for every change to captured values and for high-risk actions. */
+/**
+ * Boolean query-string flag. `z.coerce.boolean()` turns the string "false" into
+ * true; this accepts true/false/1/0 (and real booleans) and nothing else.
+ */
+export const QueryBooleanSchema = z.preprocess(
+  (v) => (v === 'true' || v === '1' ? true : v === 'false' || v === '0' ? false : v),
+  z.boolean(),
+);
+
 export const ReasonSchema = z.string().trim().min(3).max(2000);
 
 /** Lightweight reference to a user, used in many responses. */

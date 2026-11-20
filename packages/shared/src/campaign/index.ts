@@ -15,3 +15,4 @@ export * from './finance';
 export * from './reports';
 export * from './notifications';
 export * from './breach';
+export * from './requests';

@@ -5,7 +5,7 @@
  * API contract §27.
  */
 import { z } from 'zod';
-import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../../schemas/common';
+import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../../schemas/common';
 import { CampaignExpectedVersionSchema, CampaignFileSchema, DepartmentRefSchema } from '../common';
 import {
   BudgetLineStatusSchema,
@@ -259,7 +259,7 @@ export const FinanceTransactionQuerySchema = PaginationQuerySchema.extend({
   budgetLineId: UuidSchema.optional(),
   from: IsoDateSchema.optional(),
   to: IsoDateSchema.optional(),
-  flagged: z.coerce.boolean().optional(),
+  flagged: QueryBooleanSchema.optional(),
   view: z.enum(['all', 'awaiting_my_approval', 'awaiting_payment', 'my_requests']).default('all'),
 });
 export type FinanceTransactionQuery = z.infer<typeof FinanceTransactionQuerySchema>;

@@ -108,7 +108,11 @@ describeDb('Campaign operations (integration)', () => {
       const blocked = await lead.post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', expectedVersion: b.version }).expect(409);
       expect(blocked.body.details.openDependencies[0].id).toBe(a.id);
       // A task manager may override with a recorded reason.
-      const over = (await f.http('manager').post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', reason: 'Agenda draft can start early', expectedVersion: b.version }).expect(200)).body;
+      // A reason alone is not an override; the flag is explicit, and only task managers hold it.
+      await f.http('manager').post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', reason: 'Agenda draft can start early', expectedVersion: b.version }).expect(409);
+      await lead.post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', reason: 'Agenda draft can start early', overrideOpenDependencies: true, expectedVersion: b.version }).expect(403);
+      await f.http('manager').post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', overrideOpenDependencies: true, expectedVersion: b.version }).expect(400);
+      const over = (await f.http('manager').post(`/tasks/${b.id}/status`).send({ toStatus: 'IN_PROGRESS', reason: 'Agenda draft can start early', overrideOpenDependencies: true, expectedVersion: b.version }).expect(200)).body;
       expect(over.timeline.at(-1).note).toContain('Dependency override');
     });
 

@@ -28,6 +28,7 @@ import {
   ReasonSchema,
   UserRefSchema,
   UuidSchema,
+  QueryBooleanSchema,
 } from './common';
 
 /* ------------------------------- Stored files ------------------------------ */
@@ -167,7 +168,7 @@ export const SubmissionQuerySchema = PaginationQuerySchema.extend({
   wardId: UuidSchema.optional(),
   pollingStationId: UuidSchema.optional(),
   sourceType: SubmissionSourceTypeSchema.optional(),
-  duplicateOnly: z.coerce.boolean().optional(),
+  duplicateOnly: QueryBooleanSchema.optional(),
   /**
    * `mine` = submitted by current user; `awaiting_me` = verification queue
    * excluding own; `awaiting_supervisor` = verification outcomes with no
@@ -437,7 +438,7 @@ export const DiscrepancyQuerySchema = PaginationQuerySchema.extend({
   status: DiscrepancyStatusSchema.optional(),
   varianceType: DiscrepancyTypeSchema.optional(),
   severity: DiscrepancySeveritySchema.optional(),
-  assignedToMe: z.coerce.boolean().optional(),
+  assignedToMe: QueryBooleanSchema.optional(),
   submissionId: UuidSchema.optional(),
 });
 export type DiscrepancyQuery = z.infer<typeof DiscrepancyQuerySchema>;
@@ -588,7 +589,7 @@ export type TallySnapshot = z.infer<typeof TallySnapshotSchema>;
 export const SnapshotQuerySchema = PaginationQuerySchema.extend({
   electionCycleId: UuidSchema.optional(),
   contestId: UuidSchema.optional(),
-  releasedOnly: z.coerce.boolean().optional(),
+  releasedOnly: QueryBooleanSchema.optional(),
 });
 export type SnapshotQuery = z.infer<typeof SnapshotQuerySchema>;
 

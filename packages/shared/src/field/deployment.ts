@@ -8,7 +8,7 @@
  * the agent agrees (blueprint 6.3 field privacy rule).
  */
 import { z } from 'zod';
-import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { FieldLocationSchema, GeoPointSchema, OfflineMetaSchema } from './common';
 import {
   DeploymentEventTypeSchema,
@@ -77,7 +77,7 @@ export const DeploymentQuerySchema = PaginationQuerySchema.extend({
   shift: DeploymentShiftSchema.optional(),
   status: z.union([DeploymentStatusSchema, z.array(DeploymentStatusSchema)]).optional(),
   /** Include REPLACED and CANCELLED rows (history); default false. */
-  includeInactive: z.coerce.boolean().optional(),
+  includeInactive: QueryBooleanSchema.optional(),
 });
 export type DeploymentQuery = z.infer<typeof DeploymentQuerySchema>;
 
@@ -191,7 +191,7 @@ export const DeploymentCoverageQuerySchema = PaginationQuerySchema.extend({
   countyId: UuidSchema.optional(),
   constituencyId: UuidSchema.optional(),
   wardId: UuidSchema.optional(),
-  uncoveredOnly: z.coerce.boolean().optional(),
+  uncoveredOnly: QueryBooleanSchema.optional(),
 });
 export type DeploymentCoverageQuery = z.infer<typeof DeploymentCoverageQuerySchema>;
 

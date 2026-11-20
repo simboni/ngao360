@@ -580,9 +580,10 @@ export class TasksService {
       if (to === 'IN_PROGRESS' || to === 'COMPLETED' || to === 'SUBMITTED_FOR_REVIEW') {
         const open = cur.dependencies.filter((x) => x.dependsOn.status !== 'COMPLETED').map((x) => x.dependsOn);
         if (open.length) {
-          // A task manager may override with a recorded reason.
-          if (all && (body.reason?.length ?? 0) >= 3) override = true;
-          else throw AppException.conflict('Finish the tasks this one depends on first', { openDependencies: open });
+          // A task manager may override explicitly, with a recorded reason (validated by the schema).
+          if (!body.overrideOpenDependencies) throw AppException.conflict('Finish the tasks this one depends on first', { openDependencies: open });
+          if (!all) throw AppException.forbidden('Only a task manager may override open dependencies');
+          override = true;
         }
       }
       if (cur.version !== body.expectedVersion) throw staleVersion(cur.version, await this.detail(tx, auth, cur));

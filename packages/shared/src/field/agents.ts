@@ -11,7 +11,7 @@
  * No list, export, notification or log line carries unmasked values.
  */
 import { z } from 'zod';
-import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { KenyanMsisdnSchema, NationalIdNumberSchema, UnitRefSchema } from './common';
 import {
   AccreditationStatusSchema,
@@ -158,7 +158,7 @@ export const AgentQuerySchema = PaginationQuerySchema.extend({
   constituencyId: UuidSchema.optional(),
   wardId: UuidSchema.optional(),
   /** Agents with no active deployment in the cycle. */
-  undeployedOnly: z.coerce.boolean().optional(),
+  undeployedOnly: QueryBooleanSchema.optional(),
   language: z.string().trim().max(40).optional(),
 });
 export type AgentQuery = z.infer<typeof AgentQuerySchema>;

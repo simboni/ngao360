@@ -1,7 +1,8 @@
 'use client';
 
-import { Bell, LogOut, Menu, Search, UserCircle2 } from 'lucide-react';
+import { LogOut, Menu, Search, UserCircle2 } from 'lucide-react';
 import { useState } from 'react';
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import { useAuth } from '@/lib/auth-context';
 import { unsentCountForLastSession } from '@/lib/offline/device';
 
@@ -34,9 +35,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         </label>
       </div>
 
-      <button type="button" className="relative rounded-lg p-2 text-slate hover:bg-cloud hover:text-ink" aria-label="Notifications">
-        <Bell className="h-5 w-5" />
-      </button>
+      <NotificationBell />
 
       <div className="relative">
         <button

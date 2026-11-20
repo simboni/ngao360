@@ -488,22 +488,34 @@ export function AssignTaskDialog({ open, onClose, task, onSaved }: { open: boole
 /* ------------------------------ Status change ------------------------------ */
 
 export function TaskStatusDialog({ to, onClose, task, onSaved }: { to: TaskStatus | null; onClose: () => void; task: TaskDetail; onSaved: (t: TaskDetail) => void }) {
+  const { can } = useAuth();
   const [reason, setReason] = useState('');
+  const [override, setOverride] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setReason('');
+    setOverride(false);
     setError(null);
   }, [to]);
   if (!to) return null;
-  const needsReason = moveNeedsReason(to);
   const blocked = moveBlockedByDependencies(to, task.openDependencyCount);
+  const canOverride = blocked && can('tasks.manage_all');
+  const overriding = canOverride && override;
+  const needsReason = moveNeedsReason(to) || overriding;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      onSaved(await tasksApi.status(task.id, { toStatus: to, reason: reason.trim() || undefined, expectedVersion: task.version }));
+      onSaved(
+        await tasksApi.status(task.id, {
+          toStatus: to,
+          reason: reason.trim() || undefined,
+          expectedVersion: task.version,
+          ...(overriding ? { overrideOpenDependencies: true } : {}),
+        }),
+      );
       onClose();
     } catch (err) {
       setError(describeCampaignError(err));
@@ -516,8 +528,14 @@ export function TaskStatusDialog({ to, onClose, task, onSaved }: { to: TaskStatu
       <form onSubmit={submit}>
         {blocked ? (
           <Notice tone="warning" className="mb-4" title="Open dependencies">
-            {task.openDependencyCount} {task.openDependencyCount === 1 ? 'task this depends on is' : 'tasks this depends on are'} not completed yet. The move will be refused until they are.
+            {task.openDependencyCount} {task.openDependencyCount === 1 ? 'task this depends on is' : 'tasks this depends on are'} not completed yet. {canOverride ? 'The move is refused until they are, unless you override it with a reason.' : 'The move will be refused until they are.'}
           </Notice>
+        ) : null}
+        {canOverride ? (
+          <label className="mb-4 flex items-start gap-2 text-body text-ink">
+            <input type="checkbox" className="mt-1" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+            <span>Override the open dependencies (task manager). The reason is recorded on the timeline and in the audit log.</span>
+          </label>
         ) : null}
         {to === 'SUBMITTED_FOR_REVIEW' && task.reviewer ? <p className="mb-4 text-body text-slate">{task.reviewer.displayName} will be asked to review it.</p> : null}
         <FormField id="ts-reason" label={needsReason ? 'Reason' : 'Note'} required={needsReason} hint="Recorded on the task timeline and in the audit log.">

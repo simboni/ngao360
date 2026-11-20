@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../../auth/auth.module';
+import { NotificationCenterModule } from '../campaign/notifications/notification-center.module';
 import { AdminController } from './admin.controller';
 import { AuditLogService } from './audit-log.service';
 import { DashboardController } from './dashboard.controller';
@@ -18,7 +19,7 @@ import { UsersService } from './users.service';
  * AuthService.hashPassword.
  */
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, NotificationCenterModule],
   controllers: [AdminController, DashboardController],
   providers: [UsersService, RolesService, AuditLogService, DashboardService, NotificationsService],
   exports: [],

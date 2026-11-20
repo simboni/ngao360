@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { GeoRefSchema } from '../office/common';
-import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateSchema, IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { CampaignExpectedVersionSchema, DepartmentRefSchema } from './common';
 import {
   DepartmentVisibilitySchema,
@@ -93,7 +93,7 @@ export const UpdateDepartmentSchema = DepartmentFieldsSchema.partial()
 export type UpdateDepartment = z.infer<typeof UpdateDepartmentSchema>;
 
 export const DepartmentQuerySchema = z.object({
-  includeInactive: z.coerce.boolean().default(false),
+  includeInactive: QueryBooleanSchema.default(false),
 });
 export type DepartmentQuery = z.infer<typeof DepartmentQuerySchema>;
 
@@ -136,7 +136,7 @@ export const TeamQuerySchema = PaginationQuerySchema.extend({
   departmentId: UuidSchema.optional(),
   status: TeamStatusSchema.optional(),
   geographicUnitId: UuidSchema.optional(),
-  mine: z.coerce.boolean().optional(),
+  mine: QueryBooleanSchema.optional(),
 });
 export type TeamQuery = z.infer<typeof TeamQuerySchema>;
 

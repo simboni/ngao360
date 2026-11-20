@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { ExportFormatSchema, SensitivityLevelSchema } from '../../enums';
-import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../../schemas/common';
 import { ReportTemplateScopeSchema } from '../enums';
 import { getDataset, permittedFields, REPORT_DATASET_KEYS } from './datasets';
 
@@ -87,7 +87,7 @@ export type ReportTemplate = z.infer<typeof ReportTemplateSchema>;
 
 export const ReportTemplateQuerySchema = PaginationQuerySchema.extend({
   datasetKey: z.string().max(64).optional(),
-  mine: z.coerce.boolean().optional(),
+  mine: QueryBooleanSchema.optional(),
 });
 export type ReportTemplateQuery = z.infer<typeof ReportTemplateQuerySchema>;
 
@@ -166,7 +166,7 @@ export type ReportExport = z.infer<typeof ReportExportSchema>;
 export const ReportExportQuerySchema = PaginationQuerySchema.extend({
   datasetKey: z.string().max(64).optional(),
   generatedById: UuidSchema.optional(),
-  sensitive: z.coerce.boolean().optional(),
+  sensitive: QueryBooleanSchema.optional(),
 });
 export type ReportExportQuery = z.infer<typeof ReportExportQuerySchema>;
 

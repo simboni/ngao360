@@ -3,9 +3,7 @@ import type { Prisma } from '@ngao360/db';
 import type { TenantTx } from '@ngao360/db';
 import {
   hasModuleAccess,
-  type Notification,
   type OkResponse,
-  type Paginated,
   PERMISSION_MODULES,
   type PermissionModule,
   PERMISSION_MODULE_TENANT_MODULES,
@@ -14,10 +12,11 @@ import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantModulesService } from '../../tenant-modules/tenant-modules.service';
-import type { NotificationQuery } from './admin.dto';
-import { paginate } from './admin.mappers';
 
-/** Own in-app notifications (API contract §7). Never another user's. */
+/**
+ * Mark own in-app notifications read (API contract §7). Never another user's.
+ * The list itself is NotificationCenterService.list (§7 + §29).
+ */
 @Injectable()
 export class NotificationsService {
   constructor(
@@ -37,32 +36,7 @@ export class NotificationsService {
   }
 
   private async baseWhere(tx: TenantTx, auth: AuthContext): Promise<Prisma.NotificationWhereInput> {
-    return { userId: auth.userId, module: { in: await this.visibleModules(tx, auth) } };
-  }
-
-  list(auth: AuthContext, q: NotificationQuery): Promise<Paginated<Notification>> {
-    return this.prisma.tenantTx(async (tx) => {
-      const where: Prisma.NotificationWhereInput = { ...(await this.baseWhere(tx, auth)), ...(q.unreadOnly ? { readAt: null } : {}) };
-      const [rows, total] = await Promise.all([
-        tx.notification.findMany({ where, orderBy: { createdAt: 'desc' }, ...paginate(q) }),
-        tx.notification.count({ where }),
-      ]);
-      return {
-        items: rows.map((n) => ({
-          id: n.id,
-          type: n.type,
-          module: n.module,
-          title: n.title,
-          body: n.body,
-          link: n.link,
-          readAt: n.readAt ? n.readAt.toISOString() : null,
-          createdAt: n.createdAt.toISOString(),
-        })),
-        page: q.page,
-        pageSize: q.pageSize,
-        total,
-      };
-    });
+    return { userId: auth.userId, channel: 'IN_APP', module: { in: await this.visibleModules(tx, auth) } };
   }
 
   markRead(auth: AuthContext, id: string): Promise<OkResponse> {

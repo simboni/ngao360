@@ -1,10 +1,12 @@
 import { Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
-import type { Notification, OkResponse, Paginated } from '@ngao360/shared';
+import type { NotificationCenterItem, OkResponse, Paginated } from '@ngao360/shared';
 import type { DashboardSummaryExtended } from '@ngao360/shared';
 import type { AuthContext } from '../../auth/auth.types';
 import { AuthenticatedOnly, CurrentAuth } from '../../common/decorators/auth.decorators';
 import { RequirePermission } from '../../rbac/require-permission.decorator';
-import { DashboardQueryDto, IdParamDto, NotificationQueryDto } from './admin.dto';
+import { NotificationCenterQueryDto } from '../campaign/campaign.dto';
+import { NotificationCenterService } from '../campaign/notifications/notification-center.service';
+import { DashboardQueryDto, IdParamDto } from './admin.dto';
 import { DashboardService } from './dashboard.service';
 import { NotificationsService } from './notifications.service';
 
@@ -14,6 +16,7 @@ export class DashboardController {
   constructor(
     private readonly dashboard: DashboardService,
     private readonly notifications: NotificationsService,
+    private readonly center: NotificationCenterService,
   ) {}
 
   @RequirePermission('dashboard.view')
@@ -24,8 +27,9 @@ export class DashboardController {
 
   @AuthenticatedOnly()
   @Get('notifications')
-  list(@CurrentAuth() auth: AuthContext, @Query() q: NotificationQueryDto): Promise<Paginated<Notification>> {
-    return this.notifications.list(auth, q);
+  list(@CurrentAuth() auth: AuthContext, @Query() q: NotificationCenterQueryDto): Promise<Paginated<NotificationCenterItem>> {
+    // Extended list (§7 + §29): severity, acknowledgement and source record; in-app rows only.
+    return this.center.list(auth, q);
   }
 
   @AuthenticatedOnly()

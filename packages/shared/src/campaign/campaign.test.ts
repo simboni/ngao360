@@ -282,3 +282,30 @@ describe('notification preferences', () => {
     expect(notificationEnabled(rows, 'IN_APP', 'security.critical_alert')).toBe(true);
   });
 });
+
+describe('query flags and shared request shapes (integration pass)', () => {
+  it('reads "false" as false (z.coerce.boolean would read it as true)', async () => {
+    const { NotificationCenterQuerySchema } = await import('./notifications');
+    const { BreachQuerySchema } = await import('./breach');
+    expect(NotificationCenterQuerySchema.parse({ unreadOnly: 'false' }).unreadOnly).toBe(false);
+    expect(NotificationCenterQuerySchema.parse({ unreadOnly: 'true' }).unreadOnly).toBe(true);
+    expect(NotificationCenterQuerySchema.parse({}).unreadOnly).toBeUndefined();
+    expect(BreachQuerySchema.parse({ includeDrills: 'false' }).includeDrills).toBe(false);
+    expect(BreachQuerySchema.parse({}).includeDrills).toBe(true);
+    expect(NotificationCenterQuerySchema.safeParse({ unreadOnly: 'maybe' }).success).toBe(false);
+  });
+
+  it('exports the attendance page and small request shapes', async () => {
+    const m = await import('./index');
+    expect(m.ReasonBodySchema.safeParse({ reason: 'ok' }).success).toBe(false);
+    expect(m.AttendanceExportSchema.parse({ format: 'CSV', reason: 'board pack' }).format).toBe('CSV');
+    const page = m.EventAttendancePageSchema.parse({
+      items: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+      summary: { total: 0, byRole: {}, byMethod: {}, withContact: 0 },
+    });
+    expect(page.summary.total).toBe(0);
+  });
+});

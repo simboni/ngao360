@@ -138,8 +138,11 @@ export const TaskQuerySchema = PaginationQuerySchema.extend({
   dueTo: IsoDateTimeSchema.optional(),
   sourceType: TaskSourceTypeSchema.optional(),
   sourceId: UuidSchema.optional(),
+  /** Accepted sort keys (others answer 400); default `updatedAt`. */
+  sort: z.enum(['dueAt', 'priority', 'reference', 'updatedAt']).optional(),
 });
 export type TaskQuery = z.infer<typeof TaskQuerySchema>;
+export const TASK_SORT_KEYS = ['dueAt', 'priority', 'reference', 'updatedAt'] as const;
 
 /** Board view: one column per status with the first N cards (S08). */
 export const TaskBoardSchema = z.object({
@@ -225,9 +228,18 @@ export const ChangeTaskStatusSchema = z
     toStatus: TaskStatusSchema,
     reason: z.string().trim().max(2000).optional(),
     expectedVersion: CampaignExpectedVersionSchema,
+    /**
+     * Start, submit or complete although a dependency is still open. Only a holder of
+     * `tasks.manage_all`, and only with a reason (recorded on the timeline and audited).
+     */
+    overrideOpenDependencies: z.boolean().optional(),
   })
   .refine((v) => !['BLOCKED', 'CANCELLED'].includes(v.toStatus) || (v.reason?.length ?? 0) >= 3, {
     message: 'Give a reason for blocking or cancelling',
+    path: ['reason'],
+  })
+  .refine((v) => !v.overrideOpenDependencies || (v.reason?.length ?? 0) >= 3, {
+    message: 'Give a reason for overriding open dependencies',
     path: ['reason'],
   });
 export type ChangeTaskStatus = z.infer<typeof ChangeTaskStatusSchema>;

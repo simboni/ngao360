@@ -77,8 +77,18 @@ import {
   UpdateTeamSchema,
   VerifyFinanceLimitSettingSchema,
 } from '@ngao360/shared';
-import { z } from 'zod';
-import { CampaignExpectedVersionSchema, IsoDateSchema, PaginationQuerySchema, ReasonSchema, UuidSchema } from '@ngao360/shared';
+import {
+  AttachmentParamSchema,
+  AttendanceExportSchema,
+  BudgetLineQuerySchema,
+  ContributionSourceQuerySchema,
+  DocumentParamSchema,
+  ExpectedVersionBodySchema,
+  PaginationQuerySchema,
+  ReasonBodySchema,
+  UpdateFinanceAccountSchema,
+  VersionReasonBodySchema,
+} from '@ngao360/shared';
 import { createZodDto } from '../../common/zod/zod-dto';
 
 export class CampaignIdParamDto extends createZodDto(CampaignIdParamSchema) {}
@@ -170,36 +180,15 @@ export class UpdateBreachDto extends createZodDto(UpdateBreachSchema) {}
 export class AddBreachEventDto extends createZodDto(AddBreachEventSchema) {}
 export class ExportBreachTimelineDto extends createZodDto(ExportBreachTimelineSchema) {}
 
-/*
- * Small inline request shapes named in docs/API_CONTRACT.md §25, §27 and §28
- * without a shared schema yet (docs/CHANGE_REQUESTS.md asks to move them to
- * packages/shared/src/campaign).
- */
+/* Small request shapes (shared since the integration pass: packages/shared/src/campaign/requests.ts). */
 export const CampaignPaginationQuerySchema = PaginationQuerySchema;
 export class PaginationQueryDto extends createZodDto(PaginationQuerySchema) {}
-
-export const ReasonBodySchema = z.object({ reason: ReasonSchema });
 export class ReasonBodyDto extends createZodDto(ReasonBodySchema) {}
-
-export const ExpectedVersionBodySchema = z.object({ expectedVersion: CampaignExpectedVersionSchema });
 export class ExpectedVersionBodyDto extends createZodDto(ExpectedVersionBodySchema) {}
-
-export const VersionReasonBodySchema = z.object({ expectedVersion: CampaignExpectedVersionSchema, reason: ReasonSchema });
 export class VersionReasonBodyDto extends createZodDto(VersionReasonBodySchema) {}
-
-export const AttendanceExportSchema = z.object({ format: z.enum(['CSV', 'PDF']), reason: ReasonSchema });
 export class AttendanceExportDto extends createZodDto(AttendanceExportSchema) {}
-
-export const BudgetLineQuerySchema = z.object({ departmentId: UuidSchema.optional(), eventId: UuidSchema.optional(), electionCycleId: UuidSchema.optional() });
 export class BudgetLineQueryDto extends createZodDto(BudgetLineQuerySchema) {}
-
-export const ContributionSourceQuerySchema = PaginationQuerySchema.extend({ electionCycleId: UuidSchema.optional(), from: IsoDateSchema.optional(), to: IsoDateSchema.optional() });
 export class ContributionSourceQueryDto extends createZodDto(ContributionSourceQuerySchema) {}
-
-export const UpdateFinanceAccountSchema = SaveFinanceAccountSchema.extend({ expectedVersion: CampaignExpectedVersionSchema });
 export class UpdateFinanceAccountDto extends createZodDto(UpdateFinanceAccountSchema) {}
-
-export const AttachmentParamSchema = z.object({ id: UuidSchema, attachmentId: UuidSchema });
 export class AttachmentParamDto extends createZodDto(AttachmentParamSchema) {}
-export const DocumentParamSchema = z.object({ id: UuidSchema, documentId: UuidSchema });
 export class DocumentParamDto extends createZodDto(DocumentParamSchema) {}

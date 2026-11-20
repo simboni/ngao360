@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import { ExportFormatSchema } from '../enums';
-import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { CampaignExpectedVersionSchema, CampaignFileSchema } from './common';
 import { BreachEventTypeSchema, BreachSeveritySchema, BreachStatusSchema } from './enums';
 
@@ -80,7 +80,7 @@ export type BreachDetail = z.infer<typeof BreachDetailSchema>;
 export const BreachQuerySchema = PaginationQuerySchema.extend({
   status: BreachStatusSchema.optional(),
   severity: BreachSeveritySchema.optional(),
-  includeDrills: z.coerce.boolean().default(true),
+  includeDrills: QueryBooleanSchema.default(true),
 });
 export type BreachQuery = z.infer<typeof BreachQuerySchema>;
 

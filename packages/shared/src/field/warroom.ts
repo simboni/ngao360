@@ -9,7 +9,7 @@
  */
 import { z } from 'zod';
 import { OperationalStatusSchema } from '../enums';
-import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { FieldLocationSchema } from './common';
 import {
   DeploymentStatusSchema,
@@ -134,7 +134,7 @@ export const StationStatusQuerySchema = PaginationQuerySchema.extend({
   wardId: UuidSchema.optional(),
   status: z.union([OperationalStatusSchema, z.array(OperationalStatusSchema)]).optional(),
   /** Only stations needing attention: FLAGGED, NOT_ASSIGNED, FORM_EXPECTED, or open HIGH/CRITICAL incidents. */
-  attentionOnly: z.coerce.boolean().optional(),
+  attentionOnly: QueryBooleanSchema.optional(),
 });
 export type StationStatusQuery = z.infer<typeof StationStatusQuerySchema>;
 

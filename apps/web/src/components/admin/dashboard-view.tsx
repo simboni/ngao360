@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { CampaignKpis } from '@/components/campaign/campaign-kpis';
 import { FieldDashboardCard } from '@/components/field/field-dashboard-card';
 import { OfficeKpis } from '@/components/office/office-kpis';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -224,6 +225,8 @@ export function DashboardView() {
       ) : null}
 
       <OfficeKpis className="mb-6" />
+
+      <CampaignKpis className="mb-6" />
 
       <section aria-label="Key figures" className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {data

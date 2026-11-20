@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { NotificationChannelSchema } from '../enums';
 import { NotificationSchema } from '../schemas/dashboard';
-import { IsoDateTimeSchema, PaginationQuerySchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { NotificationAckActionSchema, NotificationDeliveryStatusSchema, NotificationSeveritySchema } from './enums';
 
 /** Notification types the centre knows (preferences are per type; '*' is the default row). */
@@ -50,11 +50,11 @@ export const NotificationCenterItemSchema = NotificationSchema.extend({
 export type NotificationCenterItem = z.infer<typeof NotificationCenterItemSchema>;
 
 export const NotificationCenterQuerySchema = PaginationQuerySchema.extend({
-  unreadOnly: z.coerce.boolean().optional(),
+  unreadOnly: QueryBooleanSchema.optional(),
   module: z.string().max(40).optional(),
   severity: NotificationSeveritySchema.optional(),
   /** Critical alerts still awaiting the caller's acknowledgement. */
-  awaitingAck: z.coerce.boolean().optional(),
+  awaitingAck: QueryBooleanSchema.optional(),
 });
 export type NotificationCenterQuery = z.infer<typeof NotificationCenterQuerySchema>;
 

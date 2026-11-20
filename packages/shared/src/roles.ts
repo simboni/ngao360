@@ -693,6 +693,8 @@ export const SYSTEM_ROLES: readonly SystemRoleDefinition[] = [
     permissions: [
       ...BASE,
       ...ORG_READ,
+      // Approves content from every department (otherwise department scope hides items awaiting approval).
+      P.ORG_DEPARTMENTS_ALL,
       P.EVENTS_VIEW,
       P.COMMS_CONTENT_VIEW,
       P.COMMS_CONTENT_APPROVE,

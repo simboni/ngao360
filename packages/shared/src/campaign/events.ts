@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { GeoRefSchema, PhoneSchema } from '../office/common';
-import { IsoDateTimeSchema, PaginationQuerySchema, ReasonSchema, UserRefSchema, UuidSchema } from '../schemas/common';
+import { IsoDateTimeSchema, PaginationQuerySchema, paginatedSchema, ReasonSchema, UserRefSchema, UuidSchema, QueryBooleanSchema } from '../schemas/common';
 import { CampaignExpectedVersionSchema, CampaignFileSchema, DepartmentRefSchema, TeamRefSchema } from './common';
 import {
   AfterActionStatusSchema,
@@ -169,7 +169,7 @@ export const CampaignEventQuerySchema = PaginationQuerySchema.extend({
   geographicUnitId: UuidSchema.optional(),
   from: IsoDateTimeSchema.optional(),
   to: IsoDateTimeSchema.optional(),
-  mine: z.coerce.boolean().optional(),
+  mine: QueryBooleanSchema.optional(),
 });
 export type CampaignEventQuery = z.infer<typeof CampaignEventQuerySchema>;
 
@@ -305,6 +305,10 @@ export const AttendanceSummarySchema = z.object({
   withContact: z.number().int(),
 });
 export type AttendanceSummary = z.infer<typeof AttendanceSummarySchema>;
+
+/** GET /events/:id/attendance: one page of attendance plus the whole event's summary. */
+export const EventAttendancePageSchema = paginatedSchema(EventAttendanceSchema).extend({ summary: AttendanceSummarySchema });
+export type EventAttendancePage = z.infer<typeof EventAttendancePageSchema>;
 
 export const AddEventDocumentSchema = z.object({
   fileId: UuidSchema,
