@@ -1,6 +1,6 @@
 # NGAO360 build status
 
-Branch `feat/foundation-tally-mvp`. Scope: roadmap stage 1 (platform foundation) and stage 4 (NGAO TALLY core), with the County Governor contest (Forms 37A/37B/37C) as the end-to-end rehearsal. All demo and test data is synthetic. The parallel tally is an internal record and is never labelled official.
+Branch `feat/foundation-tally-mvp` (merged to `main`), then `feat/office-governor`. Scope: roadmap stage 1 (platform foundation) and stage 4 (NGAO TALLY core), with the County Governor contest (Forms 37A/37B/37C) as the end-to-end rehearsal; stage 5 (NGAO360 Office) has its environment prepared for parallel module work (see "Office environment" below). All demo and test data is synthetic. The parallel tally is an internal record and is never labelled official.
 
 ## Pipeline (last run)
 
@@ -10,10 +10,10 @@ Branch `feat/foundation-tally-mvp`. Scope: roadmap stage 1 (platform foundation)
 | Typecheck | `pnpm typecheck` | 6/6 packages OK |
 | Lint | `pnpm lint` | 6/6 packages OK |
 | Build | `pnpm build` | shared, db, api, web OK (web includes `/accept-invitation`) |
-| Unit and integration tests | `set -a; . ./.env; set +a; pnpm test` | shared 84, web 33, api 199 tests (18 suites, with RLS and HTTP integration against `ngao360_test`) |
+| Unit and integration tests | `set -a; . ./.env; set +a; pnpm test` | shared 133, web 33, api 217 tests (20 suites, with RLS and HTTP integration against `ngao360_test`) |
 | Governor rehearsal (e2e) | `pnpm test:rehearsal` | 11/11 |
 
-Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6379 (see `docs/DEVELOPMENT.md`). Migrations run up to `20261120000400_auth_hardening`.
+Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6379 (see `docs/DEVELOPMENT.md`). Migrations run up to `20261120000500_office_environment`.
 
 ## Screens (blueprint section 11)
 
@@ -41,11 +41,11 @@ Local services used: PostgreSQL 16 on port 5433 under `/tmp/ngao-pg`, Redis on 6
 | S20 | Verification workspace | Done | Blind independent re-entry or confirm mode, checklist, field comments, pass, return or dispute, supervisor actions (approve, reject, third check). Tally supervisors are routed here. |
 | S21 | Parallel tally | Done | Contest and geography selectors, candidate totals in ballot order, verified-station denominator, mutually exclusive coverage segments, drill-down, station list, immutable snapshots, internal release, CSV, XLSX and PDF exports with the disclaimer. No trend chart over time. |
 | S22 | Discrepancy case | Done | Source A/B comparison, case types, assignment, comments, reasoned resolution (canonical record, exclusion), closure by a different person. |
-| S23 | Correspondence inbox | Not started | Stage 5. |
-| S24 | Citizen portal | Not started | Stage 5. |
-| S25 | Case workspace | Not started | Stage 5. |
-| S26 | Project register | Not started | Stage 5. |
-| S27 | Project detail | Not started | Stage 5. |
+| S23 | Correspondence inbox | Environment ready | Schema, permissions, shared DTOs, API contract (§9–13), empty Nest controllers and web route stubs; seeded synthetic data. Screens and endpoints to be built by the office agents. |
+| S24 | Citizen portal | Environment ready | Schema, permissions, shared DTOs, API contract (§9–13), empty Nest controllers and web route stubs; seeded synthetic data. Screens and endpoints to be built by the office agents. |
+| S25 | Case workspace | Environment ready | Schema, permissions, shared DTOs, API contract (§9–13), empty Nest controllers and web route stubs; seeded synthetic data. Screens and endpoints to be built by the office agents. |
+| S26 | Project register | Environment ready | Schema, permissions, shared DTOs, API contract (§9–13), empty Nest controllers and web route stubs; seeded synthetic data. Screens and endpoints to be built by the office agents. |
+| S27 | Project detail | Environment ready | Schema, permissions, shared DTOs, API contract (§9–13), empty Nest controllers and web route stubs; seeded synthetic data. Screens and endpoints to be built by the office agents. |
 | S28 | Report builder | Not started | |
 | S29 | Audit log | Partial | Hash-chained, append-only events with filters, before and after, export. No retention-hold control. |
 | S30 | System settings | Partial | Form-template registry with versioning and maker-checker approval (`/reference/forms`). No module, integration, retention or backup settings. |
@@ -76,6 +76,16 @@ All 27 reviewer findings were checked against the code and confirmed. Each was f
 - **Workflow:** arithmetic failures on printed figures reach second review held by an ARITHMETIC case, instead of hitting a dead end. A blind-mode Return no longer turns into a false dispute. Supervisors have a queue and are routed to the verification workspace.
 - **Concurrency:** supervisor actions, discrepancy status changes and canonical designation are conditional writes. Save and submit-for-review lock the submission row. A cross-stage comparison failure no longer returns an error for a verification that was already recorded.
 
+## Office environment (stage 5 preparation)
+
+- **Module activation:** `tenant_modules` + `/workspace/modules` (S30 module settings API, no screen yet), `modules` in `/auth/me`, `@RequireModule` + `ModuleGuard` (403 `MODULE_DISABLED`), Office nav group hidden unless the module is on and the user holds an office permission. Office is off by default.
+- **Schema:** migration `20261120000500_office_environment` adds correspondence (+ attachments), appointments, meetings (+ action items, decision log), citizen cases with separate contact table, case timeline (public/internal), referrals, institution registry, projects, milestones and evidence. RLS on every table; no deletes; append-only timeline, decisions and attachments; immutable case submissions and evidence facts; checks for verified completion (second person), evidence verification (not the uploader), publication and public contract amounts.
+- **Access:** 21 `office.*` permissions and five roles (Office administrator, Case officer, Correspondence clerk, Projects officer, Public-information editor). Office roles hold no campaign or tally permissions; tally roles hold no office write permissions (unit-tested).
+- **Contracts:** shared zod DTOs in `packages/shared/src/office/`; endpoints, permissions, audit actions and transitions in `docs/API_CONTRACT.md` §8–13.
+- **API skeleton:** `apps/api/src/modules/office/{correspondence,appointments,cases,projects,public}` with empty controllers/services, geo resolvers `officeCase` / `officeProject`, location and scope helpers, public reference and tracking-code helpers, and the public area's own rate limiter, honeypot/captcha hook, tenant resolution and `GET /public/:tenantSlug/portal`.
+- **Web skeleton:** `/office/correspondence[/id]`, `/office/appointments`, `/office/cases[/id]`, `/office/projects[/id]` behind the module gate; public route group `/p/[tenantSlug]` (home, request, track, projects, project) outside the authenticated shell.
+- **Seed:** tenant `bungoma-governor` (synthetic County Governor's office, Bungoma) with the office module and portal on, 18 synthetic institutions, 7 office users, 25 cases across all stages, 15 correspondence items, 10 appointments, 2 meetings and 12 projects with milestones, evidence files and mixed verification states.
+
 ## Known gaps
 
 - **Invitation delivery:** there is no e-mail or SMS channel yet, so the inviting administrator sees the link once and relays it. An administrator could still redeem a link themselves. Before the pilot, send invitations straight to the invitee and stop showing the link to the administrator in production.
@@ -84,6 +94,7 @@ All 27 reviewer findings were checked against the code and confirmed. Each was f
 - **Accepted arithmetic:** an arithmetic case resolved as "figures as printed" allows a later pass. The acceptance is not tied to the exact figures, so a recapture after a return should reopen the check.
 - **Queue filters:** the `awaiting_me` and `awaiting_supervisor` filters use the current value rows. Separation of duties is enforced on every action from the full audit history, so these lists are only an approximation.
 - **Security review items still open:** passkeys, account recovery, rate limiting by account across instances (Redis store), a malware scan for uploads, real OCR, an S3 object lock for originals in production, a load test and a backup and restore drill (roadmap stage 6).
+- **Office foundation gaps:** the public-portal limiter keeps counters in memory per API instance (move to Redis with the auth limiter); no captcha verifier is bound (configuring a provider fails closed); geographic units are tied to an election cycle, so an office-only tenant carries a reference-only cycle; services must check that linked ids belong to the tenant (FKs do not); there is no workspace settings screen for module activation yet (API only); contact-retention erasure is manual (no scheduled job yet).
 - **Not built yet:** S02, S03, S05, S08–S11, S13–S17 and S23–S28. 2022 historical data import is designed (`docs/DATA_SOURCES_2022.md`) but not wired in.
 
 ## Recommended next workflow

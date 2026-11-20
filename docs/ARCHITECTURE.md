@@ -20,10 +20,13 @@ apps/
       storage/        StorageService (immutable, SHA-256), local + S3/MinIO drivers, signed URLs
       queue/          BullMQ registration (all queue names), OCR stub worker
       health/         GET /api/health
+      tenant-modules/ module activation: TenantModulesService, @RequireModule + ModuleGuard, /workspace/modules
       modules/
         reference/    ← reference module agent
         tally/        ← tally module agent
         admin/        ← admin module agent
+        office/       ← NGAO360 Office (blueprint 9): correspondence/, appointments/, cases/, projects/,
+                        public/ (unauthenticated portal area), common/ (location, scope, references)
   web/                Next.js App Router (TypeScript), Tailwind, PWA shell
     src/
       app/            routes; (app)/ = authenticated shell; tally/ layout adds the parallel-tally banner
@@ -48,6 +51,9 @@ docs/                 BLUEPRINT, DECISIONS, RESEARCH, this file, API_CONTRACT, D
 | Reference UI | `apps/web/src/app/(app)/reference/**`, `apps/web/src/components/reference/**` | `lib/nav.ts` (items already present) |
 | Tally UI | `apps/web/src/app/(app)/tally/**`, `apps/web/src/components/tally/**` | `tally/layout.tsx` banner must stay |
 | Admin UI | `apps/web/src/app/(app)/admin/**`, `apps/web/src/app/(app)/dashboard/**`, `apps/web/src/components/admin/**` | |
+| Office: correspondence + appointments/meetings | API `modules/office/correspondence/**`, `modules/office/appointments/**`; web `app/(app)/office/correspondence/**`, `app/(app)/office/appointments/**`, `components/office/correspondence/**`, `components/office/appointments/**` | `office.module.ts`, `office/common/**`, `office/layout.tsx` |
+| Office: citizen cases + public requests | API `modules/office/cases/**`, `modules/office/public/public-cases.controller.ts`; web `app/(app)/office/cases/**`, `app/p/[tenantSlug]/page.tsx`, `request/**`, `track/**`, `components/office/cases/**`, `components/office/public/cases-*` | `public/public-portal.service.ts`, `public-rate-limit.ts`, `public-abuse.service.ts`, `public-shell.tsx` |
+| Office: projects + institutions + public projects | API `modules/office/projects/**`, `modules/office/public/public-projects.controller.ts`; web `app/(app)/office/projects/**`, `app/p/[tenantSlug]/projects/**`, `components/office/projects/**`, `components/office/public/projects-*` | same as above |
 
 Shared contracts in `packages/shared` and `packages/db/prisma/schema.prisma` already cover the full data
 model and DTOs. If a module needs to extend them, the change must be additive (new optional fields,
@@ -170,7 +176,38 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 Staging and production use separate compose projects and env files. Secrets are supplied through
 environment files that are never committed.
 
-## 12. Open items for module work
+## 12. NGAO360 Office
+
+Office (blueprint section 9) is a separate tenant module (`office`, default off) on the same
+tenancy, identity, RBAC, audit and storage. Contract: [API_CONTRACT.md](./API_CONTRACT.md) §8–13.
+
+- **Module activation.** `tenant_modules` (RLS) holds per-tenant switches and module config
+  (`OfficeModuleConfig` for office). `/auth/me` returns `modules`; navigation hides switched-off
+  modules; `@RequireModule('office')` + `ModuleGuard` answer 403 `MODULE_DISABLED` server-side.
+- **Data separation (blueprint 15.2).** Office tables (`correspondence*`, `appointments`,
+  `meetings`, `meeting_*`, `citizen_cases`, `citizen_case_contacts`, `case_events`,
+  `case_referrals`, `institutions`, `projects`, `project_milestones`, `project_evidence`) are
+  separate from campaign and tally tables, behind `office.*` permissions held only by the five office
+  roles (plus read-only oversight for the organisation owner). Office files use their own storage
+  purposes (`CORRESPONDENCE`, `CASE_EVIDENCE`, `PROJECT_EVIDENCE`).
+- **Requester privacy.** Contact details are in `citizen_case_contacts`, readable only through an
+  audited endpoint with `office.cases.contact.view`; erasure nulls the fields (`erased_at`). Public
+  tracking needs a random reference plus a tracking code whose hash only is stored.
+- **History.** `case_events`, `meeting_decisions` and `correspondence_attachments` are append-only;
+  no Office row can be deleted; case submissions and project evidence facts are immutable (triggers).
+- **Accountability.** Projects name the responsible institution and commitment source;
+  `projects_verified_completion_check` requires a verifier other than the completion reporter;
+  evidence can be verified only by someone other than its uploader and published only when
+  verified; `completionEvidenceSufficient()` means a photograph alone never verifies completion.
+- **Geography.** Office records stop at ward level and reuse `geographic_units`. Geographic units
+  currently belong to an election cycle, so an office-only tenant carries a reference-only cycle for
+  its county tree (see the seed). Geo resolvers `officeCase` / `officeProject` plug Office records
+  into the existing scoped grants.
+- **Public portal.** `/api/public/:tenantSlug/*` is unauthenticated with its own in-memory rate
+  limiter (per IP, tenant and bucket), a honeypot and a captcha hook, and identical 404s for unknown
+  or disabled tenants. Web routes under `/p/[tenantSlug]` sit outside the authenticated shell.
+
+## 13. Open items for module work
 
 - **Presidential templates.** [DATA_SOURCES_2022.md](./DATA_SOURCES_2022.md) recommends a real 2022 presidential layer (34A/34B/34C) for the pilot county. Add 34A/34B/34C templates to the seed under `packages/db/src/seed/` (reference module). A presidential contest uses `geographicUnitId = null`.
 - **Station codes.** 2022 station codes are 15 digits (county 3 + constituency 3 + ward 4 + centre 3 + station 2; this split is inferred). `PollingStation.code` is a free string, and the registry import should accept that format.

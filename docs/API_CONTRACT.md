@@ -5,8 +5,10 @@ Every request and response type named here is exported from `@ngao360/shared`
 (`packages/shared/src`). If you need a field that is not here, add it to the shared schema
 first, then update this file. Do not invent ad-hoc shapes.
 
-Status: §2–3 are **implemented** in the foundation. §4–7 are **to be implemented** by the
-reference, tally and admin module agents.
+Status: §2–8 are **implemented**. §9–13 (NGAO360 Office and its public portal) are **to be
+implemented** by the office module agents; §13.1 (portal info) and the shared Office
+infrastructure (module activation, geo resolvers, public rate limiter, abuse check, tenant
+resolution) are already implemented.
 
 ---
 
@@ -284,9 +286,241 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | POST | `/notifications/:id/read` | Authenticated | `IdParam` | `OkResponse` | Only the caller's own notifications. |
 | POST | `/notifications/read-all` | Authenticated | none | `OkResponse` | |
 
+## 8. Tenant module activation (implemented: `apps/api/src/tenant-modules`)
+
+Modules (`TENANT_MODULES` in `@ngao360/shared`): `tally` (default **on**) and `office` (default
+**off**). State lives in `tenant_modules` (RLS); a missing row means the default. `GET /auth/me`
+returns `modules: TenantModuleKey[]` and the web navigation hides switched-off modules.
+Controllers tagged `@RequireModule('office')` answer **403 `MODULE_DISABLED`** when the tenant has
+the module off (`ModuleGuard`, which runs after `RbacGuard`). Switching a module off never deletes
+data.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/workspace/modules` | `workspace.view` | none | `TenantModuleState[]` | `config` for `office` is `OfficeModuleConfig` with defaults applied. |
+| PUT | `/workspace/modules/:key` | `workspace.configure` **(reauth)** | `TenantModuleParam` + `UpdateTenantModule` | `TenantModuleState[]` | `config` replaces the module config and is validated (`OfficeModuleConfigSchema`; 400 `VALIDATION_FAILED`). Enabling `office` creates the portal service account once (`portal-service@<slug>.invalid`, no password, no roles, `DEACTIVATED`) and stores its id in `config.portalServiceUserId`. Audit: `MODULE_UPDATED` (before/after enabled + config). |
+
+`OfficeModuleConfig` (all fields have safe defaults): `publicPortalEnabled` (false),
+`publicProjectsEnabled` (false), `portalDisplayName`, `controllerName`, `dataProtectionContact`,
+`caseRetentionMonths` (36), `contactRetentionMonths` (12), `caseCloseRequiresSecondPerson` (true),
+`portalCountyUnitId`, `portalCaseCategories` (all), `portalServiceUserId`, `captchaProvider`
+(`none` \| `turnstile` \| `hcaptcha`), `captchaSiteKey`. Read it in services with
+`TenantModulesService.officeConfig(tx)`.
+
 ---
 
-## 8. Web client usage
+## Office conventions (§9–13)
+
+These rules apply to every Office endpoint. Shared DTOs are in `packages/shared/src/office/`.
+
+| Topic | Rule |
+| --- | --- |
+| Module | Every authenticated Office controller is tagged `@RequireModule('office')`. Public controllers call `PublicPortalService.resolve(slug)`, which answers 404 for unknown tenants, office off, or portal off (same response, so the portal never reveals which organisations exist). |
+| Separation from campaign data | Office data lives only in the Office tables and behind `office.*` permissions (blueprint 15.2). Never join Office records to tally, campaign or user-profile data for analytics, and never expose requester data to campaign roles. |
+| Tenancy | Use `prisma.tenantTx()`. Before linking any id from a request (assignee, institution, case, correspondence, unit, file), load it inside the same transaction; RLS makes other tenants' rows invisible, so a missing row is 404/400. FK checks alone do not stop cross-tenant ids. |
+| Geography | Cases and projects store the lowest unit given (`geographicUnitId`: ward, constituency or county; polling centres are refused) plus denormalised `countyId`, `constituencyId`, `wardId`. Use `resolveOfficeLocation(tx, unitId)` to fill them, `officeScopeWhere(scope)` to filter lists and the geo kinds `officeCase` / `officeProject` on record routes (`@RequirePermission('office.cases.view', { geo: { kind: 'officeCase', from: 'params', key: 'id' } })`). A record without a location is visible only to organisation-wide grants. Correspondence, appointments and meetings are not geographic: any grant of the permission is enough. |
+| Concurrency | Mutable records carry `version`. Mutations take `expectedVersion` and update with `where: { id, version: expectedVersion }`, incrementing `version`; a stale value returns 409 `CONFLICT`. |
+| Transitions | Use the shared `canTransition*()` helpers; an illegal move returns 409 `INVALID_TRANSITION`. Every transition writes the named audit action with before/after status and reason. |
+| History | `case_events`, `meeting_decisions` and `correspondence_attachments` are append-only (DB trigger, `IMMUTABLE_RECORD`). No Office row is ever deleted (DB trigger). Project evidence may change only its verification and publication fields. Case submission content and references are immutable. |
+| Files | `StorageService.storeImmutable(purpose: 'CORRESPONDENCE' \| 'CASE_EVIDENCE' \| 'PROJECT_EVIDENCE')` (images and PDFs only, sniffed, ≤ 25 MB). Downloads use `StorageService.signedUrl()` and every issuance is audited with `FILE_SOURCE_ACCESSED` (`entityType` = the Office record). Public-portal photos are stored with `uploadedById = config.portalServiceUserId`. |
+| References | Internal sequential references via `nextReference(tx, tenantId, OFFICE_REFERENCE_PREFIX.*)`: `COR-IN-YYYY-NNNNNN`, `COR-OUT-…`, `APT-…`, `CASE-…`, `PRJ-…`. Citizen cases also get a random `publicReference` (`BG-7K3F-9Q2X`, prefix from the tenant slug initials) and an 8-character tracking code shown once; only its SHA-256 is stored (`allocatePublicReference`, `trackingCodeMatches`). |
+| allowedActions | Detail DTOs return `allowedActions` computed from the caller's permissions, the record state and separation-of-duties rules, so the UI never offers an action the API will refuse. |
+| Personal data | Requester contact is only in `citizen_case_contacts` and only returned by `GET /office/cases/:id/contact`. No list or detail DTO, export, notification or log line contains contact fields. |
+| Language | Never present the office as controlling a project another body is legally responsible for. Use the labels in `PROJECT_STATUS_LABELS` / `PROJECT_STAGE_KIND_LABELS`; never call a `COMPLETED` project "complete" without "reported" / "awaiting verification". |
+
+## 9. Correspondence (`apps/api/src/modules/office/correspondence`) — S23
+
+Web: `/office/correspondence`, `/office/correspondence/[id]`. Items with sensitivity
+`CONFIDENTIAL` or `HIGHLY_RESTRICTED` are invisible (lists filter them out; detail returns 404)
+unless the caller holds `office.correspondence.confidential`; creating or raising an item to those
+levels needs it too.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/correspondence` | `office.correspondence.view` | `CorrespondenceQuery` | `Paginated<CorrespondenceSummary>` | `view=mine` (assigned to caller), `overdue` (`responseDueDate < today` and status not RESPONDED/SENT/FILED/ARCHIVED), `unassigned`. `q` matches reference, subject, sender/recipient and external reference. Default sort `receivedAt`/`createdAt` desc. |
+| GET | `/office/correspondence/:id` | `office.correspondence.view` | `IdParam` | `CorrespondenceDetail` | Includes attachments, replies and linked case ref (case title not included). |
+| POST | `/office/correspondence` | `office.correspondence.create` | `CreateCorrespondence` | `CorrespondenceDetail` (201) | Reference `COR-IN-…` or `COR-OUT-…`. Status: INCOMING → `RECEIVED` (or `ASSIGNED` when `assignedToId` given); OUTGOING → `DRAFT`. `inReplyToId` must be an item of the opposite direction. `linkedCaseId` is checked for existence only. Audit: `CORRESPONDENCE_CREATED`. |
+| PATCH | `/office/correspondence/:id` | `office.correspondence.edit` | `UpdateCorrespondence` | `CorrespondenceDetail` | Not allowed in `ARCHIVED` (409 `IMMUTABLE_RECORD`). Lowering sensitivity from CONFIDENTIAL+ needs `.confidential` and a `reason`. Audit: `CORRESPONDENCE_UPDATED` (changed fields only). |
+| POST | `/office/correspondence/:id/assign` | `office.correspondence.edit` | `AssignCorrespondence` | `CorrespondenceDetail` | Assignee must be ACTIVE and hold `office.correspondence.view` (and `.confidential` for restricted items) — 400 otherwise. `RECEIVED` → `ASSIGNED` when assigning; unassigning keeps status. Audit: `CORRESPONDENCE_ASSIGNED`. Sends an in-app notification (`module: 'office'`, `type: 'correspondence.assigned'`, link `/office/correspondence/:id`). |
+| POST | `/office/correspondence/:id/transition` | `office.correspondence.edit` | `CorrespondenceTransition` | `CorrespondenceDetail` | `CORRESPONDENCE_STATUS_TRANSITIONS`: `DRAFT→SENT\|ARCHIVED`, `RECEIVED→ASSIGNED\|FILED`, `ASSIGNED→IN_PROGRESS\|RESPONDED\|FILED`, `IN_PROGRESS→RESPONDED\|FILED`, `RESPONDED→FILED`, `SENT→FILED`, `FILED→ARCHIVED`. `SENT` sets `sentAt` (default now). `reason` required for `FILED` from RECEIVED/ASSIGNED/IN_PROGRESS (no response) and for `ARCHIVED`. Audit: `CORRESPONDENCE_STATUS_CHANGED`. |
+| POST | `/office/correspondence/:id/attachments` | `office.correspondence.edit` | multipart `file` + `metadata` (`AddCorrespondenceAttachment` JSON) | `CorrespondenceAttachment` (201) | `storeImmutable(purpose: 'CORRESPONDENCE')`. A duplicate hash reuses the stored file; attaching the same file twice to one item returns 409. Not allowed when ARCHIVED. Audit: `FILE_STORED` (new files) + `CORRESPONDENCE_ATTACHMENT_ADDED`. |
+| GET | `/office/correspondence/:id/attachments/:attachmentId/url` | `office.correspondence.view` | params | `SignedUrlResponse` | Inline view; `?download=1` for download. Audit: `FILE_SOURCE_ACCESSED` every call. |
+| GET | `/office/correspondence/:id/history` | `office.correspondence.view` | `IdParam` | `AuditEvent[]` | Audit events for the item and its attachments, oldest first. |
+
+## 10. Appointments and meetings (`apps/api/src/modules/office/appointments`)
+
+Web: `/office/appointments` (diary with appointments and meetings tabs).
+
+### 10.1 Appointments
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/appointments` | `office.appointments.view` | `AppointmentQuery` | `Paginated<AppointmentSummary>` | `from`/`to` filter on `confirmedStart`, falling back to `preferredStart`. `view=mine` (assigned to caller), `pending` (REQUESTED), `follow_up` (`followUpRequired` and `followUpDate ≤ today+7`). |
+| GET | `/office/appointments/:id` | `office.appointments.view` | `IdParam` | `AppointmentDetail` | Contact fields are visible to holders of `office.appointments.view` (the requester gave them for this purpose). |
+| POST | `/office/appointments` | `office.appointments.manage` | `CreateAppointment` | `AppointmentDetail` (201) | Reference `APT-…`, status `REQUESTED`. `privacyNoticeVersion` must equal `CURRENT_APPOINTMENT_PRIVACY_NOTICE_VERSION` (400 otherwise): the clerk reads or shows `appointmentPrivacyNotice()` to the requester. Audit: `APPOINTMENT_CREATED`. Audit snapshots never contain contact values: record `hasPhone` / `hasEmail` booleans instead (applies to every Office audit event). |
+| PATCH | `/office/appointments/:id` | `office.appointments.manage` | `UpdateAppointment` | `AppointmentDetail` | Not in DECLINED/CANCELLED/COMPLETED except follow-up fields. Audit: `APPOINTMENT_UPDATED`. |
+| POST | `/office/appointments/:id/transition` | `office.appointments.manage` | `AppointmentTransition` | `AppointmentDetail` | `APPOINTMENT_STATUS_TRANSITIONS`: `REQUESTED→CONFIRMED\|DECLINED\|CANCELLED`, `CONFIRMED→RESCHEDULED\|CANCELLED\|COMPLETED\|NO_SHOW`, `RESCHEDULED→CONFIRMED\|CANCELLED\|COMPLETED\|NO_SHOW`, `NO_SHOW→RESCHEDULED`. CONFIRMED/RESCHEDULED need `confirmedStart`; COMPLETED needs `outcome` (sets `outcomeRecordedAt`; optional follow-up fields); DECLINED/CANCELLED/NO_SHOW need `reason`. Audit: `APPOINTMENT_STATUS_CHANGED`. |
+
+### 10.2 Meetings (lean)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/meetings` | `office.meetings.view` | `MeetingQuery` | `Paginated<MeetingSummary>` | CONFIDENTIAL+ meetings are visible only to the owner and listed participants with `userId`. |
+| GET | `/office/meetings/:id` | `office.meetings.view` | `IdParam` | `MeetingDetail` | |
+| POST | `/office/meetings` | `office.meetings.manage` | `CreateMeeting` | `MeetingDetail` (201) | Status `SCHEDULED`. Audit: `MEETING_CREATED`. |
+| PATCH | `/office/meetings/:id` | `office.meetings.manage` | `UpdateMeeting` | `MeetingDetail` | `status`: `SCHEDULED→HELD\|CANCELLED` only. Setting `minutes` sets `minutesRecordedById/At`; editing minutes after they were recorded needs `reason`. Audit: `MEETING_UPDATED`. |
+| POST | `/office/meetings/:id/action-items` | `office.meetings.manage` | `SaveMeetingActionItem` | `MeetingActionItem` (201) | Audit: `MEETING_ACTION_ITEM_SAVED`. |
+| PATCH | `/office/meetings/:id/action-items/:itemId` | `office.meetings.manage` | `MeetingActionItemParam` + `SaveMeetingActionItem` | `MeetingActionItem` | `DONE` sets `completedAt`. Never deleted (cancel instead). Audit: `MEETING_ACTION_ITEM_SAVED`. |
+| POST | `/office/meetings/:id/decisions` | `office.meetings.manage` | `RecordMeetingDecision` | `MeetingDecision` (201) | Append-only; to change a decision record a new one with `supersedesId`. Audit: `MEETING_DECISION_RECORDED`. |
+
+## 11. Citizen cases (`apps/api/src/modules/office/cases`) — S25
+
+Web: `/office/cases`, `/office/cases/[id]`. Record routes use the geo target
+`{ kind: 'officeCase', from: 'params', key: 'id' }`; lists use `officeScopeWhere(scopeFor(auth, 'office.cases.view'))`.
+
+**Stages and transitions** (`CASE_STATUS_TRANSITIONS`, blueprint 9.2):
+
+| From | To | Endpoint | Permission | Rules |
+| --- | --- | --- | --- | --- |
+| SUBMITTED | TRIAGE | `transition` | `office.cases.manage` | Sets `triagedById/At`. |
+| SUBMITTED, TRIAGE | CLOSED | `close` | `office.cases.close` | Triage closure (duplicate, out of jurisdiction, spam, withdrawn). |
+| TRIAGE, REOPENED | ASSIGNED | `assign` (or `transition` when an assignee exists) | `office.cases.manage` | Needs an assignee. |
+| ASSIGNED, REFERRED, REOPENED, RESOLUTION_PROPOSED, CITIZEN_FEEDBACK | IN_PROGRESS | `transition` | `office.cases.manage` | |
+| TRIAGE, ASSIGNED, IN_PROGRESS | REFERRED | `referrals` (POST) | `office.cases.referral` | Creates a `CaseReferral`. |
+| ASSIGNED, IN_PROGRESS, REFERRED | RESOLUTION_PROPOSED | `propose-resolution` | `office.cases.manage` | Records `resolutionSummary` (requester-visible) and `resolutionProposedById/At`. |
+| RESOLUTION_PROPOSED | CITIZEN_FEEDBACK | `transition` | `office.cases.manage` | Asks the requester to confirm (public update). |
+| RESOLUTION_PROPOSED, CITIZEN_FEEDBACK | CLOSED | `close` | `office.cases.close` | With `caseCloseRequiresSecondPerson` (default true) the closer must differ from `resolutionProposedById` (403 `SEPARATION_OF_DUTIES`). |
+| CLOSED | REOPENED | `reopen` | `office.cases.close` | A new event; the earlier closure fields are kept in the timeline (`CLOSED` event) and cleared on the row. |
+
+Every transition appends a `CaseEvent` (`STATUS_CHANGED`, `ASSIGNED`, `REFERRED`,
+`RESOLUTION_PROPOSED`, `CLOSED`, `REOPENED`) with `fromStatus`/`toStatus`, plus a `PUBLIC_UPDATE`
+when `publicMessage` is given, and an audit event in the same transaction.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/cases` | `office.cases.view` | `CaseQuery` | `Paginated<CaseSummary>` | Scope-filtered. `view=mine` (assignee = caller), `unassigned`, `triage` (SUBMITTED+TRIAGE), `review_due` (`nextReviewDate ≤ today`, not CLOSED), `closed`. `geographicUnitId` matches county/constituency/ward columns. `q` matches reference, public reference and title (not description). |
+| GET | `/office/cases/:id` | `office.cases.view` **(geo)** | `IdParam` | `CaseDetail` | `events` omits `NOTE` and `CONTACT_ATTEMPT` unless the caller holds `office.cases.internal_notes`. Never includes contact fields. |
+| POST | `/office/cases` | `office.cases.create` | `CreateCase` | `CreateCaseResponse` (201) | Staff-recorded case (source ≠ PORTAL). Reference `CASE-…`; also allocates `publicReference` and a tracking code — the response is `CreateCaseResponse` = `CaseDetail` + `trackingCode` (shown once, for the officer to give the requester). The caller must cover the location with `office.cases.create` scope (403 `OUT_OF_SCOPE`). `privacyNoticeVersion` must equal `CURRENT_PORTAL_PRIVACY_NOTICE_VERSION`. Contact (if any) goes to `citizen_case_contacts`; `consentToContact` false with a contact preference other than NONE → 400. Status `SUBMITTED`, or `ASSIGNED` when `assigneeId` is given (triage recorded as the creator). Events: `SUBMITTED` (PUBLIC). Audit: `CASE_CREATED` (no contact data in before/after). |
+| PATCH | `/office/cases/:id` | `office.cases.manage` **(geo)** | `UpdateCase` | `CaseDetail` | Category, priority, title, location, sensitivity, `nextReviewDate`, `duplicateOfId`. Description is immutable (DB guard). Not in CLOSED. Audit: `CASE_UPDATED`. |
+| POST | `/office/cases/:id/assign` | `office.cases.manage` **(geo)** | `AssignCase` | `CaseDetail` | Assignee must be ACTIVE and hold `office.cases.manage` covering the case location (400 otherwise). From TRIAGE/REOPENED moves to ASSIGNED; otherwise only changes the assignee. Event `ASSIGNED` (INTERNAL) + public "assigned to an officer" (no name). Audit: `CASE_ASSIGNED`. Notification to the assignee (`type: 'case.assigned'`). |
+| POST | `/office/cases/:id/transition` | `office.cases.manage` **(geo)** | `CaseTransition` | `CaseDetail` | Targets TRIAGE, ASSIGNED, IN_PROGRESS, CITIZEN_FEEDBACK (table above). Audit: `CASE_STATUS_CHANGED`. |
+| POST | `/office/cases/:id/events` | `office.cases.manage` **(geo)**; `NOTE` also needs `office.cases.internal_notes` | `AddCaseEvent` | `CaseEvent` (201) | Visibility derived from type (NOTE/CONTACT_ATTEMPT → INTERNAL, PUBLIC_UPDATE → PUBLIC). Not in CLOSED except NOTE. Audit: `CASE_EVENT_ADDED` (`after` holds type and visibility; the body of a NOTE is never copied into the audit event). |
+| POST | `/office/cases/:id/evidence` | `office.cases.manage` **(geo)** | multipart `file` + `metadata` (`AddCaseEvidence`) | `CaseEvent` (201) | `storeImmutable(purpose: 'CASE_EVIDENCE')`; event `EVIDENCE_ADDED`. PUBLIC evidence is listed (description only, no file) on the tracking page. Audit: `FILE_STORED` + `CASE_EVIDENCE_ADDED`. |
+| GET | `/office/cases/:id/files/:fileId/url` | `office.cases.view` **(geo)** | params | `SignedUrlResponse` | Only files linked to the case's events. Audit: `FILE_SOURCE_ACCESSED`. |
+| GET | `/office/cases/:id/contact` | `office.cases.contact.view` **(geo)** | `IdParam` | `CaseContact` (404 when none) | Every read is audited: `CASE_CONTACT_VIEWED` (no contact values in the event). |
+| PUT | `/office/cases/:id/contact` | `office.cases.contact.view` + `office.cases.manage` **(geo)** | `UpdateCaseContact` | `CaseContact` | Correction at the requester's request. Audit: `CASE_CONTACT_UPDATED` (field names only). |
+| POST | `/office/cases/:id/contact/erase` | `office.cases.close` **(geo)** **(reauth)** | `EraseCaseContact` | `CaseContact` | Data-subject erasure or retention: nulls name/phone/email, sets `erasedAt`; the case body stays. Audit: `CASE_CONTACT_ERASED`. |
+| GET | `/office/cases/:id/referrals` | `office.cases.view` **(geo)** | `IdParam` | `CaseReferral[]` | |
+| POST | `/office/cases/:id/referrals` | `office.cases.referral` **(geo)** | `CreateCaseReferral` | `CaseDetail` | Institution must be active. Moves TRIAGE/ASSIGNED/IN_PROGRESS → REFERRED (already REFERRED: adds another referral). `shareRequesterContact` true is refused (400) without `consentToContact`. Events `REFERRED` (INTERNAL, note) + `PUBLIC_UPDATE` ("Referred to <institution name>"). Audit: `CASE_REFERRED`. |
+| PATCH | `/office/cases/:id/referrals/:referralId` | `office.cases.referral` **(geo)** | `CaseReferralParam` + `UpdateCaseReferral` | `CaseReferral` | Status `SENT→ACKNOWLEDGED\|RESPONDED\|NO_RESPONSE\|CLOSED`, `ACKNOWLEDGED→RESPONDED\|NO_RESPONSE\|CLOSED`, `RESPONDED\|NO_RESPONSE→CLOSED`. Event `REFERRAL_UPDATED` (INTERNAL). Audit: `CASE_REFERRAL_UPDATED`. |
+| POST | `/office/cases/:id/propose-resolution` | `office.cases.manage` **(geo)** | `ProposeCaseResolution` | `CaseDetail` | → RESOLUTION_PROPOSED. Event `RESOLUTION_PROPOSED` (PUBLIC, the summary) and optional INTERNAL note. Audit: `CASE_STATUS_CHANGED`. |
+| POST | `/office/cases/:id/close` | `office.cases.close` **(geo)** | `CloseCase` | `CaseDetail` | SoD rule above. DUPLICATE needs `duplicateOfId` (another case of the tenant). Sets closure fields; contact `retentionUntil = closedAt + contactRetentionMonths`. Event `CLOSED` (PUBLIC, `publicMessage` or a default). Audit: `CASE_CLOSED`. |
+| POST | `/office/cases/:id/reopen` | `office.cases.close` **(geo)** | `ReopenCase` | `CaseDetail` | → REOPENED; clears closure fields and `retentionUntil`. Event `REOPENED` (PUBLIC). Audit: `CASE_REOPENED`. |
+| GET | `/office/cases/:id/history` | `office.cases.view` **(geo)** | `IdParam` | `AuditEvent[]` | Audit events for the case, its referrals and evidence. |
+
+## 12. Projects and institutions (`apps/api/src/modules/office/projects`) — S26, S27
+
+Web: `/office/projects`, `/office/projects/[id]`. Record routes use the geo target
+`{ kind: 'officeProject', from: 'params', key: 'id' }`.
+
+**Status transitions** (`PROJECT_STATUS_TRANSITIONS`): `PROPOSED→COMMITTED|APPROVED|CANCELLED`,
+`COMMITTED→APPROVED|CANCELLED`, `APPROVED→FUNDED|PROCUREMENT|ONGOING|CANCELLED`,
+`FUNDED→PROCUREMENT|ONGOING|CANCELLED`, `PROCUREMENT→ONGOING|DELAYED|CANCELLED`,
+`ONGOING→DELAYED|COMPLETED|CANCELLED`, `DELAYED→ONGOING|COMPLETED|CANCELLED`,
+`COMPLETED→VERIFIED_COMPLETED|ONGOING`, `VERIFIED_COMPLETED→ONGOING` (verification withdrawn; needs
+`office.projects.verify`), `CANCELLED→` none. The stage kind (`PROJECT_STAGE_KIND`) is returned on
+every DTO so screens always distinguish commitment / approved / implementation / reported complete /
+verified complete.
+
+**Accountability rules** (blueprint 9.3): every project names `responsibleInstitution` (required)
+and `commitmentSource`; screens and the public view say the office *tracks* the project and name the
+institution responsible. `VERIFIED_COMPLETED` needs `completionEvidenceSufficient()` on the cited
+evidence (at least one VERIFIED inspection report, completion certificate or handover document — a
+photograph alone never suffices), a verifier who is not the completion reporter (DB check
+`projects_verified_completion_check`) and not the uploader of any cited evidence.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/projects` | `office.projects.view` | `ProjectQuery` | `Paginated<ProjectSummary>` | Scope-filtered with `officeScopeWhere`. `currentMilestone` = lowest-sequence milestone not DONE/CANCELLED. |
+| GET | `/office/projects/:id` | `office.projects.view` **(geo)** | `IdParam` | `ProjectDetail` | |
+| POST | `/office/projects` | `office.projects.edit` | `CreateProject` | `ProjectDetail` (201) | Reference `PRJ-…`. `initialStatus` PROPOSED/COMMITTED/APPROVED. Institutions must exist and be active. Coordinates both or neither. `contractAmountIsPublic` false keeps the amount out of every public view. Audit: `PROJECT_CREATED`. |
+| PATCH | `/office/projects/:id` | `office.projects.edit` **(geo)** | `UpdateProject` | `ProjectDetail` | Not in CANCELLED. Changing `expenditureReported` resets `expenditureVerificationStatus` to UNVERIFIED (and clears the verifier). Changing the responsible institution on a published project needs `reason`. Audit: `PROJECT_UPDATED` (changed fields). |
+| POST | `/office/projects/:id/transition` | `office.projects.edit` **(geo)**; to ONGOING from VERIFIED_COMPLETED needs `office.projects.verify` | `ProjectTransition` | `ProjectDetail` | DELAYED needs `delayReason`; COMPLETED needs `actualCompletionDate` and sets `completionReportedById/At`; leaving COMPLETED/VERIFIED_COMPLETED clears completion fields. Audit: `PROJECT_STATUS_CHANGED`. |
+| POST | `/office/projects/:id/verify-completion` | `office.projects.verify` **(geo)** **(reauth)** | `VerifyProjectCompletion` | `ProjectDetail` | COMPLETED → VERIFIED_COMPLETED under the rules above (403 `SEPARATION_OF_DUTIES`; 400 with `details` naming the missing evidence type). Audit: `PROJECT_COMPLETION_VERIFIED` (cites evidence ids). |
+| POST | `/office/projects/:id/verify-expenditure` | `office.projects.verify` **(geo)** | `VerifyProjectExpenditure` | `ProjectDetail` | Needs a reported expenditure. Verifier must not be the last editor of `expenditureReported` (from the audit stream). Audit: `PROJECT_VERIFICATION_RECORDED` (`entityType: 'ProjectExpenditure'`). |
+| GET | `/office/projects/:id/milestones` | `office.projects.view` **(geo)** | `IdParam` | `ProjectMilestone[]` | Ordered by `sequence`. |
+| POST | `/office/projects/:id/milestones` | `office.projects.edit` **(geo)** | `CreateProjectMilestone` | `ProjectMilestone` (201) | Audit: `PROJECT_MILESTONE_SAVED`. |
+| PATCH | `/office/projects/:id/milestones/:milestoneId` | `office.projects.edit` **(geo)** | `ProjectMilestoneParam` + `UpdateProjectMilestone` | `ProjectMilestone` | Changing status or `actualDate` resets verification to UNVERIFIED. Never deleted (CANCELLED instead). Audit: `PROJECT_MILESTONE_SAVED`. |
+| POST | `/office/projects/:id/milestones/:milestoneId/verify` | `office.projects.verify` **(geo)** | `VerifyRecord` | `ProjectMilestone` | Only DONE milestones can be VERIFIED. Audit: `PROJECT_VERIFICATION_RECORDED` (`entityType: 'ProjectMilestone'`). |
+| POST | `/office/projects/:id/evidence` | `office.projects.evidence` **(geo)** | multipart `file` + `metadata` (`CreateProjectEvidence`) | `ProjectEvidence` (201) | `storeImmutable(purpose: 'PROJECT_EVIDENCE')`. Location metadata only when given (never extracted from EXIF automatically). Audit: `FILE_STORED` + `PROJECT_EVIDENCE_ADDED`. |
+| POST | `/office/projects/:id/evidence/:evidenceId/verify` | `office.projects.verify` **(geo)** | `ProjectEvidenceParam` + `VerifyRecord` | `ProjectEvidence` | Verifier ≠ uploader (403 `SEPARATION_OF_DUTIES`; also a DB check). DISPUTED evidence loses `isPublic`. Audit: `PROJECT_VERIFICATION_RECORDED` (`entityType: 'ProjectEvidence'`). |
+| GET | `/office/projects/:id/evidence/:evidenceId/url` | `office.projects.view` **(geo)** | params | `SignedUrlResponse` | Audit: `FILE_SOURCE_ACCESSED`. |
+| PUT | `/office/projects/:id/publication` | `office.projects.publish` **(geo)** **(reauth)** | `UpdateProjectPublication` | `ProjectDetail` | Sets `isPublic`, `publicFields`, `publicSummary`; sets `publishedById/At` when publishing. `contractAmount` only with `contractAmountIsPublic` (DB check); `publicEvidenceIds` must be VERIFIED evidence of the project (sets `isPublic` on exactly those). Mandatory public fields cannot be removed. Unpublishing keeps the settings. Audit: `PROJECT_PUBLICATION_CHANGED`. |
+| GET | `/office/projects/:id/public-preview` | `office.projects.view` **(geo)** | `IdParam` | `PublicProjectDetail` | Exactly what §13.4 would return if published (same mapper). |
+| GET | `/office/projects/:id/history` | `office.projects.view` **(geo)** | `IdParam` | `AuditEvent[]` | S27 update history. |
+
+### 12.5 Institution registry
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/office/institutions` | any of `office.cases.view`, `office.projects.view`, `office.correspondence.view` | `InstitutionQuery` | `Paginated<Institution>` | Default `active=true`. Used by referral and project forms. |
+| GET | `/office/institutions/:id` | same | `IdParam` | `Institution` | |
+| POST | `/office/institutions` | `office.institutions.manage` | `CreateInstitution` | `Institution` (201) | Name unique per tenant (409). Audit: `INSTITUTION_CREATED`. |
+| PATCH | `/office/institutions/:id` | `office.institutions.manage` | `UpdateInstitution` | `Institution` | Deactivate with `isActive: false` (never deleted); a deactivated institution stays on existing projects and referrals. Audit: `INSTITUTION_UPDATED`. |
+
+## 13. Public portal (`apps/api/src/modules/office/public`) — S24 and public project pages
+
+Web (outside the authenticated shell): `/p/[tenantSlug]` (home), `/p/[tenantSlug]/request` (S24),
+`/p/[tenantSlug]/track`, `/p/[tenantSlug]/projects`, `/p/[tenantSlug]/projects/[id]`.
+
+Every route here is `@Public()`, guarded by the portal's own `PublicRateLimitGuard` (per IP +
+tenant + bucket, 429 `RATE_LIMITED` with `Retry-After`; env `PUBLIC_RATE_LIMIT_WINDOW_SECONDS`
+600, `PUBLIC_SUBMIT_RATE_LIMIT_MAX` 5, `PUBLIC_TRACK_RATE_LIMIT_MAX` 30, `PUBLIC_READ_RATE_LIMIT_MAX`
+600) in addition to the global throttler, and resolves the tenant with `PublicPortalService.resolve()`
+(404 for unknown/disabled). Writes call `PublicAbuseService.check(dto, config, req.ip)`: a filled
+honeypot field `website` or a failed captcha (when `captchaProvider ≠ none`; bind a verifier to
+`CAPTCHA_VERIFIER`, otherwise it fails closed) returns a generic 400 `ABUSE_CHECK_FAILED`. The CSRF
+header rule (§1) applies to public POSTs too. Responses never contain internal notes, staff names,
+requester contact details, assignees or other requesters' data. Public reads are not audited;
+public writes are (actor `SYSTEM`, `actorId` null).
+
+### 13.1 Portal info (implemented)
+
+| Method | Path | Permission | Request | Response | Notes |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/public/:tenantSlug/portal` | public (`read`) | `PublicTenantParam` | `PublicPortalInfo` | Display name, privacy notice (what / why / who / how long / rights / contact, versioned: `CURRENT_PORTAL_PRIVACY_NOTICE_VERSION`), offered categories, constituencies and wards under `portalCountyUnitId`, captcha config, honeypot field name, photo limits, `projectsEnabled`. |
+
+### 13.2 Submit a request (S24)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/public/:tenantSlug/requests` | public (`submit`) | multipart: `payload` (JSON `PublicCaseSubmission`) + optional `photo` | `PublicCaseReceipt` (201) | No account. Checks: abuse check; `privacyNoticeVersion` equals the current version (409 `CONFLICT` "the notice changed, reload"); category offered; `geographicUnitId` is a ward or constituency under `portalCountyUnitId`; photo JPEG/PNG/WebP/HEIC ≤ `MAX_PUBLIC_PHOTO_BYTES` (sniffed). Creates `citizen_cases` (source PORTAL, status SUBMITTED, `createdById` null, random `publicReference`, `trackingCodeHash`), `citizen_case_contacts` only when `contactPreference ≠ NONE` (minimal fields; nothing stored otherwise), event `SUBMITTED` (PUBLIC, actor REQUESTER) and, with a photo, `storeImmutable(purpose: 'CASE_EVIDENCE', uploadedById: config.portalServiceUserId)` + event `EVIDENCE_ADDED` (INTERNAL). Receipt shows `publicReference` and `trackingCode` **once**. An acknowledgement notification is queued only when contact was given and consented (`NOTIFICATION_QUEUE`, channel per preference). Audit: `CASE_PUBLIC_SUBMITTED` (no contact values, no description text). |
+
+### 13.3 Track and feedback
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/public/:tenantSlug/track` | public (`track`) | `PublicTrackRequest` | `PublicCaseStatus` | POST so the code never appears in URLs or logs. Unknown reference and wrong code return the same 404 (compare with `trackingCodeMatches`, constant time). Shows `CASE_STATUS_PUBLIC_STAGE` and its label, PUBLIC events only (message + time, no actor), referral institution names, `feedbackAllowed` in RESOLUTION_PROPOSED/CITIZEN_FEEDBACK. Not audited. |
+| POST | `/public/:tenantSlug/track/feedback` | public (`submit`) | `PublicCitizenFeedback` | `PublicCaseStatus` | Same lookup rules; only when `feedbackAllowed` (409 otherwise). Appends `CITIZEN_FEEDBACK` (PUBLIC, actor REQUESTER, body = response label + message). `CONFIRM_RESOLVED` from RESOLUTION_PROPOSED moves to CITIZEN_FEEDBACK (the case is still closed by an officer); `DISPUTE` from either state moves to IN_PROGRESS and notifies the assignee; `ADDITIONAL_INFORMATION` changes no status. Audit: `CASE_CITIZEN_FEEDBACK`. |
+
+### 13.4 Public projects
+
+Only projects with `isPublic = true`, and only when `publicProjectsEnabled`. Mandatory fields are
+always present (name, category, location, status + stage kind labels, responsible institution,
+commitment source, completion verification label); optional sections appear only when listed in
+`publicFields`. Every detail response carries `disclaimer: PROJECT_PUBLIC_DISCLAIMER`.
+`completionVerificationLabel`: VERIFIED_COMPLETED → "Completion verified"; COMPLETED → "Reported
+complete — awaiting independent verification"; otherwise "Not complete".
+
+| Method | Path | Permission | Request | Response | Notes |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/public/:tenantSlug/projects` | public (`read`) | `PublicProjectQuery` | `Paginated<PublicProjectSummary>` | Filters: category, stage kind, unit (ward/constituency), `q` on name. |
+| GET | `/public/:tenantSlug/projects/:id` | public (`read`) | `PublicProjectParam` | `PublicProjectDetail` | 404 when not public. `contractAmount` only when approved and `contractAmountIsPublic`. `evidence` lists only evidence with `isPublic` (always VERIFIED). No staff names (`projectOwner` is the published owner name). |
+| GET | `/public/:tenantSlug/projects/:id/evidence/:evidenceId/file` | public (`read`) | `PublicEvidenceParam` | 302 to a short-lived signed URL | Only `isPublic` evidence of a public project. Not audited (public record). |
+
+---
+
+## 14. Web client usage
 
 ```ts
 import { api } from '@/lib/api-client';

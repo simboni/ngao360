@@ -64,6 +64,20 @@ Organisation code **`demo`**. The password for every account is `SEED_DEMO_PASSW
 
 Other tenants: `platform` (`operator@platform.example.org`, platform operator) and `other` (`owner@other.example.org`, used to test cross-tenant isolation).
 
+### NGAO360 Office demo (synthetic County Governor's office, Bungoma)
+
+Organisation code **`bungoma-governor`**, same password. The `office` module and the public portal are on; `tally` is off in this tenant (campaign and tally data stay in `demo`, blueprint 15.2). The public portal is at `/p/bungoma-governor` (no sign-in); the seed prints a synthetic reference and tracking code to try on `/p/bungoma-governor/track`.
+
+| Email (`@bungoma-office.example.org`) | Role | Scope | MFA |
+| --- | --- | --- | --- |
+| `owner@` | Organisation owner (module activation, read-only office oversight) | Organisation | TOTP |
+| `officeadmin@` | Office administrator (triage, closure, confidential correspondence, verification) | Organisation | TOTP |
+| `caseofficer@` | Case officer | Organisation | none |
+| `caseofficer.north@` | Case officer | Synthetic Constituency North | none |
+| `clerk@` | Correspondence clerk (also keeps the diary) | Organisation | none |
+| `projects@` | Projects officer (records and evidence; cannot verify or publish) | Organisation | none |
+| `publicinfo@` | Public-information editor (publishes approved project fields) | Organisation | TOTP |
+
 A short walkthrough: sign in as the clerk and upload `fixtures/forms/synthetic-37a-*.png` from **Form inbox**, then capture the figures and submit for review. Next, sign in as the verifier to verify the form. Finally, sign in as the supervisor and open **Parallel tally**: totals include only verified stations, measured against the 153 stations in the approved registry.
 
 ## Repository

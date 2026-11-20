@@ -71,6 +71,7 @@ The seed is idempotent and contains:
 - all 47 counties (real public codes) and a synthetic Bungoma registry: 9 constituencies, 45 wards, 90 centres and 153 stations in an APPROVED registry version (`SYNTHETIC-2027-R1`), loaded through the same validation as a CSV import;
 - 10 tally centres (one for each constituency, plus the county centre) and a Governor contest with four fictional candidates;
 - form templates for all 22 forms of the 34–39 series. The Governor series (37A/B/C, plus 37D as a reference-only certificate) is approved by the legal officer, not by its creator; the others are awaiting approval.
+- the NGAO360 Office tenant `bungoma-governor` (synthetic County Governor's office): `office` module and public portal on, `tally` off; Bungoma county with the synthetic constituencies and wards; 18 synthetic institutions; one user per office role (see the README); 25 citizen cases across every stage, 15 correspondence items, 10 appointments, 2 meetings and 12 projects with milestones and evidence. Evidence files are small synthetic PNGs and PDFs written under `apps/api/storage` (override with `SEED_STORAGE_ROOT`) with the same content-addressed keys the API uses. The seed prints one synthetic public reference and tracking code for `/p/bungoma-governor/track`.
 
 ### OCR
 
