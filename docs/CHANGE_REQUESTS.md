@@ -377,3 +377,53 @@ request or response shape.
 6. **Known gaps (unchanged by this work).** The public rate limiter keeps counters in memory per API
    instance (move to Redis before scaling out); no captcha verifier is bound; contact retention is
    recorded (`retentionUntil`) but no scheduled job erases expired contacts yet.
+
+## Office: correspondence, appointments and projects UI (from the office web agent)
+
+1. **Run the new web tests in `pnpm test`.** S23, the diary and S26/S27 have their own suites
+   (`components/office/{correspondence,appointments,projects}/__tests__`, 43 tests), which the
+   `@ngao360/web` `test` script does not pick up. Append to the script (alongside the cases-agent
+   proposal): `&& tsx --tsconfig src/components/office/correspondence/__tests__/tsconfig.json --test src/components/office/correspondence/__tests__/*.test.tsx && tsx --tsconfig src/components/office/appointments/__tests__/tsconfig.json --test src/components/office/appointments/__tests__/*.test.tsx && tsx --tsconfig src/components/office/projects/__tests__/tsconfig.json --test src/components/office/projects/__tests__/*.test.tsx`.
+
+2. **Mount the Office overview widget on the dashboard.** `components/office/office-kpis.tsx`
+   exports `<OfficeKpis />`: overdue and unassigned correspondence, pending appointment requests,
+   cases to triage, and projects reported complete awaiting verification. Each figure is the `total`
+   of the scoped list endpoint, shown only to holders of the matching `office.*.view` permission,
+   and the widget renders nothing when the `office` module is off. The dashboard owner should add
+   `import { OfficeKpis } from '@/components/office/office-kpis';` and render `<OfficeKpis className="mb-6" />`
+   near the top of `components/admin/dashboard-view.tsx` (or `app/(app)/dashboard/page.tsx`). Note
+   that office roles do not hold `dashboard.view`, so they cannot open S04 today; either grant it to
+   the Office administrator or add the widget to an `/office` landing page.
+
+3. **Assignee lookups for correspondence, appointments and projects.** As for cases, the assign
+   and tracking-officer pickers offer the caller, anyone already linked, and (for `users.view`
+   holders) active users with the relevant Office roles; the API re-checks the assignee. Proposed:
+   `GET /office/assignable-users?permission=office.correspondence.view|office.appointments.manage|office.projects.edit`
+   returning `UserRef[]` of active users holding that permission (and, for correspondence, filtered to
+   `.confidential` holders when `sensitivity` is CONFIDENTIAL+).
+
+4. **Coordinates on `ProjectSummary` and a map.** The register's "By location" view groups projects
+   by constituency and ward because `ProjectSummary` has no `latitude`/`longitude` and no map library
+   is installed (and no tile host is allowed). Proposed, additively: `latitude`/`longitude` (nullable)
+   on `ProjectSummarySchema`; add `leaflet` + `react-leaflet` to `@ngao360/web` with a self-hosted or
+   approved tile source (add its host to a future CSP `img-src`). Until then the view is labelled as
+   a map placeholder.
+
+5. **Appointment privacy notice text.** The clerk-facing notice is built with
+   `appointmentPrivacyNotice()`. The office's controller name, contact and retention come from
+   `GET /workspace/modules`, which needs `workspace.view`; clerks do not hold it, so they see the
+   organisation name and the default retention (labelled as such). The API only checks the version.
+   Proposed: `GET /office/privacy-notices` (any `office.*.view`) returning both
+   `portalPrivacyNotice()` and `appointmentPrivacyNotice()` built from the tenant's config (this also
+   covers cases item 3).
+
+6. **Correspondence audit history and redaction.** `GET /office/correspondence/:id/history` returns
+   redacted before/after snapshots; the S23 history lists changed top-level keys with old → new
+   values. If any Office audit snapshot ever carries contact values, the list would show them; the
+   contract says snapshots record `hasPhone`/`hasEmail` only, so keep it that way.
+
+7. **Milestone verify action flag.** `ProjectDetail.allowedActions` has no milestone-verification
+   flag, so S27 offers "Verify" on DONE milestones to holders of `office.projects.verify` and relies on
+   the API's separation-of-duties answer (last status editor cannot verify). Proposed: per-milestone
+   `canVerify` (or `verifyBlockedReason`) on `ProjectMilestoneSchema`, computed like
+   `verify_evidence`.

@@ -1,16 +1,16 @@
-import { ModulePlaceholder } from '@/components/layout/module-placeholder';
+import { Suspense } from 'react';
+import { ProjectRegister } from '@/components/office/projects/project-register';
+import { RequirePagePermission } from '@/components/ui/permission-gate';
 
 export const metadata = { title: 'Projects' };
 
-/** S26 Project register. API §12. Owner: projects agent (components/office/projects). */
+/** S26 Project register. API §12. */
 export default function ProjectsPage() {
   return (
-    <ModulePlaceholder
-      title="Project register"
-      screen="S26 Project register"
-      description="Commitments and projects with the responsible institution, funding source, milestone, evidence and verification label."
-      breadcrumbs={[{ label: 'Office' }, { label: 'Projects' }]}
-      anyOf={['office.projects.view']}
-    />
+    <RequirePagePermission anyOf={['office.projects.view']}>
+      <Suspense>
+        <ProjectRegister />
+      </Suspense>
+    </RequirePagePermission>
   );
 }
