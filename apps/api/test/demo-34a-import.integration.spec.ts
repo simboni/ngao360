@@ -221,6 +221,38 @@ d('2022 34A local-file importer (synthetic fixtures)', () => {
     await expect(ctx.actAs(supervisor, () => ctx.svc(app, DisplayHoldsService).confirmDeclaredRedaction(supervisor, sub.id, 'Trying to skip the redaction'))).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
+  it('HTTP holds service (§35): lists in scope, serves only a CLEAN redacted copy, releases by hold id with separation of duties', async () => {
+    const { DisplayHoldsHttpService } = await import('../src/modules/tally/services/display-holds-http.service');
+    const svc = ctx.svc(app, DisplayHoldsHttpService);
+    const supervisor = await ctx.authFor(app, demo.tenantId, email('supervisor'));
+    const clerk = await ctx.authFor(app, demo.tenantId, email('clerk1'));
+    const page = await ctx.actAs(supervisor, () => svc.list(supervisor, { page: 1, pageSize: 100 }));
+    expect(page.total).toBeGreaterThanOrEqual(2);
+    for (const h of page.items) expect(h.dataLabel).toMatch(/HISTORICAL DEMO/);
+    const awaiting = await ctx.actAs(supervisor, () => svc.list(supervisor, { state: 'AWAITING_REDACTION', page: 1, pageSize: 100 }));
+    expect(awaiting.items.every((h) => h.state === 'AWAITING_REDACTION')).toBe(true);
+    const target = awaiting.items.find((h) => h.pollingStationCode === '039002000399901')!;
+    expect(target).toBeDefined();
+    await expect(ctx.actAs(supervisor, () => svc.redactedUrl(supervisor, target.id))).rejects.toMatchObject({ code: 'NOT_FOR_DISPLAY_UNTIL_REDACTED' });
+
+    const redacted = readFileSync(join(DIR, '1_34_A_039001000100101_KIT1_20221340_181500.png'));
+    const file = { buffer: Buffer.concat([redacted]), mimetype: 'image/png', originalname: 'redacted-http.png', size: redacted.length };
+    // Releasing needs tally.approve (the uploader-and-declarer rule is covered above through the same service).
+    await expect(ctx.actAs(clerk, () => svc.attach(clerk, target.id, file, 'Names covered'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const released = await ctx.actAs(supervisor, () => svc.attach(supervisor, target.id, file, 'Names and signatures covered'));
+    expect(released).toMatchObject({ id: target.id, state: 'REDACTED_COPY_ATTACHED', redactedBy: { id: supervisor.userId } });
+    await expect(ctx.actAs(supervisor, () => svc.attach(supervisor, target.id, file))).rejects.toMatchObject({ code: 'CONFLICT' });
+
+    // Fail closed: the copy is served only once its malware scan is CLEAN (no scanner in this suite).
+    await expect(ctx.actAs(supervisor, () => svc.redactedUrl(supervisor, target.id))).rejects.toMatchObject({ code: 'FILE_NOT_CLEAN' });
+    const hold = await owner.storedFileDisplayHold.findUniqueOrThrow({ where: { id: target.id } });
+    await owner.storedFile.update({ where: { id: hold.redactedFileId! }, data: { malwareScanStatus: 'CLEAN', scanEngine: 'test-scanner', scannedAt: new Date() } });
+    const url = await ctx.actAs(supervisor, () => svc.redactedUrl(supervisor, target.id));
+    expect(url).toMatchObject({ redactedCopy: true, sha256: released.redactedSha256 });
+    // An unknown hold id is a 404, never another tenant's row.
+    await expect(ctx.actAs(supervisor, () => svc.get(supervisor, randomUUID()))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('skips and reports station codes from another county instead of filing them under this county', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'ngao-34a-county-'));
     try {

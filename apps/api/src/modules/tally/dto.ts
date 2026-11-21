@@ -1,6 +1,7 @@
 import {
   AggregateQuerySchema,
   AssignDiscrepancySchema,
+  ConfirmDeclaredRedactionSchema,
   CloseDiscrepancySchema,
   CreateDiscrepancySchema,
   CreateExportSchema,
@@ -10,6 +11,7 @@ import {
   DiscrepancyCommentSchema,
   DiscrepancyQuerySchema,
   DiscrepancyTransitionSchema,
+  DisplayHoldQuerySchema,
   IdParamSchema,
   PaginationQuerySchema,
   ReasonSchema,
@@ -58,3 +60,8 @@ export class ReleaseSnapshotDto extends createZodDto(ReleaseSnapshotSchema) {}
 
 export class CreateExportDto extends createZodDto(CreateExportSchema) {}
 export class ExportQueryDto extends createZodDto(PaginationQuerySchema.extend({ snapshotId: UuidSchema.optional() })) {}
+
+/* Display holds (API contract §35) */
+export class DisplayHoldQueryDto extends createZodDto(DisplayHoldQuerySchema) {}
+export class HoldIdParamDto extends createZodDto(z.object({ holdId: UuidSchema })) {}
+export class ConfirmDeclaredRedactionDto extends createZodDto(ConfirmDeclaredRedactionSchema) {}

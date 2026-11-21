@@ -13,6 +13,7 @@ import { createOcrProvider, OCR_PROVIDER } from './ocr/ocr-provider';
 import { TallyOcrService } from './ocr/ocr.service';
 import { CaptureService } from './services/capture.service';
 import { DiscrepancyService } from './services/discrepancy.service';
+import { DisplayHoldsHttpService } from './services/display-holds-http.service';
 import { DisplayHoldsService } from './services/display-holds.service';
 import { ExportsService } from './services/exports.service';
 import { ResultsService } from './services/results.service';
@@ -47,6 +48,7 @@ import { VerificationService } from './services/verification.service';
     ValidationService,
     TallyOcrService,
     DisplayHoldsService,
+    DisplayHoldsHttpService,
     SubmissionsService,
     CaptureService,
     ResultsService,
