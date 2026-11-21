@@ -146,6 +146,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Administration',
     items: [
       { label: 'Users', href: '/admin/users', icon: Users, anyOf: ['users.view'] },
+      { label: 'Account recovery', href: '/admin/recovery', icon: LifeBuoy, anyOf: ['users.reset_mfa'] },
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, anyOf: ['roles.view'] },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText, anyOf: ['audit.view'] },
       { label: 'Breach register', href: '/security/breaches', icon: FileWarning, anyOf: ['security.breach.view'] },

@@ -2,7 +2,7 @@
 
 import type { OkResponse, RoleAssignment, UserDetail, UserStatusChange } from '@ngao360/shared';
 import type { UserSession } from '@ngao360/shared';
-import { KeyRound, PauseCircle, PlayCircle, Plus, ShieldOff, UserX } from 'lucide-react';
+import { KeyRound, LifeBuoy, PauseCircle, PlayCircle, Plus, ShieldOff, UserX } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { formatDateTime } from '@/lib/format';
+import { holdsPrivilegedSystemRole, recoveryRequestHref } from '@/components/recovery/recovery-model';
 import { GrantRoleDialog, scopeLabel } from './grant-role-dialog';
 import { Chip, Drawer, Facts, Field, Notice, Tabs, TextInput } from './primitives';
 import { ReasonDialog, useHighRisk } from './reauth';
@@ -52,6 +53,8 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
   const sessions = useApiQuery<UserSession[]>(userId && tab === 'sessions' ? `sessions:${userId}` : null, (signal) => api.get<UserSession[]>(`/admin/users/${userId}/sessions`, { signal }));
   const u = user.data;
   const isSelf = u?.id === me?.user.id;
+  // Privileged accounts are reset only through two-person account recovery (CR AR8, contract §32.3).
+  const privileged = u ? holdsPrivilegedSystemRole(u.roles.map((r) => r.key)) : false;
 
   const after = async (message: string) => {
     setNotice(message);
@@ -131,6 +134,11 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
           ) : null}
           {error ? <Notice tone="danger" className="mb-4">{describeError(error)}</Notice> : null}
           {isSelf ? <Notice tone="info" className="mb-4">This is your own account. Status, MFA and role changes must be made by another administrator.</Notice> : null}
+          {privileged && !isSelf && can('users.reset_mfa') ? (
+            <Notice tone="info" className="mb-4">
+              This account holds privileged access. If they lost their sign-in factors, use account recovery: a second administrator must approve it.
+            </Notice>
+          ) : null}
 
           <div className="mb-4 flex flex-wrap gap-2">
             {can('users.suspend') && !isSelf ? (
@@ -157,10 +165,19 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
                 <KeyRound className="h-4 w-4" aria-hidden /> New invitation link
               </Button>
             ) : null}
-            {can('users.reset_mfa') && !isSelf && u.mfaEnabled ? (
+            {can('users.reset_mfa') && !isSelf && u.mfaEnabled && !privileged ? (
               <Button size="sm" variant="secondary" onClick={() => setPending({ kind: 'mfa' })}>
                 <KeyRound className="h-4 w-4" aria-hidden /> Reset MFA
               </Button>
+            ) : null}
+            {can('users.reset_mfa') && !isSelf && u.status === 'ACTIVE' ? (
+              <Link
+                href={recoveryRequestHref(u.id)}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-line px-3 text-meta hover:bg-cloud"
+                title="Two administrators: one checks identity and asks, another approves"
+              >
+                <LifeBuoy className="h-4 w-4" aria-hidden /> Account recovery
+              </Link>
             ) : null}
             {can('audit.view') ? (
               <Link href={`/admin/audit?actorId=${u.id}`} className="inline-flex h-8 items-center rounded-lg border border-line px-3 text-meta hover:bg-cloud">

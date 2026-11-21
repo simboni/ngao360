@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { formatDateTime } from '@/lib/format';
+import { recoveryNoticeTarget } from '@/components/recovery/recovery-model';
 import { InviteUserDialog } from './invite-user-dialog';
 import { Chip, Notice, SelectInput, TextInput } from './primitives';
 import { describeError, useApiQuery } from './use-api';
@@ -43,6 +44,12 @@ export function UsersDirectory() {
   const debouncedQ = useDebounced(q);
 
   useEffect(() => setPage(1), [debouncedQ, status, roleKey]);
+
+  // In-app recovery notices link to `/admin/users?recovery=<id>` (API): open that request.
+  const recoveryTarget = recoveryNoticeTarget(params.get('recovery'));
+  useEffect(() => {
+    if (recoveryTarget) router.replace(recoveryTarget);
+  }, [recoveryTarget, router]);
 
   const roles = useApiQuery<Role[]>(can('roles.view') ? 'dir-roles' : null, async (signal) => (await api.get<Paginated<Role>>('/admin/roles', { query: { pageSize: 200 }, signal })).items);
   const list = useApiQuery<Paginated<UserSummary>>(`users:${debouncedQ}:${status}:${roleKey}:${page}:${sort?.key}:${sort?.order}`, (signal) =>
