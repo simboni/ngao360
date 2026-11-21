@@ -9,6 +9,9 @@ Status: §2–30 are **implemented**: the platform foundation, NGAO TALLY, NGAO3
 election operations, and campaign and organisation (organisation, tasks, events, communications,
 finance, reports, the notification centre and the breach register; §23–30, with the end-to-end
 campaign rehearsal in `apps/api/test/campaign-rehearsal.e2e.spec.ts`).
+§31–36 (pilot hardening: messaging outbox, contacts and push, passkeys and recovery, workspace setup and settings,
+malware scanning and durable jobs, display holds, the field offline PIN) are a **contract only**: schema, shared types,
+platform interfaces and route stubs exist; the endpoints are being built.
 
 Query-string flags (`unreadOnly`, `flagged`, `mine`, `includeDrills`, …) use `QueryBooleanSchema`: `true` / `1` and
 `false` / `0` only (anything else is 400). `z.coerce.boolean()` is not used for query flags because it reads `"false"`
@@ -1104,3 +1107,228 @@ Drills are recorded with `isDrill: true` and labelled everywhere. The register h
 | Unacknowledged WARN findings on approval | 409 | `CONFLICT` (`details.findings`) |
 | Requester approves / pays, approver pays (segregation on), author approves, owner reviews, reporter closes | 403 | `SEPARATION_OF_DUTIES` |
 | Dependency cycle, duplicate code / identifier | 409 | `CONFLICT` |
+
+---
+
+## Pilot hardening conventions (§31–36)
+
+Status: **contract only** (prepared on `feat/pilot-hardening`). The schema (migration
+`20261128000000_pilot_hardening_foundation`), the shared types (`packages/shared/src/platform/`), the platform interfaces
+(`apps/api/src/platform/`), empty modules and the web route stubs exist; the endpoints below are built by four parallel
+agents (ownership in [ARCHITECTURE.md](./ARCHITECTURE.md) §16). Every rule in §1 applies. In addition:
+
+| Topic | Rule |
+| --- | --- |
+| Secrets | Vendor secrets (SMTP password, Africa's Talking API key, VAPID private key, captcha secret) come only from the environment (`.env.example`). They are never stored in the database, never returned by an endpoint and never logged. Endpoints report provider *names*, `configured` / `available` flags and missing variable *names* only. `tenant_integration_settings.config` refuses secret-looking keys (DB check + `containsSecretKey`). |
+| Defaults | Every provider defaults to the log / no-op one: e-mail, SMS and push record SKIPPED; no scanner (files stay PENDING); no captcha verifier. Tests use in-process fakes (fake SMTP / HTTP servers, a fake clamd speaking INSTREAM, the EICAR string), never the vendors. |
+| Fail closed | Only `CLEAN` is clean (`isScanClean`): PENDING, ERROR and SKIPPED files cannot be published or used where CLEAN is required (409 `FILE_NOT_CLEAN`). A tenant captcha provider that is not configured, or whose verification fails or times out, refuses the submission (400 `ABUSE_CHECK_FAILED`, generic). A selected provider that lacks its variables stops the API at start-up. The Redis rate-limit store erroring answers 429 / 503, never "unlimited". |
+| Delivery | Messages go to one person about their own account or work, through `message_outbox` (enqueued in the business transaction, sent by the `messaging.dispatch` job). E-mail only to a verified address (the invitation and verification templates prove control of the address they are sent to); SMS only to a verified number with consent and no opt-out; push only to the user's own subscriptions. No lists, no bulk, no outreach (blueprint 15.3). |
+| Invitation links | Once an e-mail provider is configured (`MessageProviderRegistry.isDeliveryConfigured('EMAIL')`), invitations and recovery links are delivered to the person through the outbox and are **never** returned to the administrator (any `NODE_ENV`). Without a channel the link is shown once, as today, and the response says `delivery: 'SHOWN_ONCE'`. |
+| Separation of duties | Account recovery: requester ≠ subject, approver ≠ requester and ≠ subject, rejecter ≠ subject (DB checks → 403 `SEPARATION_OF_DUTIES`). A display-hold redacted copy is attached / confirmed by someone other than the uploader and the declarer (existing service rule). |
+| Transitions | `MESSAGE_STATUS_TRANSITIONS` and `ACCOUNT_RECOVERY_TRANSITIONS` (shared) mirror DB triggers; a refused DB transition maps to 409 `INVALID_TRANSITION`, a frozen record to 409 `IMMUTABLE_RECORD`. |
+| Rate limits | Account-level limits (per hashed tenant + e-mail / user id) use `RATE_LIMIT_STORE` (memory or Redis); keys never contain personal data in clear. |
+
+### 31. Messaging, contacts and push (`apps/api/src/platform/messaging`) — owner platform-infra, blueprint 10.3
+
+Outbox flow: `MessageOutboxPort.enqueueInTx(tx, OutboxEnqueueInput)` (token `MESSAGE_OUTBOX`) inserts one QUEUED row in
+the caller's tenant transaction: the address is resolved (verified e-mail / consented phone / active push subscriptions,
+or `addressOverride` for invitation and verification templates), sealed with `MESSAGING_ENCRYPTION_KEY`, hashed with
+`MESSAGING_HASH_KEY` and masked; secrets for the template go to `secret_payload_encrypted`; a recipient without a
+deliverable address gives a SKIPPED row (never an error that blocks the business change). The same `(tenant,
+idempotencyKey)` returns the existing row. The dispatcher (`messaging.dispatch`, every
+`MESSAGING_DISPATCH_INTERVAL_SECONDS`) claims due rows (`QUEUED` / `FAILED` with `next_attempt_at <= now()`, or
+`SENDING` with an expired `locked_until`) with `FOR UPDATE SKIP LOCKED`, moves them to SENDING (attempts + 1, lease),
+renders the template, calls `MessageProviderRegistry.get(channel).send()` and records SENT (provider id, `sent_at`),
+SKIPPED (log provider), FAILED (`next_attempt_at = now() + messageRetryDelayMs(attempts)`) or DEAD (permanent failure or
+`attempts = max_attempts`); `secret_payload_encrypted` is wiped at SENT / SKIPPED / DEAD (DB check). Every transition
+appends `message_outbox_events`. In-app notifications keep `notification_deliveries`; the notification centre's
+external channels move onto the outbox (`notification.alert`, `notification_id` set).
+
+#### 31.1 Outbox administration
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/workspace/messages` | `workspace.configure` | `OutboxListQuery` | `Paginated<OutboxMessageSummary>` | Masked address only; never payload or secrets. |
+| GET | `/workspace/messages/:id/events` | `workspace.configure` | — | `{ items: MessageOutboxEvent[] }` | Attempt history (errors without addresses). |
+| POST | `/workspace/messages/:id/cancel` | `workspace.configure` | `{ reason }` | `OutboxMessageSummary` | QUEUED / FAILED → DEAD (409 `INVALID_TRANSITION` otherwise). Audit: `MESSAGE_CANCELLED`. A DEAD message is never revived: re-issue the invitation / recovery instead. |
+
+#### 31.2 Own contacts and push (`/me/*`, authenticated, own account only)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/me/contacts` | Authenticated | — | `ContactStatusResponse` | E-mail (login address) and phone (`users.phone`) with verification and SMS consent. |
+| POST | `/me/contacts/verify/start` | Authenticated, rate-limited (account: 5 / hour / channel) | `StartContactVerification` | `ContactStatus` | Creates or refreshes the current `contact_verifications` row (supersedes one for an old address), stores SHA-256 of a 6-digit code (10 min), enqueues `contact.verify_email` / `contact.verify_sms` to that address. 409 when there is no phone. Appends `CODE_SENT`. Audit: `CONTACT_VERIFICATION_SENT`. |
+| POST | `/me/contacts/verify/confirm` | Authenticated, rate-limited | `ConfirmContactVerification` | `ContactStatus` | 5 wrong codes invalidate the code. Sets `verified_at` once. Appends `VERIFIED` / `VERIFICATION_FAILED`. Audit: `CONTACT_VERIFIED`. |
+| PUT | `/me/contacts/sms-consent` | Authenticated | `SmsConsent` | `ContactStatus` | `consentVersion` must equal `SMS_CONSENT_NOTICE.version` (400 otherwise); `consent: false` records an opt-out (`source: settings`). Appends `CONSENT_GIVEN` / `OPTED_OUT` / `OPTED_IN`. Audit: `CONTACT_SMS_CONSENT_CHANGED`. |
+| GET | `/me/push/config` | Authenticated | — | `PushConfigResponse` | VAPID public key or null. |
+| GET | `/me/push/subscriptions` | Authenticated | — | `PushSubscriptionSummary[]` | Own, active. |
+| POST | `/me/push/subscriptions` | Authenticated | `PushSubscribe` | `PushSubscriptionSummary` (201) | Endpoint and keys sealed; same endpoint → existing row. Audit: `PUSH_SUBSCRIBED`. |
+| DELETE | `/me/push/subscriptions/:id` | Authenticated (own) | — | `OkResponse` | Revokes (`revoked_reason: user`); rows are never deleted. A 404 / 410 from the push service revokes with `expired`. Audit: `PUSH_UNSUBSCRIBED`. |
+
+#### 31.3 Provider callbacks (public, no session)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/webhooks/sms/africastalking/:token/delivery` | Public; `:token` = `AFRICASTALKING_DLR_TOKEN` (constant-time compare, 404 otherwise), rate-limited | vendor form body (`id`, `status`, `failureReason`) | 200 empty | Finds the message by `(provider, provider_message_id)` through a SECURITY DEFINER lookup that returns only the tenant id, then sets `delivery_status` / `delivery_status_at` inside `withTenant` and appends an event. Unknown ids → 200 (no oracle). Idempotent. |
+| POST | `/webhooks/sms/africastalking/:token/inbound` | same | vendor form body (`from`, `text`) | 200 empty | `STOP` / `STOP ALL` / `UNSUBSCRIBE` (case-insensitive) opt out every current SMS contact with that number hash (`source: sms_reply`); nothing else is stored. Audit (SYSTEM): `CONTACT_SMS_OPTED_OUT`. |
+
+### 32. Passkeys, recovery codes and account recovery (`apps/api/src/auth/passkeys`, `apps/api/src/auth/recovery`) — owner auth-recovery, blueprint 15.1, S01
+
+WebAuthn ceremonies use a maintained server library (e.g. `@simplewebauthn/server`) with `WEBAUTHN_RP_ID`,
+`WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS`; `userVerification: 'required'`. Challenges are single-use rows in
+`webauthn_challenges` (SHA-256 only, 5 minutes); spent ones are deleted by `auth.recovery_expiry`. A signature counter
+that goes down is refused by the DB (`PASSKEY_VERIFICATION_FAILED`, audit `AUTH_PASSKEY_FAILED`, security alert to the
+user). A passkey sign-in with user verification counts as an MFA-verified session.
+
+#### 32.1 Passkeys
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/auth/passkeys/register/options` | Authenticated, MFA-verified session **(reauth)** | — | `PasskeyOptionsResponse` | Excludes the user's existing credentials. |
+| POST | `/auth/passkeys/register/verify` | Authenticated **(reauth)** | `PasskeyRegisterVerify` | `PasskeySummary` (201) | Stores credential id, COSE key, counter, transports, backup flags. Security alert (`auth.security_alert`) to the user. Audit: `AUTH_PASSKEY_REGISTERED`. |
+| GET | `/auth/passkeys` | Authenticated | — | `PasskeySummary[]` | Own, not revoked. |
+| PATCH | `/auth/passkeys/:id` | Authenticated (own) | `PasskeyRename` | `PasskeySummary` | Audit: `AUTH_PASSKEY_RENAMED`. |
+| DELETE | `/auth/passkeys/:id` | Authenticated (own) **(reauth)** | — | `OkResponse` | Revokes (never deletes). Audit: `AUTH_PASSKEY_REVOKED`. |
+| POST | `/auth/passkey/login/options` | Public, rate-limited (IP + account) | `PasskeyLoginOptions` | `PasskeyOptionsResponse` | Same shape whether or not the account exists (no enumeration). |
+| POST | `/auth/passkey/login/verify` | Public, rate-limited | `PasskeyLoginVerify` | `LoginResponse` (`AUTHENTICATED`) | Sets cookies with `mfa = true`. Locked / suspended accounts are refused like a wrong password. Audit: `AUTH_PASSKEY_LOGIN` / `AUTH_PASSKEY_FAILED`. |
+
+`POST /admin/users/:id/reset-mfa` (§6.1, `users.reset_mfa`, reauth) additionally revokes the user's passkeys and unused
+recovery codes.
+
+#### 32.2 Recovery codes
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/auth/recovery-codes` | Authenticated | — | `RecoveryCodesStatus` | Remaining count only. |
+| POST | `/auth/recovery-codes` | Authenticated, MFA-verified session **(reauth)** | — | `RecoveryCodesResponse` (201) | `RECOVERY_CODE_COUNT` codes shown once; argon2id hashes stored; the previous batch's unused codes are revoked. Audit: `AUTH_RECOVERY_CODES_GENERATED` (count only). |
+| POST | `/auth/mfa/recovery` | Public with a `verify` challenge, rate-limited | `RecoveryCodeLogin` | `MeResponse` | Uses one code in place of TOTP (same lockout counter as `/auth/mfa/verify`). Security alert to the user. Audit: `AUTH_RECOVERY_CODE_USED`. |
+
+#### 32.3 Assisted account recovery (lost authenticator and codes)
+
+Status `ACCOUNT_RECOVERY_TRANSITIONS`: PENDING → APPROVED | REJECTED | EXPIRED | CANCELLED; APPROVED → COMPLETED |
+EXPIRED | CANCELLED. One open request per user (partial unique index). Expiry `ACCOUNT_RECOVERY_TTL_HOURS` (DB allows at
+most 72 h); approval and completion after expiry are refused by the DB.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/admin/account-recovery` | `users.reset_mfa` | `AccountRecoveryListQuery` | `Paginated<AccountRecoverySummary>` | |
+| GET | `/admin/account-recovery/:id` | `users.reset_mfa` | — | `AccountRecoverySummary` | |
+| POST | `/admin/account-recovery` | `users.reset_mfa` **(reauth)** | `AccountRecoveryCreate` | `AccountRecoverySummary` (201) | Requester = caller ≠ subject (403 `SEPARATION_OF_DUTIES`). Notifies the other holders of `users.reset_mfa` in-app and alerts the subject (`auth.security_alert`). Audit: `ACCOUNT_RECOVERY_REQUESTED`. |
+| POST | `/admin/account-recovery/:id/approve` | `users.reset_mfa` **(reauth)** | `AccountRecoveryDecision` | `AccountRecoverySummary` | Approver ≠ requester ≠ subject (DB check → 403). Generates a single-use token (SHA-256 stored) and enqueues `auth.recovery_link` to the subject's account e-mail. The link is never returned once e-mail delivery is configured; without a channel `devRecoveryPath` is returned to the approver only. Audit: `ACCOUNT_RECOVERY_APPROVED`. |
+| POST | `/admin/account-recovery/:id/reject` | `users.reset_mfa` | `AccountRecoveryDecision` | `AccountRecoverySummary` | Rejecter ≠ subject. Audit: `ACCOUNT_RECOVERY_REJECTED`. |
+| POST | `/admin/account-recovery/:id/cancel` | `users.reset_mfa` | `AccountRecoveryDecision` | `AccountRecoverySummary` | Audit: `ACCOUNT_RECOVERY_CANCELLED`. |
+| POST | `/auth/account-recovery/complete` | Public, rate-limited | `AccountRecoveryComplete` | `OkResponse` | Sets the new password; revokes all sessions, TOTP factors, passkeys and recovery codes; the person enrols MFA at the next sign-in. COMPLETED. Audit: `ACCOUNT_RECOVERY_COMPLETED`. |
+
+The `auth.recovery_expiry` job marks overdue PENDING / APPROVED requests EXPIRED (audit `ACCOUNT_RECOVERY_EXPIRED`,
+SYSTEM actor) and deletes spent WebAuthn challenges.
+
+#### 32.4 Invitation delivery (change to §6.1)
+
+`POST /admin/users` and `POST /admin/users/:id/invitation` keep their permissions and audits. When
+`isDeliveryConfigured('EMAIL')`: the invitation token goes only into `secret_payload_encrypted` of an `auth.invitation`
+message to the invited e-mail (`addressOverride`, idempotency key `invitation:<userId>:<first 16 of tokenHash>`); the
+response `invitation` is `{ expiresAt, delivery: 'OUTBOX', messageId }` with **no** token or `acceptPath`. Otherwise
+(no channel) the response is unchanged plus `delivery: 'SHOWN_ONCE'`. Re-issuing revokes the previous token as today.
+The web user screens show "Invitation sent to …" or the one-time link accordingly.
+
+### 33. Workspace setup and settings (`apps/api/src/modules/workspace`) — owner workspace-admin, S02, S03, S30
+
+#### 33.1 Workspace creation and profile (S02)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| POST | `/platform/workspaces` | `platform.tenants.manage` **(reauth)** | `CreateWorkspace` | `{ workspace: WorkspaceProfile, adminInvitation }` (201) | Creates the tenant (never `historical_demo`; demo tenants come only from the demo CLI), copies `SYSTEM_ROLES` (`provisioning.ts`), sets modules, creates every `WORKSPACE_SETUP_ITEMS` row PENDING, invites the first administrator (organisation owner role) per §32.4. Unique slug (409). Audit in the new tenant: `WORKSPACE_CREATED` (+ `USER_CREATED`, `ROLE_ASSIGNED`). |
+| GET | `/workspace/profile` | `workspace.view` | — | `WorkspaceProfile` | |
+| PATCH | `/workspace/profile` | `workspace.configure` **(reauth)** | `UpdateWorkspaceProfile` | `WorkspaceProfile` | Name and slug are fixed; logo is a stored file (`purpose: OTHER`, image, CLEAN required → 409 `FILE_NOT_CLEAN`; stored as `tenants.settings.logoFileId`). Marks `workspace.profile` DONE. Audit: `WORKSPACE_PROFILE_UPDATED` (before / after). |
+
+#### 33.2 Onboarding checklist (S03)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/workspace/onboarding` | `workspace.configure` | — | `OnboardingResponse` | Rows created on first read if missing; `detected` from data (approved registry, teams, invited users, role assignments) — read-only, no writes on GET beyond the missing rows. |
+| PATCH | `/workspace/onboarding/:itemKey` | `workspace.configure` | `UpdateSetupItem` | `WorkspaceSetupItem` | PENDING ↔ DONE / SKIPPED; DONE / SKIPPED record `completed_by` / `completed_at` (DB check). Unknown key → 404. Audit: `WORKSPACE_SETUP_ITEM_UPDATED`. |
+
+#### 33.3 System settings (S30)
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET / PUT | `/workspace/modules`, `/workspace/modules/:key` | §8 | §8 | §8 | Existing module activation (reuse `TenantModulesService`). |
+| GET | `/workspace/integrations` | `workspace.view` | — | `IntegrationsResponse` | One entry per `INTEGRATION_KINDS`: tenant selection (default provider when no row), `configured` (env has the provider's variables), `available` (configured and, for captcha / scanner, last health check passed), `missingEnv` (names only). |
+| PUT | `/workspace/integrations/:kind` | `workspace.configure` **(reauth)** | `UpdateIntegrationSetting` | `IntegrationStatus` | Provider must be in `INTEGRATION_PROVIDERS[kind]`; `config` must pass `IntegrationConfigSchemas[kind]` (strict) and contain no secret-looking key (400; DB check). Enabling a provider this server is not configured for → 409. `captcha` also writes `captchaProvider` into the office module config in the same transaction (the office portal reads it). Audit: `WORKSPACE_INTEGRATION_UPDATED` (before / after; config only). |
+| GET | `/workspace/retention` | `workspace.view` | — | `{ retentionProfile, office: { contactRetentionMonths, caseRetentionMonths } \| null, lastRun: JobRunSummary \| null }` | |
+| PUT | `/workspace/retention` | `workspace.configure` **(reauth)** | `{ retentionProfile?, office?: { contactRetentionMonths, caseRetentionMonths } }` | same | Never shortens below the period stated in the published privacy notice without a new notice version (409). Audit: `WORKSPACE_RETENTION_UPDATED`. |
+| GET | `/workspace/security` | `workspace.view` | — | `SecuritySettingsResponse` | Counts only. |
+
+### 34. Files scanning and durable jobs (`apps/api/src/platform/scanning`, `apps/api/src/platform/jobs`) — owner platform-infra
+
+Scan flow: `StorageService.storeImmutable()` inserts PENDING (unchanged) → `files.scan_pending` (every
+`SCAN_INTERVAL_SECONDS`) takes PENDING / ERROR files per tenant (oldest first, small batches, `FOR UPDATE SKIP LOCKED`),
+re-reads the bytes with `readVerified()`, calls `MALWARE_SCANNER.scan()` and writes the verdict: CLEAN / INFECTED (with
+`scan_signature` and `quarantined_at`) / ERROR, `scan_engine`, `scanned_at`; appends `file_scan_events`; audits
+`FILE_SCAN_RECORDED` (and `FILE_QUARANTINED`) as SYSTEM. INFECTED and quarantine are final (DB). With
+`MALWARE_SCANNER=none` the job does nothing and files stay PENDING. The clamd adapter speaks `zINSTREAM` over TCP
+(`CLAMD_HOST:CLAMD_PORT`, `CLAMD_TIMEOUT_MS`); a timeout or connection error is ERROR. Callers that need CLEAN (Office
+project publication, finance supporting documents, workspace logo, public evidence) check `isScanClean` and answer 409
+`FILE_NOT_CLEAN`; signed URLs for INFECTED files are refused (409 `FILE_NOT_CLEAN`).
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/files/:id/scan` | `workspace.view` | — | `FileScanSummary` | Tenant file only (RLS). |
+| POST | `/files/:id/rescan` | `workspace.configure` **(reauth)** | `{ reason }` | `FileScanSummary` | Only PENDING / ERROR (409 otherwise); queues the file for the next scan run. Audit: `FILE_SCAN_RECORDED` (requested). |
+| GET | `/platform/jobs` | `workspace.view` | — | `JobStatusResponse` | Registered keys, interval, last run (tenant runs of the caller's tenant and platform runs; platform errors shown as "failed" without text unless the caller holds `platform.health.view`). |
+| GET | `/platform/jobs/runs` | `platform.health.view` | `JobRunsQuery` | `Paginated<JobRunSummary>` | Platform operators only. |
+| POST | `/platform/jobs/:key/run` | `platform.tenants.manage` **(reauth)** | `{ reason }` | `JobRunSummary` | `JobScheduler.runNow`. Audit: `JOB_RUN_TRIGGERED`. |
+
+Job keys (`JOB_KEYS`): `messaging.dispatch`, `files.scan_pending`, `office.retention` (replaces the in-process timer;
+`OFFICE_RETENTION_INTERVAL_MINUTES` becomes its interval), `field.station_status_record` (replaces the recorder timer),
+`tally.comparison_retry` (re-runs failed cross-stage comparisons), `tasks.due_soon`, `auth.recovery_expiry`. Each run
+writes a `job_runs` row (RUNNING → SUCCEEDED with counts / FAILED with error; frozen when finished).
+
+### 35. Display holds and redacted copies (`apps/api/src/modules/tally/controllers/display-holds.controller.ts`) — owner field-pin
+
+HTTP access to what `pnpm demo:redact-34a` does today, through `DisplayHoldsService`. Module `tally`. Every response
+carries `dataLabel` (parallel-tally disclaimer, plus HISTORICAL DEMO / SIMULATED DATA for demo tenants). A held original
+is never served or altered.
+
+| Method | Path | Permission | Request | Response | Notes / Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/tally/sources/holds` | `tally.source.download` (geo via the submission) | `DisplayHoldQuery` | `Paginated<DisplayHoldSummary>` | Scope-filtered by the linked submission's station. |
+| GET | `/tally/sources/holds/:holdId` | `tally.source.download` (geo) | — | `DisplayHoldSummary` | |
+| GET | `/tally/sources/holds/:holdId/redacted/url` | `tally.source.download` (geo) | — | `SignedUrlResponse` | Redacted copy only; 403 `NOT_FOR_DISPLAY_UNTIL_REDACTED` while none is attached; 409 `FILE_NOT_CLEAN` if the copy is not CLEAN. Audit: `FILE_SOURCE_ACCESSED`. |
+| POST | `/tally/sources/holds/:holdId/redacted-copy` | `tally.approve` (geo) **(reauth)** | multipart `file` + `reason?` | `DisplayHoldSummary` | `attachRedactedCopy`: not the uploader of the original nor the declarer (403 `SEPARATION_OF_DUTIES`); image re-encoded without metadata; once only (409 `IMMUTABLE_RECORD`). Audit: `FILE_REDACTED_COPY_ATTACHED`. |
+| POST | `/tally/sources/holds/:holdId/confirm` | `tally.approve` (geo) **(reauth)** | `ConfirmDeclaredRedaction` | `DisplayHoldSummary` | `confirmDeclaredRedaction` for DECLARED_REDACTED holds only (409 otherwise); same SoD. Audit: `FILE_REDACTED_COPY_ATTACHED`. |
+
+### 36. Field offline PIN and evidence metadata — owner field-pin
+
+No new endpoints. Client: the offline queue key is wrapped with a key derived from a device PIN (PBKDF2-SHA-256 ≥
+600 000 iterations or Argon2id via WASM, random salt per user and device); `/m` asks for the PIN before it opens the queue
+offline; wrong PINs back off and after 10 the local queue is wiped (unsent items lost, the person is told); sign-out
+deletes database and key (unchanged). Server: `POST /field/evidence` (§16.4) and incident / report evidence uploads
+re-encode images and strip EXIF / location metadata server-side (`storage/image-sanitize.ts`) as the PWA already does,
+storing the sanitised bytes as the original.
+
+### Pilot hardening status, audit and error summary
+
+| Record | Transitions | History | Audit actions |
+| --- | --- | --- | --- |
+| Outbox message | `MESSAGE_STATUS_TRANSITIONS` | `message_outbox_events` | `MESSAGE_CANCELLED` (admin) |
+| Contact verification | supersede on address change | `contact_verification_events` | `CONTACT_VERIFICATION_SENT`, `CONTACT_VERIFIED`, `CONTACT_SMS_CONSENT_CHANGED`, `CONTACT_SMS_OPTED_OUT` |
+| Push subscription | active → revoked | row kept | `PUSH_SUBSCRIBED`, `PUSH_UNSUBSCRIBED` |
+| Stored file scan | PENDING / ERROR → CLEAN / INFECTED / ERROR; INFECTED final | `file_scan_events` | `FILE_SCAN_RECORDED`, `FILE_QUARANTINED` |
+| Job run | RUNNING → SUCCEEDED / FAILED / SKIPPED; frozen | `job_runs` | `JOB_RUN_TRIGGERED` (manual) |
+| Passkey | active → revoked | row kept | `AUTH_PASSKEY_REGISTERED`, `AUTH_PASSKEY_RENAMED`, `AUTH_PASSKEY_REVOKED`, `AUTH_PASSKEY_LOGIN`, `AUTH_PASSKEY_FAILED` |
+| Recovery code | unused → used / revoked | rows kept | `AUTH_RECOVERY_CODES_GENERATED`, `AUTH_RECOVERY_CODE_USED` |
+| Account recovery | `ACCOUNT_RECOVERY_TRANSITIONS` | audit | `ACCOUNT_RECOVERY_REQUESTED`, `…_APPROVED`, `…_REJECTED`, `…_CANCELLED`, `…_COMPLETED`, `…_EXPIRED` |
+| Workspace | — | audit | `WORKSPACE_CREATED`, `WORKSPACE_PROFILE_UPDATED`, `WORKSPACE_SETUP_ITEM_UPDATED`, `WORKSPACE_INTEGRATION_UPDATED`, `WORKSPACE_RETENTION_UPDATED` |
+| Display hold | AWAITING_REDACTION / DECLARED_REDACTED → REDACTED_COPY_ATTACHED (once) | hold row | `FILE_DISPLAY_HOLD_CREATED`, `FILE_REDACTION_DECLARED`, `FILE_REDACTED_COPY_ATTACHED` |
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| File not CLEAN where CLEAN is required | 409 | `FILE_NOT_CLEAN` |
+| E-mail / SMS action needs a verified address or SMS consent | 409 | `CONTACT_NOT_VERIFIED` |
+| Passkey ceremony failed (unknown credential, bad signature, counter regression, spent challenge) | 401 | `PASSKEY_VERIFICATION_FAILED` |
+| Account recovery requester / approver / rejecter conflict | 403 | `SEPARATION_OF_DUTIES` |
+| Refused outbox / recovery transition (incl. after expiry) | 409 | `INVALID_TRANSITION` |
+| Captcha missing, invalid, unconfigured or provider down | 400 | `ABUSE_CHECK_FAILED` |
+| Secret-looking key in integration config | 400 | `VALIDATION_FAILED` |
+| Account / IP limit reached | 429 | `RATE_LIMITED` |

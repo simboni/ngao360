@@ -21,6 +21,9 @@ apps/
       queue/          BullMQ registration (all queue names), OCR stub worker
       health/         GET /api/health
       tenant-modules/ module activation: TenantModulesService, @RequireModule + ModuleGuard, /workspace/modules
+      platform/       pilot hardening (§16): messaging/ (MessageProvider registry, outbox port), scanning/
+                      (MalwareScanner), captcha/ (CaptchaVerifier registry), ratelimit/ (memory + Redis
+                      stores), jobs/ (JobScheduler over BullMQ + job_runs), platform.module.ts
       modules/
         reference/    ← reference module agent
         tally/        ← tally module agent
@@ -361,3 +364,92 @@ names its own module).
 - **Political boundary.** No voter lists, recipient lists, personal targeting or bulk outreach anywhere in the model:
   content has audience categories, notifications go to signed-in users about their own work, event contact details are
   consent-based, stored apart and never exported.
+
+## 16. Pilot hardening (in progress)
+
+Closes the "Known gaps" in [STATUS.md](./STATUS.md) that block a pilot: invitation and notification delivery, durable
+jobs, malware scanning, captcha, a shared rate-limit store, passkeys and account recovery, the S02 / S03 / S30 screens,
+display holds over HTTP and the field offline PIN. Contract: [API_CONTRACT.md](./API_CONTRACT.md) §31–36.
+
+### 16.1 What is prepared
+
+- **Schema** (migration `20261128000000_pilot_hardening_foundation`; tenant_id + RLS on every table, runtime role
+  `ngao_app`, no DELETE except spent WebAuthn challenges, triggers also bind the owner role):
+  `message_outbox` (state machine trigger, idempotency key per tenant, sealed address + keyed hash + mask, one-time
+  secrets wiped at a final status by a CHECK) and append-only `message_outbox_events`; `contact_verifications`
+  (one current row per user and channel, superseded rows frozen, SMS consent version and opt-out only on SMS) and
+  append-only `contact_verification_events`; `push_subscriptions` (sealed endpoint and keys, revoked never deleted);
+  `job_runs` (tenant rows per tenant; `tenant_id NULL` platform rows visible only on a connection without a tenant
+  setting; finished runs frozen); `stored_files.scan_engine / scan_signature / quarantined_at` + status `ERROR` and
+  append-only `file_scan_events` (INFECTED and quarantine final; every INFECTED file quarantined);
+  `webauthn_credentials` (key material fixed, counter never decreases, revocation final), `webauthn_challenges`
+  (≤ 10 min, consumed once), `recovery_codes` (used / revoked once), `account_recovery_requests` (requester ≠
+  subject, approver ≠ requester ≠ subject, rejecter ≠ subject, ≤ 72 h, transitions and expiry by trigger, one open
+  request per user); `workspace_setup_items`; `tenant_integration_settings` (non-secret config only: a recursive
+  check refuses secret-looking keys).
+- **Shared contracts** `packages/shared/src/platform/`: enums, `MESSAGE_STATUS_TRANSITIONS`,
+  `ACCOUNT_RECOVERY_TRANSITIONS`, `MESSAGE_TEMPLATE_KEYS`, `SMS_CONSENT_NOTICE`, `JOB_KEYS`, `isScanClean`,
+  `WORKSPACE_SETUP_ITEMS`, `INTEGRATION_PROVIDERS`, `IntegrationConfigSchemas`, `containsSecretKey`, display-hold
+  DTOs and every request / response schema of §31–36. `AUDIT_ACTIONS` and `ERROR_CODES` (`FILE_NOT_CLEAN`,
+  `CONTACT_NOT_VERIFIED`, `PASSKEY_VERIFICATION_FAILED`) are reserved there.
+- **Platform interfaces** `apps/api/src/platform/` (global `PlatformModule`): `MessageProvider` +
+  `LogMessageProvider` + `MessageProviderRegistry` (`isDeliveryConfigured(channel)`), `MessageOutboxPort` /
+  `MESSAGE_OUTBOX` token and `OutboxEnqueueInput`; `MalwareScanner` + `NoopMalwareScanner`; `CaptchaVerifier` +
+  `CaptchaVerifierRegistry` (fail closed); `RateLimitStore` with `MemoryRateLimitStore` and `RedisRateLimitStore`
+  (`RATE_LIMIT_STORE`); `JobScheduler` (BullMQ job schedulers on the `platform-jobs` queue, created lazily) and
+  `JobRunRecorder`. `AppConfig` has every provider variable (`missingProviderEnv` refuses start-up when a selected
+  provider lacks one; names only).
+- **Empty modules and stubs:** `AuthRecoveryModule` (`apps/api/src/auth/recovery`, plus `auth/passkeys/`),
+  `WorkspaceModule` (`apps/api/src/modules/workspace`), `DisplayHoldsController` (`/tally/sources/holds`, no
+  routes), all registered; web placeholders `/setup` (S02), `/onboarding` (S03), `/settings` (S30),
+  `/settings/account` (passkeys, recovery codes, contacts, push) and `/tally/sources/holds`; navigation items and the
+  "Your account" link in the top-bar menu.
+- `AllExceptionsFilter` maps DB `INVALID_TRANSITION:` to 409 and the recovery SoD checks to 403.
+
+### 16.2 Ownership for parallel work
+
+| Agent | Owns (create / change freely) | Shared files: additive only, coordinate via CHANGE_REQUESTS.md |
+| --- | --- | --- |
+| **platform-infra** | API `apps/api/src/platform/**` (providers: SMTP, Africa's Talking, web-push, clamd, hCaptcha / Turnstile; outbox service, dispatcher, delivery-report and inbound-SMS webhooks, contacts and push `/me/*`, `/workspace/messages*`, `/files/:id/scan*`, `/platform/jobs*`), `apps/api/src/storage/**` (scan hooks, signed-URL refusal for INFECTED), `apps/api/src/queue/**`; moving `office/cases/case-retention.service.ts` and `field/warroom/station-status-recorder.service.ts` onto `JobScheduler` (only their scheduling code); `office/public/public-rate-limit.ts` and `public-abuse.service.ts` binding to `RATE_LIMIT_STORE` / `CaptchaVerifierRegistry`; the auth throttling in `app.module.ts` / `auth/**` **only** for the rate-limit store; `campaign/notifications/providers/**` (bridge to the outbox); Dockerfiles, `docker-compose*.yml` (clamd service), `infra/**`; web `components/account/contact-*`, `components/account/push-*`, the service-worker push handler in `public/sw.js` | `config.schema.ts` (variables exist), `.env.example`, `packages/shared/src/platform/messaging.ts`, `scanning.ts`, `jobs.ts` |
+| **auth-recovery** | API `apps/api/src/auth/passkeys/**`, `apps/api/src/auth/recovery/**` (incl. `auth-recovery.module.ts`), the invitation delivery change in `modules/admin/users.service.ts` and `admin.controller.ts` (§32.4), `reset-mfa` revoking passkeys / codes; web `app/(app)/settings/account/**` (page composition), `components/account/**` except `contact-*` / `push-*`, `app/login/**` (passkey sign-in, recovery code), `app/recover/**` (complete recovery), `components/admin/invite-user-dialog.tsx`, `user-drawer.tsx` and new `components/admin/account-recovery-*` (invitation status, recovery requests) | `auth/auth.service.ts`, `auth.controller.ts`, `token.service.ts` (add methods; do not restructure), `packages/shared/src/platform/auth-recovery.ts`, `schemas/auth.ts`, `schemas/admin.ts` (invitation response) |
+| **workspace-admin** | API `apps/api/src/modules/workspace/**` (§33), `/platform/workspaces`; web `app/(app)/setup/**`, `app/(app)/onboarding/**`, `app/(app)/settings/page.tsx` and any `settings/*` other than `account`, `components/workspace/**`, `components/settings/**` | `tenant-modules/**` (reuse, do not change behaviour), `packages/db/src/provisioning.ts`, `packages/shared/src/platform/workspace.ts`, `lib/nav.ts` (items exist) |
+| **field-pin** | API `modules/tally/controllers/display-holds.controller.ts` and holds methods in `modules/tally/services/display-holds.service.ts`, evidence sanitising in `modules/field/agents/field-me.controller.ts` and the field evidence upload paths; web `app/(app)/tally/sources/holds/**`, `components/tally/holds/**`, `lib/offline/**` (PIN-wrapped key), `components/mobile/**` and `app/m/**` (PIN prompt) | `tally.module.ts` (controller registered), `packages/shared/src/platform/display-holds.ts`, `tally/layout.tsx` banner must stay, `components/mobile/mobile-shell.tsx` structure |
+
+Rules for all four:
+
+- The schema for this pass is complete. If a table or column is missing, add a **new** migration with your own
+  timestamp block (platform-infra `20261129000000_*`, auth-recovery `20261129100000_*`, workspace-admin
+  `20261129200000_*`, field-pin `20261129300000_*`) and append models at the end of `schema.prisma` under a comment
+  with your agent name. Every new table: `tenant_id`, `ngao_enable_tenant_rls`, explicit grants, append-only where
+  history matters. Never edit an existing migration.
+- Never weaken tenancy, RBAC, separation of duties, the append-only audit or the not-official / historical-demo labels.
+  Security controls fail closed. Secrets come from the environment only and are never logged, stored or returned.
+- Do not call real vendors in tests: fake SMTP (`smtp-server` or a TCP stub), mocked HTTP (local `http.createServer`
+  or `nock`), a fake clamd TCP server speaking `zINSTREAM` with the EICAR string, a fake captcha verify endpoint via
+  `CAPTCHA_VERIFY_URL`.
+- New endpoints go into API_CONTRACT §31–36 in the same commit if they differ from the contract.
+
+### 16.3 Flows
+
+**Outbox.** Business transaction → `MessageOutboxPort.enqueueInTx` (QUEUED or SKIPPED, sealed address, idempotency
+key) → commit → `messaging.dispatch` job claims due rows (`FOR UPDATE SKIP LOCKED`, lease `locked_until`) → SENDING →
+provider `send()` → SENT (provider id) / SKIPPED (log provider) / FAILED (backoff `messageRetryDelayMs`) / DEAD
+(permanent or `max_attempts`) → `message_outbox_events` per transition; secrets wiped at SENT / SKIPPED / DEAD →
+delivery report webhook sets `delivery_status`. The log provider makes every message SKIPPED, so nothing leaves the
+machine until a provider is configured. Invitations and recovery links use the outbox once e-mail delivery is
+configured and are then never shown to an administrator.
+
+**Durable job.** Owning module calls `JobScheduler.register({ key, everyMs, handler })` in `onModuleInit` → at
+bootstrap (QUEUES_ENABLED and JOBS_ENABLED) one BullMQ job scheduler per key on `platform-jobs` (one schedule across API
+instances; one worker runs each occurrence) → `runNow` writes `job_runs` RUNNING → handler (idempotent; loops over
+tenants with one `withTenant` each) → SUCCEEDED with counts or FAILED with the error (BullMQ retries with backoff; each
+attempt is its own run row). Without Redis nothing is scheduled; `runNow` still works (tests, S30 "run now").
+
+**Malware scan.** Upload → `stored_files` PENDING → `files.scan_pending` → `MalwareScanner.scan(bytes)` (clamd
+INSTREAM) → CLEAN / INFECTED (+ signature, quarantine; final) / ERROR (retried) → `file_scan_events` + audit → consumers
+require `isScanClean` (409 `FILE_NOT_CLEAN`). No scanner configured ⇒ files stay PENDING ⇒ nothing that needs CLEAN
+can proceed.
+
+**Captcha.** Tenant selects a provider (integration setting, mirrored into the office module config) → public write →
+`CaptchaVerifierRegistry.verify(provider, token, ip)` → ok, or refuse for missing / invalid / not configured /
+unavailable (timeouts and network errors) → generic 400 `ABUSE_CHECK_FAILED`.

@@ -203,6 +203,18 @@ The campaign smoke (`pnpm smoke:campaign`) uses the same stack and the `demo` se
 - War Room station components are cached once per tenant, cycle and registry (scope applied in memory; at most 8 snapshots, expired ones evicted) for `FIELD_WARROOM_CACHE_SECONDS` (default 15; the integration suites set 0). Derived station-status history is recorded by a background timer every `FIELD_WARROOM_RECORD_SECONDS` (default 60; 0 disables it, as the integration suites do and call `StationStatusRecorderService.recordForTenant` directly). Roll-ups run with hash joins inside their transaction because RLS hides row counts from the planner; migration `20261123000000_field_integration` adds a `(tenant_id, registry_version_id, status)` station index.
 - Geolocation: `next.config.mjs` sends `Permissions-Policy: geolocation=(self)` so the optional one-off check-in / incident location can be read when the organisation turns it on (`checkInLocationEnabled`).
 
+### Providers (pilot hardening)
+
+E-mail, SMS, push, malware scanning, captcha, the rate-limit store and passkeys read their configuration from the
+environment (`.env.example`, "Pilot hardening"). Every provider defaults to the log / no-op one, so a fresh checkout
+sends, verifies and scans nothing: outbox messages end SKIPPED, uploaded files stay PENDING (and cannot be used where
+CLEAN is required), and a tenant that selects a captcha provider is refused. Selecting a provider without its variables
+stops the API at start-up with the missing variable names (never values). `MESSAGING_ENCRYPTION_KEY` and
+`MESSAGING_HASH_KEY` are required in production and whenever a non-log provider is selected. Never put vendor
+credentials in the database or in `tenant_integration_settings` (a DB check refuses secret-looking keys). Tests use
+in-process fakes only (fake SMTP / HTTP servers, a fake clamd speaking INSTREAM with the EICAR test string); the
+build environment cannot reach the vendors.
+
 ## 5. Working with the schema
 
 - Edit `packages/db/prisma/schema.prisma`, then run `pnpm db:migrate:dev --name <change>`. It uses a shadow database, so the owner role needs `CREATEDB`, which the bootstrap grants.
