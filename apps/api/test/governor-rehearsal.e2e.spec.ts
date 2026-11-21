@@ -11,7 +11,9 @@
  *   snapshot counts only verified stations against the approved-registry denominator
  *   export carries the non-official disclaimer
  *   the audit trail records every step
- *   a 37B whose totals differ from the verified 37A sum opens a cross-stage variance case
+ *   a 37B whose totals differ from the verified 37A sum opens a cross-stage variance case; the
+ *     inline comparison is forced to fail, so the durable `tally.comparison_retry` job opens it
+ *     after a failed attempt and its backoff (PI8), and the supervisor's re-run finds the same case
  *
  * Everything is SYNTHETIC: the tenant is seeded with the same code as `pnpm db:seed`
  * (synthetic Bungoma registry, fictional candidates) under a random slug, and the
@@ -38,12 +40,14 @@ import {
 } from '@ngao360/db';
 import { seedFormTemplates } from '@ngao360/db/dist/seed/form-templates';
 import { approveSeedRegistry, seedReferenceData } from '@ngao360/db/dist/seed/reference-data';
-import { PARALLEL_TALLY_DISCLAIMER, type SystemRoleKey } from '@ngao360/shared';
+import { AUDIT_ACTIONS, JOB_KEYS, PARALLEL_TALLY_DISCLAIMER, type SystemRoleKey } from '@ngao360/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
+import { StageComparisonService } from '../src/modules/tally/services/stage-comparison.service';
+import { JobScheduler } from '../src/platform/jobs/job-scheduler';
 
 const OWNER_URL = process.env.TEST_DATABASE_URL;
 const APP_URL = process.env.TEST_APP_DATABASE_URL;
@@ -463,7 +467,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     expect((await http('verifier').post('/tally/exports').send({ snapshotId: subs.snapshot, format: 'CSV' })).status).toBe(403);
   });
 
-  it('a 37B whose totals differ from the verified 37A sum opens a cross-stage variance case', async () => {
+  it('a 37B whose totals differ from the verified 37A sum opens a cross-stage variance case, even when the inline comparison fails (durable retry with backoff)', async () => {
     const c = DATA.collationForm;
     const centre = await owner.tallyCentre.findFirstOrThrow({ where: { tenantId, electionCycleId: cycleId, code: c.tallyCentreCode } });
     const up = await upload('clerk', { formTemplateId: tpl['37B'], tallyCentreId: centre.id, pollingStationId: null }, c.file);
@@ -483,11 +487,83 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     expect(put.status).toBe(200);
     expect(put.body.latestValidation.summary.fail).toBe(0);
     expect((await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({})).status).toBe(200);
-    const v = await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'PASS', checklist: CHECKLIST, independentValues: independent(c.candidateVotes, c.totalValidVotes) });
-    expect(v.status).toBe(201);
+
+    // PI8: the comparison fails twice on this record (right after verification, and on the job's
+    // first attempt); everything else runs for real.
+    const comparisons = app.get(StageComparisonService);
+    const real = comparisons.compareInTenant.bind(comparisons);
+    let forced = 0;
+    const spy = jest.spyOn(comparisons, 'compareInTenant').mockImplementation(async (who, submissionId, opts) => {
+      if (submissionId === id && forced < 2) {
+        forced += 1;
+        throw new Error('Forced comparison failure (rehearsal)');
+      }
+      return real(who, submissionId, opts);
+    });
+    const crossStageCases = async () => (await http('supervisor').get(`/tally/discrepancies?submissionId=${id}&varianceType=CROSS_STAGE_MISMATCH`)).body.total as number;
+    const comparisonAudit = (action: string) =>
+      owner.auditEvent.findMany({ where: { tenantId, entityType: 'ResultSubmission', entityId: id, action }, orderBy: { occurredAt: 'asc' } });
+    const jobs = app.get(JobScheduler);
+    const runIds: string[] = [];
+    try {
+      // The verification is recorded even though the inline comparison fails; no case yet.
+      const v = await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'PASS', checklist: CHECKLIST, independentValues: independent(c.candidateVotes, c.totalValidVotes) });
+      expect(v.status).toBe(201);
+      expect(forced).toBe(1);
+      expect(await crossStageCases()).toBe(0);
+      expect(await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_COMPLETED)).toHaveLength(0);
+
+      // Let the job's grace period (2 minutes after verification) pass for this record.
+      await owner.resultSubmission.update({ where: { id }, data: { verifiedAt: new Date(Date.now() - 5 * 60_000) } });
+
+      // Attempt 1 fails: the run itself succeeds and records the failure; the failure is audited.
+      const run1 = await jobs.runNow(JOB_KEYS.TALLY_COMPARISON_RETRY);
+      runIds.push(run1.runId);
+      expect(run1.status).toBe('SUCCEEDED');
+      expect(run1.counts.failed).toBeGreaterThanOrEqual(1);
+      expect(forced).toBe(2);
+      const failures = await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_FAILED);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({ actorType: 'SYSTEM', actorId: null, after: { attempt: 1, error: 'Forced comparison failure (rehearsal)' } });
+      expect(await crossStageCases()).toBe(0);
+
+      // Backoff: an immediate second run leaves the record alone (next attempt after 1 minute).
+      const run2 = await jobs.runNow(JOB_KEYS.TALLY_COMPARISON_RETRY);
+      runIds.push(run2.runId);
+      expect(run2.status).toBe('SUCCEEDED');
+      expect(await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_FAILED)).toHaveLength(1);
+      expect(await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_COMPLETED)).toHaveLength(0);
+
+      // After the backoff the retry completes as the verifier and opens the case.
+      const waitMs = failures[0]!.occurredAt.getTime() + 61_000 - Date.now();
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+      const run3 = await jobs.runNow(JOB_KEYS.TALLY_COMPARISON_RETRY);
+      runIds.push(run3.runId);
+      expect(run3.status).toBe('SUCCEEDED');
+      expect(run3.counts.completed).toBeGreaterThanOrEqual(1);
+    } finally {
+      spy.mockRestore();
+    }
+    const completed = await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_COMPLETED);
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ actorType: 'SYSTEM', after: { trigger: 'RETRY' } });
+    expect(await comparisonAudit(AUDIT_ACTIONS.STAGE_COMPARISON_FAILED)).toHaveLength(1);
+    // Every run is on record in job_runs (platform-wide rows).
+    const runs = await owner.jobRun.findMany({ where: { id: { in: runIds } } });
+    expect(runs).toHaveLength(3);
+    expect(runs.every((r) => r.jobKey === JOB_KEYS.TALLY_COMPARISON_RETRY && r.status === 'SUCCEEDED' && r.tenantId === null && r.finishedAt !== null)).toBe(true);
 
     const cases = await http('supervisor').get(`/tally/discrepancies?submissionId=${id}&varianceType=CROSS_STAGE_MISMATCH`);
     expect(cases.body.total).toBe(1);
+    expect((await owner.discrepancyCase.findUniqueOrThrow({ where: { id: cases.body.items[0].id } })).openedById).toBe(userIds.verifier);
+
+    // The supervisor's on-demand "re-run comparison" finds the same differences and opens no second case.
+    const rerun = await http('supervisor').post(`/tally/submissions/${id}/stage-comparison`).send({});
+    expect(rerun.status).toBe(200);
+    expect(rerun.body).toMatchObject({ submissionId: id, caseId: null });
+    expect(rerun.body.differences).toBeGreaterThan(0);
+    expect((await http('clerk').post(`/tally/submissions/${id}/stage-comparison`).send({})).status).toBe(403);
+    expect((await http('supervisor').get(`/tally/discrepancies?submissionId=${id}&varianceType=CROSS_STAGE_MISMATCH`)).body.total).toBe(1);
     caseIds.crossStage = cases.body.items[0].id;
     const detail = await http('supervisor').get(`/tally/discrepancies/${caseIds.crossStage}`);
     const verifiedSum = DATA.stationForms.slice(0, 3).reduce((s, f) => s + f.candidateVotes[0]!, 0);
@@ -500,7 +576,7 @@ d('County Governor end-to-end rehearsal (synthetic)', () => {
     expect(linked).toEqual(expect.arrayContaining([id, subs.s1, subs.s2, subs.s3]));
     // Neither stage is overwritten.
     expect((await http('supervisor').get(`/tally/submissions/${subs.s1}`)).body.status).toBe('VERIFIED');
-  });
+  }, 240_000);
 
   it('the audit trail records each step with the acting person', async () => {
     const trail = await http('supervisor').get(`/tally/submissions/${subs.s3}/audit`);
