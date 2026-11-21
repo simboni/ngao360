@@ -1,8 +1,8 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import {
   generateTotpSecret,
-  openSecret,
   otpauthUrl,
+  SealKeyring,
   sealSecret,
   sha256Hex,
   type TenantTx,
@@ -31,8 +31,12 @@ import { TokenService } from './token.service';
 import { tenantDataLabel } from '../common/provenance/data-label';
 import { effectiveSignInPolicy, readSecurityPolicy } from '../modules/workspace/workspace-settings';
 import { SecurityAlertsService } from './recovery/security-alerts.service';
+import { type SignInAssessment, SignInProtectionService } from './signin-protection.service';
 
 const INVALID_CREDENTIALS = 'Organisation, email or password is incorrect';
+const CAPTCHA_NEEDED = 'Please complete the check below, then sign in again.';
+/** Placeholder user id for the recognised-device query when the account does not exist (equal timing). */
+const NO_USER_ID = '00000000-0000-0000-0000-000000000000';
 // Precomputed hash used to equalise timing when the user does not exist.
 const DUMMY_HASH_PROMISE = argon2.hash('ngao360-timing-equaliser', { type: argon2.argon2id });
 /** A device (client IP) that completed a sign-in to the account this recently is "recognised". */
@@ -57,6 +61,7 @@ export class AuthService {
     private readonly audit: AuditService,
     private readonly config: AppConfig,
     private readonly alerts: SecurityAlertsService,
+    private readonly signIn: SignInProtectionService,
   ) {}
 
   hashPassword(password: string): Promise<string> {
@@ -69,14 +74,68 @@ export class AuthService {
     dto: LoginRequest,
     meta: SessionMeta,
   ): Promise<{ response: LoginResponse; tokens?: IssuedTokens }> {
+    // Progressive delay and captcha after repeated failures (SignInProtectionService). Decided from
+    // the counters for the submitted organisation + e-mail and the client address only.
+    const guard = await this.signIn.assess(dto.tenantSlug, dto.email, meta.ip);
+    const captchaPassed = guard.captcha ? await this.signIn.verifyCaptcha(dto.captchaToken, meta.ip) : false;
+    const needsCaptcha = !!guard.captcha && !captchaPassed;
+    let recognised = false;
+    const onRecognised = () => {
+      recognised = true;
+    };
+    let outcome: Awaited<ReturnType<AuthService['passwordStep']>>;
+    try {
+      outcome = await this.passwordStep(dto, meta, { checkRecognised: guard.level > 0, needsCaptcha, onRecognised });
+    } catch (e) {
+      if (!recognised) await this.signIn.hold(guard.delayMs);
+      throw e;
+    }
+
+    if (outcome.kind === 'captcha') {
+      // No password was checked, so nothing is counted and nothing is held back (the captcha is
+      // the brake); the client shows the widget and retries.
+      throw new AppException(ERROR_CODES.CAPTCHA_REQUIRED, HttpStatus.UNAUTHORIZED, CAPTCHA_NEEDED, { captcha: guard.captcha });
+    }
+    if (outcome.kind === 'fail') {
+      const next: SignInAssessment = await this.signIn.recordFailure(dto.tenantSlug, dto.email, meta.ip);
+      if (!recognised) await this.signIn.hold(guard.delayMs);
+      // Same answer for every kind of failure; it only adds the captcha the next attempt will need.
+      const details = !recognised && next.captcha ? { captcha: next.captcha } : undefined;
+      throw new AppException(ERROR_CODES.UNAUTHENTICATED, HttpStatus.UNAUTHORIZED, outcome.message, details);
+    }
+    if (!recognised) await this.signIn.hold(guard.delayMs);
+    if (outcome.kind === 'mfa') return { response: outcome.response };
+    const me = await this.meForUser(outcome.tenantId, outcome.userId, false);
+    return { response: { status: 'AUTHENTICATED', me }, tokens: outcome.tokens };
+  }
+
+  /**
+   * The password check itself. With `needsCaptcha` and an unrecognised device, the password is not
+   * checked (a dummy hash keeps the timing) and the answer asks for a captcha.
+   */
+  private async passwordStep(
+    dto: LoginRequest,
+    meta: SessionMeta,
+    protection: { checkRecognised: boolean; needsCaptcha: boolean; onRecognised: () => void },
+  ) {
     const tenant = await this.prisma.client.tenant.findUnique({ where: { slug: dto.tenantSlug } });
     if (!tenant || tenant.status !== 'ACTIVE') {
       await argon2.verify(await DUMMY_HASH_PROMISE, dto.password).catch(() => false);
-      throw AppException.unauthenticated(INVALID_CREDENTIALS);
+      return protection.needsCaptcha ? { kind: 'captcha' as const } : { kind: 'fail' as const, message: INVALID_CREDENTIALS };
     }
 
-    const outcome = await this.prisma.withTenant(tenant.id, async (tx) => {
+    return this.prisma.withTenant(tenant.id, async (tx) => {
       const user = await tx.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email: dto.email } } });
+      // A recognised device skips the delay and the captcha (the same query runs for an unknown
+      // account so the timing does not tell them apart).
+      if (protection.checkRecognised) {
+        const known = await this.isRecognisedDevice(tx, user?.id ?? NO_USER_ID, meta.ip);
+        if (known && user) protection.onRecognised();
+        if (protection.needsCaptcha && !(known && user)) {
+          await argon2.verify(await DUMMY_HASH_PROMISE, dto.password).catch(() => false);
+          return { kind: 'captcha' as const };
+        }
+      }
       if (!user || !user.passwordHash) {
         await argon2.verify(await DUMMY_HASH_PROMISE, dto.password).catch(() => false);
         await this.audit.record(
@@ -147,13 +206,8 @@ export class AuthService {
       }
 
       const tokens = await this.createSession(tx, tenant.id, user.id, false, meta);
-      return { kind: 'ok' as const, tokens, userId: user.id };
+      return { kind: 'ok' as const, tokens, userId: user.id, tenantId: tenant.id };
     });
-
-    if (outcome.kind === 'fail') throw AppException.unauthenticated(outcome.message);
-    if (outcome.kind === 'mfa') return { response: outcome.response };
-    const me = await this.meForUser(tenant.id, outcome.userId, false);
-    return { response: { status: 'AUTHENTICATED', me }, tokens: outcome.tokens };
   }
 
   /** True when this client IP completed a sign-in to the account recently (see KNOWN_DEVICE_DAYS). */
@@ -252,7 +306,8 @@ export class AuthService {
     code: string,
   ): Promise<void> {
     const reserved = await this.reserveMfaAttempt(tenantId, userId);
-    const secret = openSecret(sealed, this.config.values.MFA_ENCRYPTION_KEY);
+    // MFA_ENCRYPTION_KEY_PREVIOUS opens secrets not yet re-encrypted during a key rotation.
+    const secret = new SealKeyring(this.config.values.MFA_ENCRYPTION_KEY, [this.config.values.MFA_ENCRYPTION_KEY_PREVIOUS]).open(sealed);
     const step = verifyTotp(secret, code, { lastUsedStep: lastUsedStep === null ? null : Number(lastUsedStep) });
     if (step === null) {
       await this.recordMfaFailure(tenantId, userId, 'MfaFactor', factorId, reserved);

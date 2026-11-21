@@ -1,12 +1,23 @@
 'use client';
 
-import type { LoginResponse, MeResponse, MfaEnrolStartResponse, PasskeyOptionsResponse } from '@ngao360/shared';
+import { type LoginResponse, type MeResponse, type MfaEnrolStartResponse, type PasskeyOptionsResponse, type SignInChallengeDetails, SignInChallengeDetailsSchema } from '@ngao360/shared';
 import { AlertCircle, Fingerprint, KeyRound, LifeBuoy, ShieldCheck } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, useEffect, useState } from 'react';
+import { CaptchaSlot } from '@/components/public/captcha';
+// Registers the hCaptcha / Turnstile widgets; a provider script loads only once a widget renders,
+// i.e. only after the server asked for a captcha.
+import '@/components/public/captcha-widgets';
 import { Button } from '@/components/ui/button';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { describeWebauthnError, formatRecoveryCodeInput, passkeysSupported, signWithPasskey } from './webauthn';
+
+/** The captcha the server asks for after repeated sign-in failures (API contract §37), if any. */
+function challengeFrom(err: unknown): SignInChallengeDetails['captcha'] | null {
+  if (!(err instanceof ApiRequestError)) return null;
+  const parsed = SignInChallengeDetailsSchema.safeParse(err.body.details);
+  return parsed.success ? parsed.data.captcha : null;
+}
 
 type Step =
   | { kind: 'credentials' }
@@ -33,8 +44,20 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [canUsePasskeys, setCanUsePasskeys] = useState(false);
+  // Shown only when the server asks for it; a token is single-use, so the widget is re-mounted
+  // (new `captchaRound`) after every attempt.
+  const [captcha, setCaptcha] = useState<SignInChallengeDetails['captcha'] | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRound, setCaptchaRound] = useState(0);
+  // Sign-in answers are held back after several unsuccessful attempts: say so while waiting.
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => setCanUsePasskeys(passkeysSupported()), []);
+  useEffect(() => {
+    if (!busy) return setSlow(false);
+    const t = setTimeout(() => setSlow(true), 1500);
+    return () => clearTimeout(t);
+  }, [busy]);
 
   const done = () => router.replace(safeNext(params.get('next')));
 
@@ -55,8 +78,25 @@ export function LoginForm() {
   const submitCredentials = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      const res = await api.post<LoginResponse>('/auth/login', { tenantSlug, email, password }, { noRefresh: true });
+      let res: LoginResponse;
+      try {
+        res = await api.post<LoginResponse>(
+          '/auth/login',
+          { tenantSlug, email, password, ...(captcha && captchaToken ? { captchaToken } : {}) },
+          { noRefresh: true },
+        );
+      } catch (err) {
+        const asked = challengeFrom(err);
+        if (asked || captcha) {
+          setCaptcha(asked ?? captcha);
+          setCaptchaToken(null);
+          setCaptchaRound((n) => n + 1);
+        }
+        throw err;
+      }
       setPassword('');
+      setCaptcha(null);
+      setCaptchaToken(null);
       if (res.status === 'AUTHENTICATED') return done();
       if (res.status === 'MFA_REQUIRED') return setStep({ kind: 'mfa', challengeToken: res.challengeToken, method: 'totp' });
       const enrolment = await api.post<MfaEnrolStartResponse>('/auth/mfa/enrol/start', { challengeToken: res.challengeToken }, { noRefresh: true });
@@ -146,9 +186,20 @@ export function LoginForm() {
               <input id="password" type="password" className="ngao-input" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
             </div>
           </div>
-          <Button type="submit" className="mt-6 w-full" loading={busy} disabled={!tenantSlug || !email || !password}>
+          {captcha ? (
+            <div className="mt-5" data-testid="signin-captcha">
+              <p className="mb-2 text-meta text-slate">For your security, please confirm you are not an automated program.</p>
+              <CaptchaSlot key={captchaRound} captcha={captcha} onToken={setCaptchaToken} />
+            </div>
+          ) : null}
+          <Button type="submit" className="mt-6 w-full" loading={busy} disabled={!tenantSlug || !email || !password || (!!captcha && !captchaToken)}>
             Continue
           </Button>
+          {busy && slow && step.kind === 'credentials' ? (
+            <p role="status" className="mt-2 text-center text-meta text-slate">
+              After several unsuccessful attempts, sign-in is slowed down for a few seconds. Please wait.
+            </p>
+          ) : null}
           {canUsePasskeys ? (
             <Button type="button" variant="secondary" className="mt-3 w-full" loading={busy} disabled={!tenantSlug} onClick={signInWithPasskey}>
               <Fingerprint className="h-4 w-4" aria-hidden />
