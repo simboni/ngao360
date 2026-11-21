@@ -80,12 +80,49 @@ the vault, update `.env.prod`, then restart the named services (`$C up -d --no-d
 | `SMTP_PASSWORD`, `AFRICASTALKING_API_KEY`, `CAPTCHA_SECRET` | Messages wait in the outbox (retries with backoff) while the key is wrong; captcha refuses portal submissions (fail closed). | Rotate at the vendor, update env, restart `api` and `worker`, send a test message from S30 and check `/workspace/messages`. |
 | `AFRICASTALKING_DLR_TOKEN` | Delivery reports and STOP replies to the old path token are refused. | Change the callback URLs at Africa's Talking in the same minute as the restart. |
 | `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | Existing push subscriptions stop working; people must re-enable push. | Only on compromise. |
-| `MESSAGING_ENCRYPTION_KEY` | Sealed addresses of queued messages and push subscriptions can no longer be opened. | Rotate in a quiet period: wait until `/workspace/messages` shows no QUEUED / FAILED rows (sealed data is wiped at final states), rotate, restart `api` and `worker`; push subscriptions must be renewed. **No re-encryption tool yet** (gap). |
-| `MESSAGING_HASH_KEY` | Keyed address hashes no longer match: STOP replies and duplicate-contact checks miss existing contacts. | Only on compromise; then contacts must be re-verified. **No re-hash tool yet** (gap). |
-| `MFA_ENCRYPTION_KEY` | Every TOTP secret becomes unreadable (nobody can complete MFA) and campaign identifier fingerprints change. | **No online rotation.** On compromise: maintenance window, rotate, reset MFA for every user through the admin screens (also revokes passkeys and recovery codes), users re-enrol. A re-encryption tool is a gap to close before the general election. |
+| `MESSAGING_ENCRYPTION_KEY`, `MESSAGING_HASH_KEY` | Sealed addresses / push endpoints and keyed address hashes (STOP replies, verified contacts). | Online, with re-encryption and re-hashing: section 3.1, `--target messaging` (rotate both together). |
+| `MFA_ENCRYPTION_KEY` | TOTP secrets. Campaign identifier fingerprints are keyed with it unless `IDENTIFIER_FINGERPRINT_KEY` is set. | Online, with re-encryption: section 3.1, `--target mfa`. First set `IDENTIFIER_FINGERPRINT_KEY` to the **current** MFA key (fingerprints cannot be recomputed); the tool refuses otherwise. On compromise of the TOTP secrets themselves, also reset MFA for every user (admin screens), as re-encryption does not make leaked secrets safe. |
+| `AGENT_DATA_KEY` | Agent national ID, phone, M-Pesa number and next of kin (column-level encryption) and their lookup hashes. | Online, with re-encryption: section 3.1, `--target agent-data`. Never lose it: without it the agent personal data is gone. |
 
 After any rotation: check `/api/health`, sign in, send a test message, and record the rotation (who, when,
 which secret, vault version) — never the value.
+
+### 3.1 Key rotation with re-encryption (`pnpm ops:rotate-keys`)
+
+For `MFA_ENCRYPTION_KEY`, `MESSAGING_ENCRYPTION_KEY` + `MESSAGING_HASH_KEY` and `AGENT_DATA_KEY`. The service keeps
+running: while a rotation is under way the API reads with both the new key and `<NAME>_PREVIOUS`, writes with the new
+one, and matches keyed hashes under both (STOP replies and opt-outs are never missed). Two people: one generates and
+stores the new key in the vault, the other runs and checks the tool. Nothing secret is printed (counts and a key
+identifier only); the checkpoint file holds row ids and counts, no data or keys.
+
+1. **Prepare.** Generate the new key (`openssl rand -base64 32`; the hash key `-base64 48`), store it in the vault.
+   For `MFA_ENCRYPTION_KEY`: if `IDENTIFIER_FINGERPRINT_KEY` is empty, set it to the current MFA key first and restart
+   `api` and `worker` (campaign fingerprints keep working).
+2. **Switch the API.** In `.env.prod` move the current value to `<NAME>_PREVIOUS` and put the new key in `<NAME>`
+   (messaging: both `MESSAGING_ENCRYPTION_KEY*` and `MESSAGING_HASH_KEY*`). `$C up -d --no-deps api worker`. Check
+   `/api/health` and a sign-in (MFA) / a test message / an agent reveal.
+3. **Dry run.** `$C run --rm migrate node dist/cli/key-rotation.js --target <mfa|messaging|agent-data> --dry-run`
+   (the `migrate` image contains the built API and gets the schema-owner `DATABASE_URL` and the same key variables
+   as the API from `.env.prod`). It reports per
+   table how many rows would be rewritten and how many are `unreadable` (sealed under neither key). Unreadable rows:
+   stop and investigate (a key from an earlier rotation?) — they are never touched.
+4. **Run.** `$C run --rm -v "$PWD/rotation:/rotation" migrate node dist/cli/key-rotation.js --target <target>
+   --checkpoint /rotation/<target>.json` (the checkpoint survives the container in `./rotation`). Batches of 200 (`--batch-size`), one transaction each; each row is rewritten only if
+   unchanged since it was read. Interrupted? Run the same command again: it resumes from the checkpoint. A checkpoint
+   from another key or target is refused (`--reset-checkpoint` starts over; harmless, rows already under the new key
+   are skipped). `--tenant <id>` limits a run to one organisation.
+5. **Verify.** Run once more with `--reset-checkpoint`: it must print `Complete` (exit 0: every row current, nothing
+   unreadable, nothing changed during the run). Exit 2 means some rows still need the previous key: re-run, then
+   investigate; do not retire the old key. For `agent-data`, add `--validate` once (it validates the database
+   constraint that refuses plaintext; only without `--tenant`).
+6. **Retire the old key.** Empty `<NAME>_PREVIOUS` in `.env.prod`, restart `api` and `worker`, check again, destroy
+   the old key in the vault after the backup retention period (older backups are encrypted with it). Record the
+   rotation.
+
+Rows that are not re-keyed, by design: contact verifications for an address the person no longer has (only a hash is
+stored; they are superseded on next use and never matched again), and campaign identifier fingerprints (step 1).
+The first deployment of column encryption seals existing agent rows automatically at API start-up; step 5 with
+`--target agent-data --validate` confirms it and validates the constraint.
 
 ## 4. Election-day operations
 

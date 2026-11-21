@@ -1391,3 +1391,60 @@ storing the sanitised bytes as the original.
 | Captcha missing, invalid, unconfigured or provider down | 400 | `ABUSE_CHECK_FAILED` |
 | Secret-looking key in integration config | 400 | `VALIDATION_FAILED` |
 | Account / IP limit reached | 429 | `RATE_LIMITED` |
+
+### 37. Sign-in protection, column encryption, key rotation and job-run retention (go-live gaps)
+
+Owner: signin-crypto (`apps/api/src/auth/signin-protection.service.ts`, `apps/api/src/modules/field/agents/agent-data-crypto.ts`,
+`apps/api/src/cli/key-rotation*`, `apps/api/src/platform/jobs/handlers/job-runs-retention.service.ts`; migration
+`20261201000100_signin_crypto_hardening`). Design notes in [ARCHITECTURE.md](./ARCHITECTURE.md) §16.4.
+
+**37.1 `POST /auth/login`: progressive delay and captcha.** Body gains an optional `captchaToken` (hCaptcha /
+Turnstile widget token, at most 4 000 characters). Every failed password sign-in (unknown organisation, unknown e-mail,
+wrong password, locked or suspended account) is counted in `RATE_LIMIT_STORE` per organisation code + e-mail (any
+address) and per client address (any account), over `SIGNIN_FAILURE_WINDOW_MINUTES` (default 60). Once the account
+count reaches `SIGNIN_ACCOUNT_FAILURES_BEFORE_CHALLENGE` (3) or the address count `SIGNIN_IP_FAILURES_BEFORE_CHALLENGE`
+(10), from an unrecognised device:
+
+| Deployment | Behaviour |
+| --- | --- |
+| `CAPTCHA_PROVIDER` = `hcaptcha` / `turnstile` | Without a valid `captchaToken` the password is **not checked**: 401 `CAPTCHA_REQUIRED`, `details: { captcha: { provider, siteKey } }` (`SignInChallengeDetails`). A missing, wrong or unverifiable token (provider down, timeout) is refused the same way (fail closed). Such a refusal is not counted as a failure and is not delayed. With a valid token, the attempt proceeds and is delayed as below. |
+| `CAPTCHA_PROVIDER=none` | Progressive delay only. |
+| Both | The answer to an attempt whose password is checked is held back `SIGNIN_DELAY_BASE_MS` (500) × 2^(n−1) for the n-th failure over the threshold, capped at `SIGNIN_DELAY_MAX_MS` (8 000), for success and failure alike. |
+
+The ordinary failure answer stays 401 `UNAUTHENTICATED` "Organisation, email or password is incorrect" for every kind
+of failure; when the next attempt will need a captcha it carries the same `details.captcha`. The challenge depends only
+on the counters for what was submitted, never on whether the account exists. A **recognised device** (an address that
+completed a sign-in to the account in the last 30 days) skips both the delay and the captcha, as it skips the database
+lockout; **passkey sign-in** (`/auth/passkey/login/*`) is not affected. Store unavailable → 503 `RATE_LIMITED` (never
+unlimited). Keys are SHA-256 hashes; no e-mail address or IP is stored in clear. The web sign-in page renders the
+provider's widget only after the API asked for it and says that sign-in is slowed down while it waits.
+
+**37.2 Agent personal data at rest.** `agent_sensitive.national_id_number`, `phone`, `mpesa_number`,
+`next_of_kin_name`, `next_of_kin_phone` and `next_of_kin_relationship` hold AES-256-GCM ciphertext
+(`ag1.<iv>.<tag>.<ciphertext>`, key derived from `AGENT_DATA_KEY` by HKDF; associated data binds each value to its
+tenant, agent and column). `national_id_hash` / `phone_hash`: HMAC-SHA256 under a second derived key over
+`<tenantId>:<kind>:<normalised value>`, for duplicate checks. A CHECK constraint refuses plaintext in new writes; rows
+written before this release are sealed by the API's start-up data migration (`AgentDataMigration`) and by
+`pnpm ops:rotate-keys --target agent-data`, which can then `--validate` the constraint. `AGENT_DATA_KEY` is required in
+production (development derives one from `MFA_ENCRYPTION_KEY`). No endpoint changes: lists and details still show only
+`phoneMasked` / `nationalIdMasked` / `hasMpesaNumber` / `hasNextOfKin`; `POST /field/agents/:id/reveal` decrypts the
+requested fields inside the audited, re-authenticated reveal (audit: field names only); a value that does not decrypt
+fails closed (500, nothing returned). Erasure also clears the hashes; the erased guard keeps them cleared.
+
+**37.3 Key rotation.** `pnpm ops:rotate-keys --target <mfa|messaging|agent-data> [--dry-run] [--batch-size n]
+[--checkpoint file] [--reset-checkpoint] [--validate] [--tenant id]` (schema owner). While it runs, the API reads with
+the new key and `<NAME>_PREVIOUS` (`MFA_ENCRYPTION_KEY_PREVIOUS`, `MESSAGING_ENCRYPTION_KEY_PREVIOUS`,
+`MESSAGING_HASH_KEY_PREVIOUS`, `AGENT_DATA_KEY_PREVIOUS`) and matches contact / push hashes under both keys (STOP
+replies, opt-out checks, verified addresses). Guarded messaging tables accept a re-key-only UPDATE (same NULL-ness,
+every other column unchanged) only inside a transaction that set `ngao.key_rotation = on` as a role other than
+`ngao_app`. Campaign identifier fingerprints use `IDENTIFIER_FINGERPRINT_KEY` (default `MFA_ENCRYPTION_KEY`); an MFA
+rotation is refused while fingerprints exist and that variable is unset. Procedure: [RUNBOOKS.md](./RUNBOOKS.md) §3.1.
+
+**37.4 `platform.job_runs_retention`** (daily durable job): deletes finished `job_runs` rows older than
+`JOB_RUNS_RETENTION_DAYS` (default 90, at least 7) through `ngao_purge_job_runs(before, limit)` (SECURITY DEFINER). The
+runtime role still has no DELETE right on `job_runs`; the guard refuses any other DELETE; RUNNING rows and anything
+younger than 7 days are never deleted. The run itself is recorded in `job_runs` with `{ deleted, retentionDays }`.
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| Password sign-in needs a captcha (missing, invalid or unverifiable token) | 401 | `CAPTCHA_REQUIRED` |

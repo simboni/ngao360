@@ -469,3 +469,42 @@ can proceed.
 **Captcha.** Tenant selects a provider (integration setting, mirrored into the office module config) → public write →
 `CaptchaVerifierRegistry.verify(provider, token, ip)` → ok, or refuse for missing / invalid / not configured /
 unavailable (timeouts and network errors) → generic 400 `ABUSE_CHECK_FAILED`.
+
+### 16.4 Sign-in protection, column encryption and key rotation (go-live gaps)
+
+Contract: [API_CONTRACT.md](./API_CONTRACT.md) §37. Migration `20261201000100_signin_crypto_hardening`.
+
+**Sign-in protection.** `SignInProtectionService` (auth) counts failed password sign-ins in `RATE_LIMIT_STORE` per
+hashed organisation + e-mail and per hashed client address. Over the thresholds an unrecognised device gets a
+progressive, capped delay on every attempt whose password is checked and, when the deployment configures a captcha
+provider, must pass the captcha before the password is checked at all (fail closed on a missing, wrong or unverifiable
+token). The answers are the same for an existing and an unknown account, and the challenge depends only on the counters
+for what was submitted. This sits on top of the per-IP and per-account rate limits (`AccountRateLimitGuard`) and the
+database lockouts (password, TOTP).
+
+*Trade-off (documented, accepted):* someone who knows a person's organisation code and e-mail can make that person
+solve a captcha, and wait at most `SIGNIN_DELAY_MAX_MS` per attempt, from a device the account has not signed in from
+in the last 30 days, until the failure window ends. They cannot stop the person signing in: the captcha can always be
+solved, the delay is capped, and a recognised device and passkey sign-in skip both (as they skip the database
+lockout). Without a captcha provider the delay alone slows guessing; the per-account rate limit and the database
+lockout still cap it.
+
+**Agent personal data at rest.** `AgentDataCipher` (`packages/db/src/keyring.ts`) seals each `agent_sensitive` value
+with AES-256-GCM under a key derived (HKDF) from `AGENT_DATA_KEY`; the associated data binds the value to tenant, agent
+and column, so a ciphertext moved elsewhere does not open. Keyed lookup hashes (a second derived key) support duplicate
+checks without decrypting. The database refuses plaintext in new writes (CHECK); legacy rows are sealed by the start-up
+data migration (tenants found through a SECURITY DEFINER function that returns ids only). Decryption happens only in
+the audited reveal and in the edit path, never in lists, exports or logs.
+
+**Key rotation.** One model for every sealed column: the new key in the main variable, the old one in
+`<NAME>_PREVIOUS`. `SealKeyring` / `HmacKeyring` read with both and write with the new one; lookups by keyed hash match
+either key, so nothing is missed (in particular STOP replies) while rows are rewritten. `pnpm ops:rotate-keys` rewrites
+rows in primary-key batches as the schema owner, each row only if unchanged since read, with a dry run, a checkpoint
+file bound to the new key's identifier, and a non-zero exit while any value still needs the old key. The messaging
+guards let through only a re-key (same NULL-ness, every other column unchanged), only with `ngao.key_rotation = on`,
+and never for `ngao_app`. What cannot be re-keyed: superseded contact rows for an earlier address (only a hash is
+stored; never matched again) and campaign identifier fingerprints (only masked values are stored; they keep their own
+`IDENTIFIER_FINGERPRINT_KEY`).
+
+**Job-run retention.** `platform.job_runs_retention` (daily) deletes finished `job_runs` rows older than
+`JOB_RUNS_RETENTION_DAYS` through `ngao_purge_job_runs()`; the job_runs guard keeps refusing every other DELETE.
