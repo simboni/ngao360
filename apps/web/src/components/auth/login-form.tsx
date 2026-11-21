@@ -1,15 +1,16 @@
 'use client';
 
-import type { LoginResponse, MeResponse, MfaEnrolStartResponse } from '@ngao360/shared';
-import { AlertCircle, KeyRound, ShieldCheck } from 'lucide-react';
+import type { LoginResponse, MeResponse, MfaEnrolStartResponse, PasskeyOptionsResponse } from '@ngao360/shared';
+import { AlertCircle, Fingerprint, KeyRound, LifeBuoy, ShieldCheck } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { api, ApiRequestError } from '@/lib/api-client';
+import { describeWebauthnError, formatRecoveryCodeInput, passkeysSupported, signWithPasskey } from './webauthn';
 
 type Step =
   | { kind: 'credentials' }
-  | { kind: 'mfa'; challengeToken: string }
+  | { kind: 'mfa'; challengeToken: string; method: 'totp' | 'recovery' }
   | { kind: 'enrol'; challengeToken: string; enrolment: MfaEnrolStartResponse | null };
 
 function safeNext(next: string | null): string {
@@ -17,7 +18,10 @@ function safeNext(next: string | null): string {
   return next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
 }
 
-/** S01: organisation selector, email/password, MFA challenge and TOTP enrolment. */
+/**
+ * S01: organisation selector, email/password, MFA challenge and TOTP enrolment; passwordless
+ * sign-in with a passkey, and a passkey or one-time recovery code at the MFA step (API contract §32).
+ */
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
@@ -28,6 +32,9 @@ export function LoginForm() {
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canUsePasskeys, setCanUsePasskeys] = useState(false);
+
+  useEffect(() => setCanUsePasskeys(passkeysSupported()), []);
 
   const done = () => router.replace(safeNext(params.get('next')));
 
@@ -37,7 +44,9 @@ export function LoginForm() {
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof ApiRequestError ? err.message : 'Unable to reach the server. Check your connection.');
+      setError(
+        describeWebauthnError(err) ?? (err instanceof ApiRequestError ? err.message : 'Unable to reach the server. Check your connection.'),
+      );
     } finally {
       setBusy(false);
     }
@@ -49,9 +58,20 @@ export function LoginForm() {
       const res = await api.post<LoginResponse>('/auth/login', { tenantSlug, email, password }, { noRefresh: true });
       setPassword('');
       if (res.status === 'AUTHENTICATED') return done();
-      if (res.status === 'MFA_REQUIRED') return setStep({ kind: 'mfa', challengeToken: res.challengeToken });
+      if (res.status === 'MFA_REQUIRED') return setStep({ kind: 'mfa', challengeToken: res.challengeToken, method: 'totp' });
       const enrolment = await api.post<MfaEnrolStartResponse>('/auth/mfa/enrol/start', { challengeToken: res.challengeToken }, { noRefresh: true });
       setStep({ kind: 'enrol', challengeToken: res.challengeToken, enrolment });
+    });
+  };
+
+  /** Passwordless: the passkey (with the device's PIN or biometric) is both factors. */
+  const signInWithPasskey = () => {
+    void run(async () => {
+      const opts = await api.post<PasskeyOptionsResponse>('/auth/passkey/login/options', { tenantSlug }, { noRefresh: true });
+      const response = await signWithPasskey(opts);
+      await api.post<LoginResponse>('/auth/passkey/login/verify', { tenantSlug, challengeId: opts.challengeId, response }, { noRefresh: true });
+      setPassword('');
+      done();
     });
   };
 
@@ -59,9 +79,31 @@ export function LoginForm() {
     e.preventDefault();
     if (step.kind !== 'mfa') return;
     void run(async () => {
-      await api.post<MeResponse>('/auth/mfa/verify', { challengeToken: step.challengeToken, code }, { noRefresh: true });
+      if (step.method === 'recovery') {
+        await api.post<MeResponse>('/auth/mfa/recovery', { challengeToken: step.challengeToken, code }, { noRefresh: true });
+      } else {
+        await api.post<MeResponse>('/auth/mfa/verify', { challengeToken: step.challengeToken, code }, { noRefresh: true });
+      }
       done();
     });
+  };
+
+  /** Second factor with a passkey registered to this account. */
+  const verifyWithPasskey = () => {
+    if (step.kind !== 'mfa') return;
+    void run(async () => {
+      const opts = await api.post<PasskeyOptionsResponse>('/auth/mfa/passkey/options', { challengeToken: step.challengeToken }, { noRefresh: true });
+      const response = await signWithPasskey(opts);
+      await api.post<MeResponse>('/auth/mfa/passkey/verify', { challengeToken: step.challengeToken, challengeId: opts.challengeId, response }, { noRefresh: true });
+      done();
+    });
+  };
+
+  const switchMethod = (method: 'totp' | 'recovery') => {
+    if (step.kind !== 'mfa') return;
+    setCode('');
+    setError(null);
+    setStep({ ...step, method });
   };
 
   const submitEnrol = (e: FormEvent) => {
@@ -107,6 +149,12 @@ export function LoginForm() {
           <Button type="submit" className="mt-6 w-full" loading={busy} disabled={!tenantSlug || !email || !password}>
             Continue
           </Button>
+          {canUsePasskeys ? (
+            <Button type="button" variant="secondary" className="mt-3 w-full" loading={busy} disabled={!tenantSlug} onClick={signInWithPasskey}>
+              <Fingerprint className="h-4 w-4" aria-hidden />
+              Sign in with a passkey
+            </Button>
+          ) : null}
           <p className="mt-4 text-center text-meta text-slate">Forgot your password? Contact your organisation owner to reset access.</p>
         </form>
       ) : null}
@@ -117,14 +165,40 @@ export function LoginForm() {
             <ShieldCheck className="h-5 w-5 text-teal" aria-hidden />
             <h1 className="text-section font-semibold">Two-step verification</h1>
           </div>
-          <label htmlFor="code" className="ngao-label">6-digit code from your authenticator app</label>
-          <input id="code" className="ngao-input tracking-[0.4em]" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} required autoFocus value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
-          <Button type="submit" className="mt-6 w-full" loading={busy} disabled={code.length !== 6}>
-            Verify and sign in
-          </Button>
-          <button type="button" className="mt-3 w-full text-meta text-slate hover:underline" onClick={() => { setStep({ kind: 'credentials' }); setCode(''); }}>
-            Use a different account
-          </button>
+          {step.method === 'totp' ? (
+            <>
+              <label htmlFor="code" className="ngao-label">6-digit code from your authenticator app</label>
+              <input id="code" className="ngao-input tracking-[0.4em]" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} required autoFocus value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
+              <Button type="submit" className="mt-6 w-full" loading={busy} disabled={code.length !== 6}>
+                Verify and sign in
+              </Button>
+            </>
+          ) : (
+            <>
+              <label htmlFor="recovery-code" className="ngao-label">One of your recovery codes</label>
+              <input id="recovery-code" className="ngao-input font-mono tracking-wider" autoComplete="off" autoCapitalize="characters" spellCheck={false} required autoFocus placeholder="XXXX-XXXX-XXXX-XXXX" value={code} onChange={(e) => setCode(formatRecoveryCodeInput(e.target.value))} />
+              <p className="mt-1 text-meta text-slate">Each code works once. Create new codes in “Your account” after signing in.</p>
+              <Button type="submit" className="mt-6 w-full" loading={busy} disabled={code.length !== 19}>
+                Use recovery code
+              </Button>
+            </>
+          )}
+          <div className="mt-4 space-y-2 border-t border-line pt-4">
+            {canUsePasskeys ? (
+              <Button type="button" variant="secondary" className="w-full" loading={busy} onClick={verifyWithPasskey}>
+                <Fingerprint className="h-4 w-4" aria-hidden />
+                Use a passkey instead
+              </Button>
+            ) : null}
+            <button type="button" className="flex w-full items-center justify-center gap-1 text-meta text-slate hover:underline" onClick={() => switchMethod(step.method === 'totp' ? 'recovery' : 'totp')}>
+              <LifeBuoy className="h-3.5 w-3.5" aria-hidden />
+              {step.method === 'totp' ? 'Lost your phone? Use a recovery code' : 'Use your authenticator app instead'}
+            </button>
+            <button type="button" className="w-full text-meta text-slate hover:underline" onClick={() => { setStep({ kind: 'credentials' }); setCode(''); }}>
+              Use a different account
+            </button>
+          </div>
+          <p className="mt-3 text-center text-meta text-slate">No codes left and no passkey? Ask two administrators in your organisation to recover your account.</p>
         </form>
       ) : null}
 

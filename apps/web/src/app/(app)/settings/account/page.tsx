@@ -1,29 +1,31 @@
-import { Construction } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
+import { AccountReauthProvider } from '@/components/auth/account-reauth';
+import { PasskeysPanel } from '@/components/auth/passkeys-panel';
+import { RecoveryCodesPanel } from '@/components/auth/recovery-codes-panel';
 import { PageHeader } from '@/components/ui/page-header';
 
 export const metadata = { title: 'Your account' };
 
 /**
- * Own account security: passkeys (register, rename, revoke), recovery codes (generate once, count
- * remaining), verified e-mail / phone, SMS consent and opt-out, push notifications on this device.
+ * Own account security: passkeys (register, rename, revoke) and recovery codes (generate once,
+ * count remaining). Verified e-mail / phone, SMS consent and push on this device are added below by
+ * platform-infra (components/account/contact-*, push-*; see docs/CHANGE_REQUESTS.md).
  * Every signed-in user may open it (no permission: it only touches the caller's own account).
- * API: /api/auth/passkeys*, /api/auth/recovery-codes*, /api/me/contacts*, /api/me/push*
- * (docs/API_CONTRACT.md §31.2, §32). Owners: auth-recovery (passkeys, recovery codes;
- * components/account/**) and platform-infra (contacts, push; components/account/contact-*).
+ * API: /api/auth/passkeys*, /api/auth/recovery-codes* (docs/API_CONTRACT.md §32).
  */
 export default function AccountSettingsPage() {
   return (
     <>
       <PageHeader
         title="Your account"
-        description="Passkeys, recovery codes, verified contact details and notification channels."
+        description="How you sign in: passkeys and recovery codes. Changes here need you to confirm it's you."
         breadcrumbs={[{ label: 'Your account' }]}
       />
-      <Card>
-        <EmptyState icon={Construction} title="Account security is being built" description="This screen will appear here once passkeys and recovery codes are implemented." />
-      </Card>
+      <AccountReauthProvider>
+        <div className="space-y-6">
+          <PasskeysPanel />
+          <RecoveryCodesPanel />
+        </div>
+      </AccountReauthProvider>
     </>
   );
 }
