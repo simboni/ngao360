@@ -118,6 +118,16 @@ export const ConfigSchema = z.object({
   AFRICASTALKING_BASE_URL: z.string().url().default('https://api.africastalking.com'),
   /** Random path token for the delivery-report callback URL (the vendor does not sign callbacks). */
   AFRICASTALKING_DLR_TOKEN: z.string().optional().transform(emptyToUndefined).pipe(z.string().min(24).optional()),
+  /**
+   * Messages to members of the public (portal acknowledgements) go only to numbers starting with
+   * one of these E.164 prefixes (comma-separated). Default Kenya only; premium and foreign routes
+   * are never used by an anonymous submission.
+   */
+  CITIZEN_SMS_ALLOWED_PREFIXES: z.string().default('+254'),
+  /** At most this many citizen messages per destination address (any tenant) per 24 hours. */
+  CITIZEN_MESSAGES_PER_DESTINATION_PER_DAY: z.coerce.number().int().min(0).default(3),
+  /** At most this many citizen SMS per tenant per 24 hours (cost ceiling); beyond it they are skipped. */
+  CITIZEN_SMS_DAILY_BUDGET_PER_TENANT: z.coerce.number().int().min(0).default(200),
 
   PUSH_PROVIDER: z.enum(['log', 'webpush']).default('log'),
   VAPID_PUBLIC_KEY: z.string().optional().transform(emptyToUndefined),

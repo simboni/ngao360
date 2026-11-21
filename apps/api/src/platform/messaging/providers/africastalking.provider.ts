@@ -51,6 +51,13 @@ export function africasTalkingDeliveryStatus(status: string | undefined): 'DELIV
   }
 }
 
+/** True when fetch failed before any byte reached the vendor (DNS failure, connection refused). */
+function neverSent(e: unknown): boolean {
+  const cause = (e as { cause?: { code?: string } } | null)?.cause;
+  const code = cause?.code ?? (e as { code?: string } | null)?.code;
+  return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'EHOSTUNREACH' || code === 'ENETUNREACH';
+}
+
 export class AfricasTalkingSmsProvider implements MessageProvider {
   readonly channel = 'SMS' as const;
   readonly name = 'africastalking';
@@ -75,22 +82,38 @@ export class AfricasTalkingSmsProvider implements MessageProvider {
         redirect: 'error',
       });
     } catch (e) {
-      const error = (e as Error).name === 'TimeoutError' ? 'SMS provider timed out' : 'SMS provider unreachable';
-      this.logger.warn(`SMS message ${message.messageId} failed: ${error}`);
-      return { status: 'FAILED', error, retryable: true };
+      // Retry only when the request certainly never reached the vendor (no connection). A timeout
+      // or a dropped connection after the request was written may well have been accepted and
+      // billed, and the vendor has no idempotency key: resending would duplicate the SMS.
+      if (neverSent(e)) {
+        this.logger.warn(`SMS message ${message.messageId} failed: SMS provider unreachable`);
+        return { status: 'FAILED', error: 'SMS provider unreachable', retryable: true };
+      }
+      const error =
+        (e as Error).name === 'TimeoutError'
+          ? 'SMS provider timed out after the request was sent; outcome unknown, not resent to avoid a duplicate'
+          : 'SMS provider connection lost after the request was sent; outcome unknown, not resent to avoid a duplicate';
+      this.logger.warn(`SMS message ${message.messageId}: ${error}`);
+      return { status: 'FAILED', error, retryable: false };
     }
     if (!res.ok) {
-      // 401 here is a bad API key or username: a configuration fault, retried until max attempts.
+      if (res.status === 401 || res.status === 403) {
+        // Bad API key or username: a configuration fault. Retrying cannot help; the operator must act.
+        const error = `SMS provider HTTP ${res.status}: check AFRICASTALKING_USERNAME / AFRICASTALKING_API_KEY`;
+        this.logger.error(`SMS provider refused the credentials (HTTP ${res.status}); message ${message.messageId} not sent`);
+        return { status: 'FAILED', error, retryable: false };
+      }
       const error = `SMS provider HTTP ${res.status}`;
       this.logger.warn(`SMS message ${message.messageId} failed: ${error}`);
-      return { status: 'FAILED', error, retryable: res.status >= 500 || res.status === 401 || res.status === 429 };
+      return { status: 'FAILED', error, retryable: res.status >= 500 || res.status === 429 };
     }
     let recipient: AtRecipient | undefined;
     try {
       const json = (await res.json()) as { SMSMessageData?: { Recipients?: AtRecipient[] } };
       recipient = json.SMSMessageData?.Recipients?.[0];
     } catch {
-      return { status: 'FAILED', error: 'SMS provider returned an unreadable response', retryable: true };
+      // A 2xx answer means the vendor most likely accepted (and billed) it: do not resend.
+      return { status: 'FAILED', error: 'SMS provider accepted the request but its answer was unreadable; outcome unknown, not resent', retryable: false };
     }
     if (!recipient || typeof recipient.statusCode !== 'number') {
       // The vendor answers with no recipients when the number was refused before routing.

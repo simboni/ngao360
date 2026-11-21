@@ -16,7 +16,7 @@
  * Citizen acknowledgements (`enqueueCitizenInTx`) go to the contact the requester gave for their
  * own case, on the channel they chose.
  */
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Prisma, TenantTx } from '@ngao360/db';
 import { MESSAGE_TEMPLATE_KEYS, type MessageChannel, type MessageTemplateKey, SMS_CONSENT_NOTICE } from '@ngao360/shared';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +24,11 @@ import { AppConfig } from '../../config/app-config';
 import { JobScheduler } from '../jobs/job-scheduler';
 import { type AddressKind, MessagingCrypto, maskAddress, normaliseAddress } from './messaging-crypto';
 import type { MessageOutboxPort, OutboxEnqueueInput, OutboxEnqueueResult } from './outbox.types';
+import { MessageProviderRegistry } from './message-provider.registry';
+import { hashKey } from '../ratelimit/rate-limit.guards';
+import { RATE_LIMIT_STORE, type RateLimitStore } from '../ratelimit/rate-limit-store';
+
+const DAY_MS = 24 * 60 * 60_000;
 
 /** Templates that prove control of the address they are sent to (may use addressOverride). */
 const ADDRESS_PROVING_TEMPLATES: ReadonlySet<string> = new Set([
@@ -58,10 +63,14 @@ export interface CitizenEnqueueInput {
 
 @Injectable()
 export class MessageOutboxService implements MessageOutboxPort {
+  private readonly logger = new Logger(MessageOutboxService.name);
+
   constructor(
     private readonly crypto: MessagingCrypto,
     private readonly config: AppConfig,
     private readonly jobs: JobScheduler,
+    @Optional() private readonly providers?: MessageProviderRegistry,
+    @Optional() @Inject(RATE_LIMIT_STORE) private readonly limits?: RateLimitStore,
   ) {}
 
   async enqueueInTx(tx: TenantTx, input: OutboxEnqueueInput): Promise<OutboxEnqueueResult> {
@@ -97,9 +106,12 @@ export class MessageOutboxService implements MessageOutboxPort {
     const existing = await this.findByKey(tx, input.idempotencyKey);
     if (existing) return { messageId: existing.id, created: false, status: existing.status === 'SKIPPED' ? 'SKIPPED' : 'QUEUED' };
     const normalised = normaliseAddress(input.channel, input.address);
-    const resolved: ResolvedAddress = normalised
-      ? { refType: 'CITIZEN_CASE', refId: input.caseId, address: normalised, masked: maskAddress(input.channel, normalised), skipReason: null }
-      : { refType: 'CITIZEN_CASE', refId: input.caseId, address: null, masked: null, skipReason: 'The contact given is not a valid address for this channel' };
+    const abuse = normalised ? await this.citizenAbuseCheck(tx, input, normalised) : null;
+    const resolved: ResolvedAddress = !normalised
+      ? { refType: 'CITIZEN_CASE', refId: input.caseId, address: null, masked: null, skipReason: 'The contact given is not a valid address for this channel' }
+      : abuse
+        ? { refType: 'CITIZEN_CASE', refId: input.caseId, address: null, masked: maskAddress(input.channel, normalised), skipReason: abuse }
+        : { refType: 'CITIZEN_CASE', refId: input.caseId, address: normalised, masked: maskAddress(input.channel, normalised), skipReason: null };
     return this.insert(tx, {
       tenantId: input.tenantId,
       channel: input.channel,
@@ -111,6 +123,41 @@ export class MessageOutboxService implements MessageOutboxPort {
       notificationId: null,
       createdById: null,
     });
+  }
+
+  /**
+   * Abuse limits for messages an anonymous submitter can trigger (SMS pumping, harassment of a
+   * third party). Returns a skip reason, or null to send. The submission itself always succeeds.
+   *  - SMS only to allowed country prefixes (CITIZEN_SMS_ALLOWED_PREFIXES, default +254);
+   *  - with a paid SMS provider configured, SMS only when the tenant's portal has a captcha;
+   *  - at most CITIZEN_MESSAGES_PER_DESTINATION_PER_DAY per address (hashed; across tenants);
+   *  - at most CITIZEN_SMS_DAILY_BUDGET_PER_TENANT SMS per tenant per day.
+   * If the shared counter store is unavailable the message is skipped (fail closed).
+   */
+  private async citizenAbuseCheck(tx: TenantTx, input: CitizenEnqueueInput, address: string): Promise<string | null> {
+    const v = this.config.values;
+    if (input.channel === 'SMS') {
+      const prefixes = v.CITIZEN_SMS_ALLOWED_PREFIXES.split(',').map((p) => p.trim()).filter(Boolean);
+      if (!prefixes.some((p) => address.startsWith(p))) return 'Destination country not allowed for citizen SMS';
+      if (this.providers?.isDeliveryConfigured('SMS')) {
+        const office = await tx.tenantModule.findFirst({ where: { moduleKey: 'office' }, select: { config: true } });
+        const captcha = (office?.config as { captchaProvider?: string } | null)?.captchaProvider ?? 'none';
+        if (captcha === 'none') return 'SMS acknowledgements need a portal captcha while a paid SMS provider is configured';
+      }
+    }
+    if (!this.limits) return null;
+    try {
+      const dest = await this.limits.hit(`citizen-msg:dest:${hashKey(input.channel, this.crypto.contactHash(input.channel, address))}`, DAY_MS);
+      if (dest.count > v.CITIZEN_MESSAGES_PER_DESTINATION_PER_DAY) return 'Daily limit for this address reached';
+      if (input.channel === 'SMS') {
+        const budget = await this.limits.hit(`citizen-msg:sms-budget:${input.tenantId}`, DAY_MS);
+        if (budget.count > v.CITIZEN_SMS_DAILY_BUDGET_PER_TENANT) return 'Daily citizen SMS budget for this organisation reached';
+      }
+    } catch (e) {
+      this.logger.warn(`Citizen message limits unavailable, message skipped: ${(e as Error).message}`);
+      return 'Message limits unavailable';
+    }
+    return null;
   }
 
   private findByKey(tx: TenantTx, key: string) {

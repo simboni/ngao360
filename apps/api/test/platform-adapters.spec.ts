@@ -4,9 +4,11 @@
  * shared-store rate limiting (memory and the local Redis) and provider selection from env.
  */
 import { Reflector } from '@nestjs/core';
-import { EICAR_TEST_STRING, SMS_CONSENT_NOTICE } from '@ngao360/shared';
+import { EICAR_TEST_STRING, MAX_SOURCE_FILE_BYTES, SMS_CONSENT_NOTICE } from '@ngao360/shared';
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import webpush from 'web-push';
 import { AppConfig } from '../src/config/app-config';
 import { loadConfig } from '../src/config/config.schema';
@@ -85,6 +87,29 @@ describe('clamd INSTREAM adapter (fake clamd, EICAR)', () => {
     expect(await refused.scan(Buffer.from('x'), ctx)).toMatchObject({ status: 'ERROR', error: expect.stringContaining('unreachable') });
   });
 
+  it('a file beyond clamd scan limits is reported (INFECTED), never CLEAN; the deployed clamd.conf alerts on limits', async () => {
+    expect(parseClamdReply('stream: Heuristics.Limits.Exceeded.MaxFileSize FOUND\0')).toMatchObject({ status: 'INFECTED' });
+    expect(parseClamdReply('stream: Heuristics.Encrypted.Zip FOUND\0')).toMatchObject({ status: 'INFECTED' });
+    const clamd = await startFakeClamd();
+    try {
+      clamd.mode('exceeds');
+      const scanner = new ClamdMalwareScanner({ host: '127.0.0.1', port: clamd.port, timeoutMs: 2000 });
+      expect(await scanner.scan(Buffer.from('synthetic nested archive'), ctx)).toMatchObject({ status: 'INFECTED', signature: 'Heuristics.Limits.Exceeded.MaxScanSize' });
+    } finally {
+      await clamd.close();
+    }
+    // The production clamd configuration: alerts on exceeded limits and encrypted content, and a
+    // stream limit above the largest original the API accepts.
+    const conf = readFileSync(join(__dirname, '../../../deploy/clamav/clamd.conf'), 'utf8');
+    const setting = (k: string) => new RegExp(`^${k}\\s+(\\S+)`, 'm').exec(conf)?.[1];
+    for (const k of ['AlertExceedsMax', 'AlertEncrypted', 'AlertBrokenExecutables', 'HeuristicAlerts']) expect(setting(k)).toBe('yes');
+    const mb = (v: string | undefined) => Number(/^(\d+)M$/.exec(v ?? '')?.[1]) * 1024 * 1024;
+    expect(mb(setting('StreamMaxLength'))).toBeGreaterThan(MAX_SOURCE_FILE_BYTES);
+    expect(mb(setting('MaxFileSize'))).toBeGreaterThan(MAX_SOURCE_FILE_BYTES);
+    const compose = readFileSync(join(__dirname, '../../../docker-compose.prod.yml'), 'utf8');
+    expect(compose).toContain('./deploy/clamav/clamd.conf:/etc/clamav/clamd.conf:ro');
+  });
+
   it('is selected from env, and "none" never scans', () => {
     expect(malwareScannerFromConfig(config())).toBeInstanceOf(NoopMalwareScanner);
     expect(malwareScannerFromConfig(config({ MALWARE_SCANNER: 'clamd', CLAMD_HOST: '127.0.0.1', CLAMD_PORT: '3310' }))).toBeInstanceOf(ClamdMalwareScanner);
@@ -150,13 +175,26 @@ describe("Africa's Talking SMS provider (fake HTTP)", () => {
       expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: true });
       fake.respond(() => ({ status: 502 }));
       expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: true, error: 'SMS provider HTTP 502' });
+      // A timeout after the request was written: the vendor may have accepted (and billed) it,
+      // and it has no idempotency key, so the message is not resent (no duplicate SMS).
       fake.respond(() => ({ status: 201, json: {}, delayMs: 1500 }));
-      expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: true, error: 'SMS provider timed out' });
+      expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: false, error: expect.stringMatching(/timed out after the request was sent/) });
+      // A 2xx answer that cannot be read: likely accepted, not resent either.
+      fake.respond(() => ({ status: 201, body: 'not json' }));
+      expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: false });
+      // Bad credentials are a configuration fault: not retried.
+      fake.respond(() => ({ status: 401 }));
+      expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: false, error: expect.stringMatching(/AFRICASTALKING_API_KEY/) });
+      fake.respond(() => ({ status: 429 }));
+      expect(await provider.send(sms)).toMatchObject({ status: 'FAILED', retryable: true });
       // No error text carries the number or the key.
       for (const r of [await provider.send(sms)]) expect(JSON.stringify(r)).not.toMatch(/254700000001|at-key-secret/);
     } finally {
       await fake.close();
     }
+    // Nothing listening: the request never left, so it is safe to retry.
+    const down = new AfricasTalkingSmsProvider({ baseUrl: `http://127.0.0.1:${await closedPort()}`, username: 'sandbox', apiKey: 'at-key-secret', timeoutMs: 500 });
+    expect(await down.send(sms)).toMatchObject({ status: 'FAILED', retryable: true, error: 'SMS provider unreachable' });
     expect(africasTalkingDeliveryStatus('Success')).toBe('DELIVERED');
     expect(africasTalkingDeliveryStatus('Failed')).toBe('UNDELIVERED');
     expect(africasTalkingDeliveryStatus('Rejected')).toBe('REJECTED');
@@ -302,19 +340,22 @@ describe('shared-store rate limiting', () => {
     await expect(new RateLimitThrottlerStorage(failing).increment('k', 1000, 1, 1000, 'default')).rejects.toMatchObject({ code: 'RATE_LIMITED', status: 503 });
   });
 
-  it('limits sign-in per IP and per account (organisation + e-mail), never storing either in clear', async () => {
+  it('limits sign-in per IP and per account + IP, never storing either in clear; an outsider cannot use up the real person’s allowance', async () => {
     const store = new MemoryRateLimitStore();
     const keys: string[] = [];
     const spyStore: RateLimitStore = { kind: 'memory', hit: (k, w) => (keys.push(k), store.hit(k, w)), peek: (k) => store.peek(k), reset: (k) => store.reset(k) };
     const guard = new AccountRateLimitGuard(new Reflector(), config({ AUTH_RATE_LIMIT_MAX: '3' }), spyStore);
     const login = (ip: string, email = 'Person@Example.org') => httpCtx({ method: 'POST', originalUrl: '/api/auth/login', ip, body: { tenantSlug: 'synthetic-office', email } });
-    for (const ip of ['10.0.0.1', '10.0.0.2', '10.0.0.3']) expect(await guard.canActivate(login(ip).ctx)).toBe(true);
-    // A fourth attempt on the same account from yet another IP is refused.
-    const fourth = login('10.0.0.4');
+    // Attempts on one account from many other IPs (an outsider) ...
+    for (const ip of ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4']) expect(await guard.canActivate(login(ip).ctx)).toBe(true);
+    // ... do not refuse the real person from their own IP (the database lockout caps guessing).
+    expect(await guard.canActivate(login('10.0.0.7').ctx)).toBe(true);
+    // The same IP runs out on its own.
+    for (let i = 0; i < 2; i++) expect(await guard.canActivate(login('10.0.0.8').ctx)).toBe(true);
+    expect(await guard.canActivate(login('10.0.0.8').ctx)).toBe(true);
+    const fourth = login('10.0.0.8');
     await expect(guard.canActivate(fourth.ctx)).rejects.toMatchObject({ code: 'RATE_LIMITED', status: 429 });
     expect(fourth.headers['Retry-After']).toBeDefined();
-    // Another account from a fresh IP is fine; the same IP quickly runs out on its own.
-    expect(await guard.canActivate(login('10.0.0.5', 'other@example.org').ctx)).toBe(true);
     for (const k of keys) expect(k).not.toMatch(/10\.0\.0|example\.org|synthetic-office/i);
     // Logout and GETs are not counted.
     expect(await guard.canActivate(httpCtx({ method: 'POST', originalUrl: '/api/auth/logout', ip: '10.0.0.5', body: {} }).ctx)).toBe(true);
@@ -322,7 +363,7 @@ describe('shared-store rate limiting', () => {
   });
 
   const redisUrl = process.env.REDIS_URL;
-  (redisUrl ? it : it.skip)('counts one account across two API instances through Redis', async () => {
+  (redisUrl ? it : it.skip)('counts one account and IP across two API instances through Redis', async () => {
     const prefix = `ngao360:test:${randomUUID()}:`;
     const a = new RedisRateLimitStore(new Redis(redisUrl!, { maxRetriesPerRequest: 1 }), prefix);
     const b = new RedisRateLimitStore(new Redis(redisUrl!, { maxRetriesPerRequest: 1 }), prefix);
@@ -331,8 +372,8 @@ describe('shared-store rate limiting', () => {
       const g2 = new AccountRateLimitGuard(new Reflector(), config({ AUTH_RATE_LIMIT_MAX: '2' }), b);
       const login = (ip: string) => httpCtx({ method: 'POST', originalUrl: '/api/auth/login', ip, body: { tenantSlug: 'synthetic', email: 'p@example.org' } }).ctx;
       expect(await g1.canActivate(login('10.1.0.1'))).toBe(true);
-      expect(await g2.canActivate(login('10.1.0.2'))).toBe(true);
-      await expect(g1.canActivate(login('10.1.0.3'))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+      expect(await g2.canActivate(login('10.1.0.1'))).toBe(true);
+      await expect(g1.canActivate(login('10.1.0.1'))).rejects.toMatchObject({ code: 'RATE_LIMITED' });
     } finally {
       await a.onModuleDestroy();
       await b.onModuleDestroy();

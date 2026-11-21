@@ -56,6 +56,7 @@ describeDb('platform delivery (outbox, contacts, providers, webhooks)', () => {
       AFRICASTALKING_DLR_TOKEN: DLR_TOKEN,
       PUSH_PROVIDER: 'log',
       WEB_ORIGIN: 'https://app.ngao360.example',
+      CITIZEN_SMS_DAILY_BUDGET_PER_TENANT: '5',
     });
     f = await createCampaignFixture({
       admin: { perms: ['workspace.view', 'workspace.configure', 'platform.health.view', 'platform.tenants.manage', 'users.create', 'users.view'] },
@@ -332,5 +333,94 @@ describeDb('platform delivery (outbox, contacts, providers, webhooks)', () => {
     await http.delete(`/me/push/subscriptions/${created.body.id}`).expect(200);
     expect((await http.get('/me/push/subscriptions').expect(200)).body).toHaveLength(0);
     expect(await f.owner.pushSubscription.count({ where: { id: created.body.id, revokedReason: 'user' } })).toBe(1);
+  });
+
+  /* ------------------------- Pilot security review fixes ------------------------- */
+
+  const citizenSmsCase = async (phone: string) => {
+    const caseId = randomUUID();
+    await f.owner.citizenCase.create({
+      data: {
+        id: caseId, tenantId: f.tenantId, reference: `CASE-${caseId.slice(0, 6)}`, publicReference: `SYN-${caseId.slice(0, 8).toUpperCase()}`,
+        source: 'PORTAL', category: 'WATER_SANITATION', title: 'Synthetic request', description: 'Synthetic description', privacyNoticeVersion: 'office-portal-2026-11-v2',
+        consentToContact: true, status: 'SUBMITTED', submittedAt: new Date(),
+      },
+    });
+    await f.owner.citizenCaseContact.create({ data: { tenantId: f.tenantId, caseId, phone, preference: 'SMS' } });
+    return f.app.get(CaseAcknowledgementService).enqueue({ tenantId: f.tenantId, caseId, channel: 'SMS' });
+  };
+  const lastErrorOf = async (id: string) => (await f.owner.messageOutbox.findUniqueOrThrow({ where: { id } })).lastError;
+
+  it('anonymous portal SMS: allowed countries only, captcha required with a paid provider, per-address and per-tenant daily caps', async () => {
+    // No captcha on the portal while a paid SMS provider is configured: SMS acknowledgements are skipped.
+    const noCaptcha = await citizenSmsCase('0712 300 001');
+    expect(noCaptcha).toMatchObject({ status: 'SKIPPED' });
+    expect(await lastErrorOf(noCaptcha!.messageId)).toMatch(/captcha/);
+    await f.owner.tenantModule.upsert({
+      where: { tenantId_moduleKey: { tenantId: f.tenantId, moduleKey: 'office' } },
+      create: { tenantId: f.tenantId, moduleKey: 'office', enabled: true, config: { captchaProvider: 'hcaptcha' } },
+      update: { config: { captchaProvider: 'hcaptcha' } },
+    });
+    // A premium / foreign number is never used.
+    const foreign = await citizenSmsCase('+44 7700 900123');
+    expect(foreign).toMatchObject({ status: 'SKIPPED' });
+    expect(await lastErrorOf(foreign!.messageId)).toMatch(/country/);
+    // Per address: three a day, then skipped (the submission itself is unaffected).
+    const same = [];
+    for (let i = 0; i < 4; i += 1) same.push(await citizenSmsCase('0712 300 002'));
+    expect(same.map((r) => r!.status)).toEqual(['QUEUED', 'QUEUED', 'QUEUED', 'SKIPPED']);
+    expect(await lastErrorOf(same[3]!.messageId)).toMatch(/limit for this address/);
+    // Per tenant: the daily budget (5 in this suite) caps SMS to many different numbers.
+    const many = [];
+    for (let i = 0; i < 3; i += 1) many.push(await citizenSmsCase(`0712 300 1${i}0`));
+    expect(many.map((r) => r!.status)).toEqual(['QUEUED', 'QUEUED', 'SKIPPED']);
+    expect(await lastErrorOf(many[2]!.messageId)).toMatch(/budget/);
+    // Clear the queued SMS so later tests start clean.
+    await dispatch();
+  });
+
+  it('a tenant that switched a channel off gets no messages on it, except account-security messages', async () => {
+    const outbox = f.app.get(MessageOutboxService);
+    await f.owner.tenantIntegrationSetting.create({ data: { tenantId: f.tenantId, kind: 'email', provider: 'smtp', enabled: false } });
+    try {
+      const alert = await prisma.withTenant(f.tenantId, (tx) =>
+        outbox.enqueueInTx(tx, { tenantId: f.tenantId, channel: 'EMAIL', templateKey: 'notification.alert', recipientUserId: f.users.member!, payload: { title: 'Switched off' }, idempotencyKey: `off-${randomUUID()}` }),
+      );
+      const security = await prisma.withTenant(f.tenantId, (tx) =>
+        outbox.enqueueInTx(tx, { tenantId: f.tenantId, channel: 'EMAIL', templateKey: 'auth.security_alert', recipientUserId: f.users.member!, payload: { event: 'mfa_reset', at: new Date().toISOString() }, idempotencyKey: `sec-${randomUUID()}` }),
+      );
+      await dispatch();
+      expect(await f.owner.messageOutbox.findUniqueOrThrow({ where: { id: alert.messageId } })).toMatchObject({ status: 'SKIPPED', lastError: 'Channel disabled for this organisation' });
+      expect(await f.owner.messageOutbox.findUniqueOrThrow({ where: { id: security.messageId } })).toMatchObject({ status: 'SENT' });
+    } finally {
+      // Settings rows are append-only history: switch e-mail back on with the deployment provider.
+      await f.owner.tenantIntegrationSetting.updateMany({ where: { tenantId: f.tenantId, kind: 'email' }, data: { enabled: true } });
+    }
+  });
+
+  it('never sends a row whose lease another dispatcher took over while earlier rows of the batch were sending', async () => {
+    const outbox = f.app.get(MessageOutboxService);
+    const enqueue = (title: string) =>
+      prisma.withTenant(f.tenantId, (tx) =>
+        outbox.enqueueInTx(tx, { tenantId: f.tenantId, channel: 'EMAIL', templateKey: 'notification.alert', recipientUserId: f.users.member!, payload: { title }, idempotencyKey: `lease-${randomUUID()}` }),
+      );
+    await dispatch(); // nothing else due
+    const a = await enqueue('Lease row A');
+    const b = await enqueue('Lease row B');
+    type Row = { id: string; attempts: number };
+    const d = dispatcher as unknown as { claim: (t: string, n: number) => Promise<Row[]>; renewLease: (t: string, r: Row) => Promise<boolean> };
+    // This worker claims both rows in one batch (attempt 1) ...
+    const mine = (await d.claim(f.tenantId, 25)).filter((r) => r.id === a.messageId || r.id === b.messageId);
+    expect(mine.map((r) => r.attempts)).toEqual([1, 1]);
+    // ... and while it is still sending row A, row B's lease runs out and another worker takes it over and sends it.
+    await f.owner.messageOutbox.update({ where: { id: b.messageId }, data: { lockedUntil: new Date(Date.now() - 1000) } });
+    await dispatch();
+    expect(await f.owner.messageOutbox.findUniqueOrThrow({ where: { id: b.messageId } })).toMatchObject({ status: 'SENT', attempts: 2 });
+    // Back in the first worker: A's lease is renewed and A is sent; B is never sent a second time.
+    const rowA = mine.find((r) => r.id === a.messageId)!;
+    const rowB = mine.find((r) => r.id === b.messageId)!;
+    expect(await d.renewLease(f.tenantId, rowB)).toBe(false);
+    expect(await d.renewLease(f.tenantId, rowA)).toBe(true);
+    expect(smtp.messages.filter((m) => m.raw.includes('Lease row B'))).toHaveLength(1);
   });
 });

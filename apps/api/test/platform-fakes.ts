@@ -68,13 +68,13 @@ export interface FakeHttp {
   url: string;
   requests: FakeHttpRequest[];
   /** Replace the handler (status, JSON body, optional delay in ms). */
-  respond: (fn: (req: FakeHttpRequest) => { status: number; json?: unknown; delayMs?: number }) => void;
+  respond: (fn: (req: FakeHttpRequest) => { status: number; json?: unknown; body?: string; delayMs?: number }) => void;
   close: () => Promise<void>;
 }
 
 export async function startFakeHttp(): Promise<FakeHttp> {
   const requests: FakeHttpRequest[] = [];
-  let handler: (req: FakeHttpRequest) => { status: number; json?: unknown; delayMs?: number } = () => ({ status: 200, json: {} });
+  let handler: (req: FakeHttpRequest) => { status: number; json?: unknown; body?: string; delayMs?: number } = () => ({ status: 200, json: {} });
   const server = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
@@ -86,7 +86,7 @@ export async function startFakeHttp(): Promise<FakeHttp> {
         if (res.destroyed) return;
         res.statusCode = out.status;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify(out.json ?? {}));
+        res.end(out.body !== undefined ? out.body : JSON.stringify(out.json ?? {}));
       };
       if (out.delayMs) setTimeout(send, out.delayMs);
       else send();
@@ -111,7 +111,7 @@ export interface FakeClamd {
   /** Number of INSTREAM scans answered. */
   scans: () => number;
   /** 'ok' (normal), 'hang' (never answers), 'error' (answers with an ERROR line). */
-  mode: (m: 'ok' | 'hang' | 'error') => void;
+  mode: (m: 'ok' | 'hang' | 'error' | 'exceeds') => void;
   close: () => Promise<void>;
 }
 
@@ -121,7 +121,7 @@ export interface FakeClamd {
  */
 export async function startFakeClamd(): Promise<FakeClamd> {
   let count = 0;
-  let mode: 'ok' | 'hang' | 'error' = 'ok';
+  let mode: 'ok' | 'hang' | 'error' | 'exceeds' = 'ok';
   const sockets = new Set<Socket>();
   const server: TcpServer = createTcpServer((socket) => {
     sockets.add(socket);
@@ -149,6 +149,11 @@ export async function startFakeClamd(): Promise<FakeClamd> {
           if (mode === 'hang') return;
           if (mode === 'error') {
             socket.end('INSTREAM size limit exceeded. ERROR\0');
+            return;
+          }
+          if (mode === 'exceeds') {
+            // clamd with AlertExceedsMax yes: content beyond a scan limit is reported, not passed.
+            socket.end('stream: Heuristics.Limits.Exceeded.MaxScanSize FOUND\0');
             return;
           }
           const all = Buffer.concat(data).toString('latin1');

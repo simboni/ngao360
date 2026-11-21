@@ -12,11 +12,19 @@
  *      for a notification also append `notification_deliveries` (the user's delivery log).
  *
  * A lease that expires (worker died mid-send) is taken over by the next run. The provider may then
- * see the message twice; providers that support it receive the idempotency key.
+ * see the message twice; providers that support it receive the idempotency key. Rows of a claimed
+ * batch are sent one after another, so the lease is renewed for each row just before its send
+ * (guarded by status SENDING and our attempt number): a row whose lease another worker took over
+ * meanwhile is never sent by us.
+ *
+ * A tenant may switch e-mail, SMS or push off (or pick a provider this deployment does not run) in
+ * its integration settings: its messages on that channel are then SKIPPED, except account-security
+ * messages (invitation, recovery link, security alert, contact verification), which always use
+ * the deployment channel so a channel toggle can never expose or suppress them.
  */
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
-import { JOB_KEYS, type MessageChannel, type MessageStatus, messageRetryDelayMs } from '@ngao360/shared';
+import { JOB_KEYS, MESSAGE_TEMPLATE_KEYS, type MessageChannel, type MessageStatus, messageRetryDelayMs } from '@ngao360/shared';
 import { AppConfig } from '../../config/app-config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JobScheduler } from '../jobs/job-scheduler';
@@ -25,6 +33,15 @@ import { MessageProviderRegistry } from './message-provider.registry';
 import { renderMessage, TemplateRenderError } from './message-templates';
 import { MessagingCrypto } from './messaging-crypto';
 import { MessageOutboxService } from './outbox.service';
+
+/** Account-security templates: never subject to the tenant's channel toggle. */
+const ACCOUNT_SECURITY_TEMPLATES: ReadonlySet<string> = new Set([
+  MESSAGE_TEMPLATE_KEYS.AUTH_INVITATION,
+  MESSAGE_TEMPLATE_KEYS.AUTH_RECOVERY_LINK,
+  MESSAGE_TEMPLATE_KEYS.AUTH_SECURITY_ALERT,
+  MESSAGE_TEMPLATE_KEYS.CONTACT_VERIFY_EMAIL,
+  MESSAGE_TEMPLATE_KEYS.CONTACT_VERIFY_SMS,
+]);
 
 /** How long a claimed message is ours before another worker may take it over. */
 const LEASE_MS = 2 * 60_000;
@@ -99,6 +116,12 @@ export class OutboxDispatcherService implements OnModuleInit {
         budget -= rows.length;
         counts.claimed += rows.length;
         for (const row of rows) {
+          // Renew our lease for this row right before sending; if another worker took it over
+          // (our lease expired while earlier rows of the batch were sending), leave it alone.
+          if (!(await this.renewLease(tenantId, row))) {
+            counts.claimed -= 1;
+            continue;
+          }
           const outcome = await this.sendOne(tenantId, row);
           await this.record(tenantId, row, outcome);
           if (outcome.status === 'SENT') counts.sent += 1;
@@ -148,9 +171,34 @@ export class OutboxDispatcherService implements OnModuleInit {
     });
   }
 
+  /** Extend the lease of a row we still own (SENDING with our attempt number). */
+  private async renewLease(tenantId: string, row: ClaimedRow): Promise<boolean> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const n = await tx.$executeRaw`
+        UPDATE message_outbox SET locked_until = now() + ${`${LEASE_MS} milliseconds`}::interval, updated_at = now()
+        WHERE id = ${row.id}::uuid AND status = 'SENDING' AND attempts = ${row.attempts}`;
+      return n === 1;
+    });
+  }
+
+  /** Skip reason when the tenant switched this channel off (or chose a provider not run here). */
+  private async tenantChannelSkip(tenantId: string, row: ClaimedRow, providerName: string): Promise<string | null> {
+    if (ACCOUNT_SECURITY_TEMPLATES.has(row.template_key)) return null;
+    const kind = row.channel.toLowerCase();
+    const setting = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.tenantIntegrationSetting.findFirst({ where: { kind }, select: { enabled: true, provider: true } }),
+    );
+    if (!setting) return null;
+    if (!setting.enabled) return 'Channel disabled for this organisation';
+    if (setting.provider !== providerName && !providerName.startsWith(`${setting.provider}-`)) return 'The organisation chose a provider this deployment does not run';
+    return null;
+  }
+
   private async sendOne(tenantId: string, row: ClaimedRow): Promise<Outcome> {
     const provider = this.registry.get(row.channel);
     try {
+      const disabled = await this.tenantChannelSkip(tenantId, row, provider.name);
+      if (disabled) return { status: 'SKIPPED', provider: null, error: disabled };
       // The log provider (nothing configured) never needs an address or a rendered body.
       if (!provider.isConfigured()) {
         const r = await provider.send(this.stub(row));
