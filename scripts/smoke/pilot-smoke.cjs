@@ -143,7 +143,7 @@ async function settle(page) {
     await shot(wp, '05-settings');
     const integrations = wp.getByText(/Integrations/).first();
     await integrations.scrollIntoViewIfNeeded();
-    await shot(wp, '06-settings-integrations');
+    await shot(wp, '06-settings-integrations', true);
     const security = wp.getByText(/Security/).last();
     await security.scrollIntoViewIfNeeded();
     await settle(wp);

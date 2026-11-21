@@ -70,12 +70,14 @@ async function passPinGate(page) {
   const home = page.getByText(/AGT-2027-|station/i).first();
   await Promise.race([set.waitFor({ timeout: 20000 }), enter.waitFor({ timeout: 20000 }), home.waitFor({ timeout: 20000 })]).catch(() => {});
   if (await set.isVisible().catch(() => false)) {
+    await shot(page, '09-mobile-set-pin');
     await page.getByLabel('New PIN', { exact: true }).fill(DEVICE_PIN);
     await page.getByLabel('Repeat the PIN').fill(DEVICE_PIN);
     await page.getByRole('button', { name: 'Set PIN' }).click();
     await set.waitFor({ state: 'detached', timeout: 20000 });
     console.log('  ok  device PIN set for the offline queue');
   } else if (await enter.isVisible().catch(() => false)) {
+    await shot(page, '10-mobile-enter-pin');
     await page.getByLabel('PIN', { exact: true }).fill(DEVICE_PIN);
     await page.getByRole('button', { name: 'Open' }).click();
     await enter.waitFor({ state: 'detached', timeout: 20000 });
