@@ -54,6 +54,7 @@ import {
   storeFieldFile,
 } from '../common/field-support';
 import { DEPLOYMENT_INCLUDE, toMyAssignments } from '../deployment/deployment.mappers';
+import { AgentDataCrypto, emptyAgentSensitive } from './agent-data-crypto';
 import { FIELD_ENTITY } from '../field.constants';
 
 const AGENT_INCLUDE = {
@@ -77,6 +78,7 @@ export class AgentsService {
     private readonly permissions: PermissionService,
     private readonly modules: TenantModulesService,
     private readonly storage: StorageService,
+    private readonly agentData: AgentDataCrypto,
   ) {}
 
   /* --------------------------------- helpers -------------------------------- */
@@ -353,16 +355,12 @@ export class AgentsService {
           createdById: auth.userId,
         },
       });
+      // Column-level encryption (AES-256-GCM under AGENT_DATA_KEY) plus keyed lookup hashes.
       await tx.agentSensitive.create({
         data: {
           agentId: agent.id,
           tenantId: auth.tenantId,
-          nationalIdNumber: s.nationalIdNumber ?? null,
-          phone: s.phone ?? null,
-          mpesaNumber: s.mpesaNumber ?? null,
-          nextOfKinName: s.nextOfKinName ?? null,
-          nextOfKinPhone: s.nextOfKinPhone ?? null,
-          nextOfKinRelationship: s.nextOfKinRelationship ?? null,
+          ...this.agentData.cipher.sealRow({ tenantId: auth.tenantId, agentId: agent.id }, s),
           updatedById: auth.userId,
         },
       });
@@ -449,7 +447,9 @@ export class AgentsService {
     return this.prisma.tenantTx(async (tx) => {
       const a = await this.loadAgent(tx, id);
       if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot reveal your own agent record’s personal data');
-      const s = await tx.agentSensitive.findUnique({ where: { agentId: id } });
+      const row = await tx.agentSensitive.findUnique({ where: { agentId: id } });
+      // Decrypted only here, for the fields asked for, inside the audited reveal (fail closed).
+      const s = row ? this.agentData.cipher.openRow({ tenantId: auth.tenantId, agentId: id }, row) : null;
       const fields = [...new Set(dto.fields)];
       const out: AgentSensitiveReveal = { agentId: id, revealedAt: new Date().toISOString() };
       for (const f of fields) {
@@ -489,8 +489,10 @@ export class AgentsService {
       const a = await this.loadAgent(tx, id);
       if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot change your own agent record’s personal data');
       if (a.status === 'WITHDRAWN') throw immutableRecord('A withdrawn agent record cannot be edited');
-      const current = await tx.agentSensitive.findUnique({ where: { agentId: id } });
-      if (current?.erasedAt) throw immutableRecord('This agent’s personal data was erased and cannot be re-entered on this record');
+      const stored = await tx.agentSensitive.findUnique({ where: { agentId: id } });
+      if (stored?.erasedAt) throw immutableRecord('This agent’s personal data was erased and cannot be re-entered on this record');
+      const ref = { tenantId: auth.tenantId, agentId: id };
+      const current = stored ? this.agentData.cipher.openRow(ref, stored) : null;
       const keys = ['nationalIdNumber', 'phone', 'mpesaNumber', 'nextOfKinName', 'nextOfKinPhone', 'nextOfKinRelationship'] as const;
       const patch: Record<string, string | null> = {};
       const changed: string[] = [];
@@ -502,11 +504,13 @@ export class AgentsService {
         changed.push(k);
       }
       if (changed.length > 0) {
-        const merged = { ...(current ?? {}), ...patch } as Record<(typeof keys)[number], string | null | undefined>;
+        const merged = { ...(current ?? emptyAgentSensitive()), ...patch } as Record<(typeof keys)[number], string | null | undefined>;
+        // The whole row is re-sealed (a row written before column encryption is encrypted here too).
+        const sealed = this.agentData.cipher.sealRow(ref, merged);
         await tx.agentSensitive.upsert({
           where: { agentId: id },
-          create: { agentId: id, tenantId: auth.tenantId, ...patch, updatedById: auth.userId },
-          update: { ...patch, updatedById: auth.userId },
+          create: { agentId: id, tenantId: auth.tenantId, ...sealed, updatedById: auth.userId },
+          update: { ...sealed, updatedById: auth.userId },
         });
         await tx.agent.update({
           where: { id },
@@ -787,6 +791,8 @@ export async function eraseAgentSensitiveInTx(
     nextOfKinName: null,
     nextOfKinPhone: null,
     nextOfKinRelationship: null,
+    nationalIdHash: null,
+    phoneHash: null,
     erasedAt: now,
   };
   if (current) {

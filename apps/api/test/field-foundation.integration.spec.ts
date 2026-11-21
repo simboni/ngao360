@@ -4,7 +4,7 @@
  * deployment slot rules, incident closure separation, the idempotency ledger
  * and module activation for the War Room (field + tally). All data synthetic.
  */
-import { createPrismaClient, type PrismaClient, type TenantTx, withTenant } from '@ngao360/db';
+import { AgentDataCipher, createPrismaClient, type PrismaClient, type TenantTx, withTenant } from '@ngao360/db';
 import { PERMISSION_DEFINITIONS } from '@ngao360/shared';
 import { randomUUID } from 'node:crypto';
 import type { AuthContext } from '../src/auth/auth.types';
@@ -69,7 +69,9 @@ d('field operations foundation (database)', () => {
         data: { tenantId: tA, reference: 'AGT-2027-000001', givenName: 'Synthetic', familyName: 'Agent One', homeWardId: w.id, homeConstituencyId: k.id, homeCountyId: county.id, createdById: ids.planner!, phoneMasked: '+254 ••• ••• 001' },
       });
       ids.agent = agent.id;
-      await tx.agentSensitive.create({ data: { agentId: agent.id, tenantId: tA, phone: '+254700000001', updatedById: ids.planner! } });
+      // Personal data is column-encrypted (the database refuses plaintext).
+      const sealed = new AgentDataCipher(Buffer.alloc(32, 11).toString('base64')).sealRow({ tenantId: tA, agentId: agent.id }, { phone: '+254700000001' });
+      await tx.agentSensitive.create({ data: { agentId: agent.id, tenantId: tA, ...sealed, updatedById: ids.planner! } });
       ids.agent2 = (
         await tx.agent.create({
           data: { tenantId: tA, reference: 'AGT-2027-000002', givenName: 'Synthetic', familyName: 'Agent Two', homeWardId: w.id, homeConstituencyId: k.id, homeCountyId: county.id, createdById: ids.planner! },
