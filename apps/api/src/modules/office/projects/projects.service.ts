@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { nextReference, Prisma, type TenantTx } from '@ngao360/db';
 import {
   AUDIT_ACTIONS,
+  ERROR_CODES,
   COMPLETION_EVIDENCE_TYPES,
   CreateProjectEvidenceSchema,
   PROJECT_EVIDENCE_TYPE_LABELS,
@@ -702,6 +703,15 @@ export class ProjectsService {
         });
         if (items.length !== evidenceIds.length) {
           throw AppException.validation('Only verified evidence of this project can be published', [{ path: ['publicEvidenceIds'], message: 'Unverified or unknown evidence' }]);
+        }
+        const unscanned = items.filter((i) => i.storedFile.malwareScanStatus !== 'CLEAN');
+        if (unscanned.length > 0) {
+          throw new AppException(
+            ERROR_CODES.FILE_NOT_CLEAN,
+            HttpStatus.CONFLICT,
+            'Some evidence has no clean malware scan yet, so it cannot be shown to the public.',
+            { evidenceIds: unscanned.map((b) => b.id), statuses: unscanned.map((b) => b.storedFile.malwareScanStatus) },
+          );
         }
         const blocked = items.filter((i) => !publicEvidenceServable(i.storedFile));
         if (blocked.length > 0) {

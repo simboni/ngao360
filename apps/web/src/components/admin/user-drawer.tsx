@@ -71,8 +71,14 @@ export function UserDrawer({ userId, onClose, onChanged }: { userId: string | nu
       await after(`MFA was reset. ${u.displayName} must enrol a new authenticator at next sign-in.`);
     } else if (pending.kind === 'invite') {
       const res = await highRisk(() => api.post<UserDetail>(`/admin/users/${u.id}/invitation`, { reason }));
-      setInviteLink(res.invitation ? `${window.location.origin}${res.invitation.acceptPath}` : null);
-      await after('A new single-use invitation was issued; the previous link no longer works. Send it through a separate, secure channel.');
+      if (res.invitation?.delivery === 'OUTBOX') {
+        // Delivered to the person by e-mail; the link is never shown to the administrator.
+        setInviteLink(null);
+        await after(`A new single-use invitation was sent to ${u.email}; the previous link no longer works.`);
+      } else {
+        setInviteLink(res.invitation?.acceptPath ? `${window.location.origin}${res.invitation.acceptPath}` : null);
+        await after('A new single-use invitation was issued; the previous link no longer works. Send it through a separate, secure channel.');
+      }
     } else if (pending.kind === 'sessions') {
       await api.post<OkResponse>(`/admin/users/${u.id}/sessions/revoke-all`, { reason });
       await after('All sessions were signed out.');

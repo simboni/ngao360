@@ -9,6 +9,7 @@
  * ad-hoc exports and idempotent escalation. Synthetic data only.
  */
 import { type CampaignFixture, createCampaignFixture, describeDb, seedDepartment, syntheticPdf } from './campaign-fixtures';
+import { markScannedClean } from './platform-fakes';
 
 jest.setTimeout(180_000);
 
@@ -43,7 +44,12 @@ describeDb('Campaign review fixes: finance (integration)', () => {
   });
   afterAll(async () => f?.close());
 
-  const upload = async (who: string) => (await f.http(who).post('/finance/files').attach('file', syntheticPdf(), { filename: 'doc.pdf', contentType: 'application/pdf' }).expect(201)).body;
+  // Uploads come back with a clean scan recorded (as the malware-scanning job would); approval needs CLEAN.
+  const upload = async (who: string) => {
+    const body = (await f.http(who).post('/finance/files').attach('file', syntheticPdf(), { filename: 'doc.pdf', contentType: 'application/pdf' }).expect(201)).body;
+    await markScannedClean(f.owner, body.id);
+    return body;
+  };
   const attachFile = (who: string, txId: string, fileId: string) => f.http(who).post(`/finance/transactions/${txId}/documents`).send({ fileId, kind: 'INVOICE' });
   const act = (who: string, id: string, body: Record<string, unknown>) => f.http(who).post(`/finance/transactions/${id}/transition`).send(body);
   const draft = async (who: string, over: Record<string, unknown>) =>
@@ -221,6 +227,7 @@ describeDb('Campaign review fixes: limits under concurrency and currencies (inte
           .expect(201)
       ).body;
       const file = (await f.http('officer').post('/finance/files').attach('file', syntheticPdf(), { filename: 'r.pdf', contentType: 'application/pdf' }).expect(201)).body;
+      await markScannedClean(f.owner, file.id);
       await f.http('officer').post(`/finance/transactions/${t.id}/documents`).send({ fileId: file.id, kind: 'RECEIPT' }).expect(201);
       return (await f.http('officer').post(`/finance/transactions/${t.id}/transition`).send({ action: 'SUBMIT', expectedVersion: t.version }).expect(200)).body;
     };

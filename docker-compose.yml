@@ -1,6 +1,9 @@
-# NGAO360 deployment stack: Postgres (RLS), Redis, MinIO, API, web, Caddy.
+# NGAO360 deployment stack: Postgres (RLS), Redis, MinIO, API, web, Caddy, and optionally clamd.
 #   cp .env.docker.example .env.docker   # set real secrets
 #   docker compose --env-file .env.docker up -d --build
+# Malware scanning (recommended before any pilot): set MALWARE_SCANNER=clamd in .env.docker and add
+# `--profile scanner` so the clamd service runs. Without it uploads stay PENDING and nothing that
+# needs a clean scan (public project documents and photos, ledger approval) can proceed.
 # Separate staging/production with distinct project names (-p) and env files.
 name: ngao360
 
@@ -43,10 +46,21 @@ x-api-env: &api-env
   VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
   VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
   VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+  AFRICASTALKING_BASE_URL: ${AFRICASTALKING_BASE_URL:-https://api.africastalking.com}
+  MESSAGING_DISPATCH_INTERVAL_SECONDS: ${MESSAGING_DISPATCH_INTERVAL_SECONDS:-30}
+  MESSAGING_MAX_ATTEMPTS: ${MESSAGING_MAX_ATTEMPTS:-5}
   MALWARE_SCANNER: ${MALWARE_SCANNER:-none}
+  CLAMD_HOST: ${CLAMD_HOST:-clamd}
+  CLAMD_PORT: ${CLAMD_PORT:-3310}
+  CLAMD_TIMEOUT_MS: ${CLAMD_TIMEOUT_MS:-30000}
+  SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-60}
   CAPTCHA_PROVIDER: ${CAPTCHA_PROVIDER:-none}
   CAPTCHA_SITE_KEY: ${CAPTCHA_SITE_KEY:-}
   CAPTCHA_SECRET: ${CAPTCHA_SECRET:-}
+  CAPTCHA_TIMEOUT_MS: ${CAPTCHA_TIMEOUT_MS:-5000}
+  # Rate-limit counters and durable jobs live in Redis (shared by every API instance).
+  RATE_LIMIT_STORE: redis
+  JOBS_ENABLED: "true"
   WEBAUTHN_RP_ID: ${NGAO_DOMAIN:-localhost}
 
 services:
@@ -134,6 +148,29 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      clamd:
+        condition: service_healthy
+        required: false
+
+  # ClamAV daemon for MALWARE_SCANNER=clamd (profile "scanner"). Signatures are refreshed by the
+  # image's freshclam and kept in a volume; the first start downloads them (a few minutes).
+  clamd:
+    image: clamav/clamav:1.4.3
+    profiles: ["scanner"]
+    restart: unless-stopped
+    environment:
+      # Uploads are at most 25 MB; leave headroom for the INSTREAM framing.
+      CLAMD_CONF_StreamMaxLength: 30M
+      CLAMD_CONF_MaxFileSize: 30M
+      CLAMD_CONF_MaxScanSize: 100M
+    volumes:
+      - clamdb:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
 
   web:
     build:
@@ -165,6 +202,7 @@ services:
       - api
 
 volumes:
+  clamdb:
   pgdata:
   redisdata:
   miniodata:

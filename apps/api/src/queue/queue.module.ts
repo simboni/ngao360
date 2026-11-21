@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { type DynamicModule, Global, Module } from '@nestjs/common';
 import { AppConfig } from '../config/app-config';
 import { OcrQueueService } from './ocr-queue.service';
+import { NotificationQueueProcessor } from './notification.processor';
 import { OcrProcessor } from './ocr.processor';
 import { ALL_QUEUES } from './queue.constants';
 
@@ -44,7 +45,7 @@ export class QueueModule {
         }),
         BullModule.registerQueue(...ALL_QUEUES.map((name) => ({ name }))),
       ],
-      providers: [OcrQueueService, OcrProcessor],
+      providers: [OcrQueueService, OcrProcessor, NotificationQueueProcessor],
       exports: [OcrQueueService, BullModule],
     };
   }

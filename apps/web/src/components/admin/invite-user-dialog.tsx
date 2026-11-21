@@ -66,8 +66,24 @@ export function InviteUserDialog({ open, onClose, onInvited }: { open: boolean; 
     }
   };
 
+  if (created?.invitation?.delivery === 'OUTBOX') {
+    // E-mail delivery is configured: the link went to the person and is never shown here.
+    return (
+      <Dialog open={open} onClose={onClose} title="Invitation sent" description="The single-use link was sent by e-mail to the invited person only.">
+        <Notice tone="info" className="mb-4">
+          Invitation sent to {created.email}. It expires {new Date(created.invitation.expiresAt).toLocaleString()}. If it does not arrive, issue a new invitation from the user&apos;s profile.
+        </Notice>
+        <div className="flex justify-end gap-2">
+          <Button type="button" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </Dialog>
+    );
+  }
+
   if (created) {
-    const link = created.invitation && typeof window !== 'undefined' ? `${window.location.origin}${created.invitation.acceptPath}` : null;
+    const link = created.invitation?.acceptPath && typeof window !== 'undefined' ? `${window.location.origin}${created.invitation.acceptPath}` : null;
     return (
       <Dialog open={open} onClose={onClose} title="Invitation created" description="This link is shown only once. Send it to the person through a separate, secure channel.">
         {link ? (

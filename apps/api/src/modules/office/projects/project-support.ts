@@ -20,6 +20,8 @@ import {
   type PublicProjectDetail,
   type PublicProjectSummary,
   VERIFICATION_STATUS_LABELS,
+  isScanClean,
+  type MalwareScanStatus,
 } from '@ngao360/shared';
 import { isSanitizableImage } from '../../../storage/image-sanitize';
 import { OFFICE_FILE_SELECT, OFFICE_UNIT_SELECT, USER_REF, decimalToNumber, iso, isoDate, money, toOfficeFile, toOfficeLocation } from '../common';
@@ -335,10 +337,11 @@ export function toPublicProjectDetail(r: PublicProjectRow, tenantSlug: string): 
 }
 
 /**
- * Evidence the public may receive: photographs the server can re-encode
- * (metadata removed), and PDFs whose malware scan came back clean.
+ * Evidence the public may receive: only files whose malware scan came back
+ * CLEAN (fail closed, API contract §34), and of those only photographs the
+ * server can re-encode (metadata removed) and PDFs.
  */
 export function publicEvidenceServable(f: { mimeType: string; malwareScanStatus: string }): boolean {
-  if (isSanitizableImage(f.mimeType)) return true;
-  return f.mimeType === 'application/pdf' && f.malwareScanStatus === 'CLEAN';
+  if (!isScanClean(f.malwareScanStatus as MalwareScanStatus)) return false;
+  return isSanitizableImage(f.mimeType) || f.mimeType === 'application/pdf';
 }

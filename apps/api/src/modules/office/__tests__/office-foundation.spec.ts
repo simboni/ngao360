@@ -15,6 +15,7 @@ import type { PrismaService } from '../../../prisma/prisma.service';
 import { officeGeoLocation, officeScopeWhere } from '../common/office-location';
 import { hashTrackingCode, publicReferencePrefix, trackingCodeMatches } from '../common/public-reference';
 import { PublicAbuseService } from '../public/public-abuse.service';
+import { MemoryRateLimitStore } from '../../../platform/ratelimit';
 import { PublicRateLimit, PublicRateLimitGuard } from '../public/public-rate-limit';
 
 @RequireModule('office')
@@ -102,18 +103,25 @@ describe('PublicRateLimitGuard', () => {
   const config = {
     values: { PUBLIC_RATE_LIMIT_WINDOW_SECONDS: 60, PUBLIC_SUBMIT_RATE_LIMIT_MAX: 2, PUBLIC_TRACK_RATE_LIMIT_MAX: 5, PUBLIC_READ_RATE_LIMIT_MAX: 100 },
   } as unknown as AppConfig;
-  it('limits per IP, tenant and bucket with a Retry-After header', () => {
-    const guard = new PublicRateLimitGuard(new Reflector(), config);
+  it('limits per IP, tenant and bucket with a Retry-After header', async () => {
+    const guard = new PublicRateLimitGuard(new Reflector(), config, new MemoryRateLimitStore());
     const headers: Record<string, string> = {};
     const res = { setHeader: (k: string, v: string) => (headers[k] = v) };
     const call = (ip: string, slug = 'bungoma-governor') =>
       guard.canActivate(httpCtx(Limited, Limited.prototype.submit, { ip, params: { tenantSlug: slug } }, res));
-    expect(call('10.0.0.1')).toBe(true);
-    expect(call('10.0.0.1')).toBe(true);
-    expect(() => call('10.0.0.1')).toThrow(expect.objectContaining({ code: 'RATE_LIMITED' }));
+    expect(await call('10.0.0.1')).toBe(true);
+    expect(await call('10.0.0.1')).toBe(true);
+    await expect(call('10.0.0.1')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
     expect(headers['Retry-After']).toBeDefined();
-    expect(call('10.0.0.2')).toBe(true);
-    expect(call('10.0.0.1', 'other-office')).toBe(true);
+    expect(await call('10.0.0.2')).toBe(true);
+    expect(await call('10.0.0.1', 'other-office')).toBe(true);
+  });
+
+  it('refuses (503) instead of letting traffic through when the store is down', async () => {
+    const down = { kind: 'redis' as const, hit: async () => Promise.reject(new Error('ECONNREFUSED')), peek: async () => null, reset: async () => undefined };
+    const guard = new PublicRateLimitGuard(new Reflector(), config, down);
+    const res = { setHeader: () => undefined };
+    await expect(guard.canActivate(httpCtx(Limited, Limited.prototype.submit, { ip: '10.0.0.9', params: { tenantSlug: 'x' } }, res))).rejects.toMatchObject({ code: 'RATE_LIMITED', status: 503 });
   });
 });
 

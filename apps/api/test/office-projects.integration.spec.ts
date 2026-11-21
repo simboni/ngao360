@@ -157,7 +157,8 @@ describeDb('Office projects (integration)', () => {
     await pub('editor', { isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [pending.body.id] }).expect(400);
 
     // A document is published only after a clean malware scan (the scanner records it).
-    const unscanned = await pub('editor', { isPublic: true, publicFields: ['schedule', 'evidence', 'expenditure'], publicEvidenceIds: [reportId] }).expect(400);
+    const unscanned = await pub('editor', { isPublic: true, publicFields: ['schedule', 'evidence', 'expenditure'], publicEvidenceIds: [reportId] }).expect(409);
+    expect(unscanned.body.code).toBe('FILE_NOT_CLEAN');
     expect(unscanned.body.message).toMatch(/malware scan/i);
     const report = await f.owner.projectEvidence.findUniqueOrThrow({ where: { id: reportId } });
     await f.owner.storedFile.update({ where: { id: report.storedFileId }, data: { malwareScanStatus: 'CLEAN', scannedAt: new Date() } });

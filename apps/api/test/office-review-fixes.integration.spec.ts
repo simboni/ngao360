@@ -431,8 +431,13 @@ describeDb('Office review fixes (integration)', () => {
 
     it('serves public photos re-encoded and never serves an unscanned document', async () => {
       const p = await completedProject();
-      const pending = await f.http('editor').put(`/office/projects/${p.id}/publication`).send({ isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [p.report], reason: 'Synthetic', expectedVersion: p.version }).expect(400);
-      expect(pending.body.message).toMatch(/malware scan/);
+      const pending = await f.http('editor').put(`/office/projects/${p.id}/publication`).send({ isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [p.report], reason: 'Synthetic', expectedVersion: p.version }).expect(409);
+      expect(pending.body).toMatchObject({ code: 'FILE_NOT_CLEAN', message: expect.stringMatching(/malware scan/) });
+      // Photos too need a clean scan before the public sees them (the scanner records it).
+      const unscannedPhoto = await f.http('editor').put(`/office/projects/${p.id}/publication`).send({ isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [p.photo], reason: 'Synthetic', expectedVersion: p.version }).expect(409);
+      expect(unscannedPhoto.body.code).toBe('FILE_NOT_CLEAN');
+      const photoRow = await f.owner.projectEvidence.findUniqueOrThrow({ where: { id: p.photo } });
+      await f.owner.storedFile.update({ where: { id: photoRow.storedFileId }, data: { malwareScanStatus: 'CLEAN', scanEngine: 'test-scanner', scannedAt: new Date() } });
       const pub = await f.http('editor').put(`/office/projects/${p.id}/publication`).send({ isPublic: true, publicFields: ['evidence'], publicEvidenceIds: [p.photo], reason: 'Synthetic', expectedVersion: p.version }).expect(200);
       expect(pub.body.publication.isPublic).toBe(true);
       const img = await f.pub(randomIp()).get(`/public/${f.slug}/projects/${p.id}/evidence/${p.photo}/file`).buffer(true).expect(200);

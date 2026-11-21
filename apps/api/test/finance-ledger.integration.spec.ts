@@ -7,6 +7,7 @@
  * permission + re-authentication and audited. Synthetic data only.
  */
 import { type CampaignFixture, createCampaignFixture, describeDb, syntheticPdf } from './campaign-fixtures';
+import { markScannedClean } from './platform-fakes';
 
 jest.setTimeout(120_000);
 
@@ -56,6 +57,8 @@ describeDb('Finance ledger (integration)', () => {
 
   const attach = async (who: string, id: string) => {
     const file = (await f.http(who).post('/finance/files').attach('file', syntheticPdf(), { filename: 'invoice.pdf', contentType: 'application/pdf' }).expect(201)).body;
+    // Only documents with a clean malware scan count towards approval (the scanner records it).
+    await markScannedClean(f.owner, file.id);
     return (await f.http(who).post(`/finance/transactions/${id}/documents`).send({ fileId: file.id, kind: 'INVOICE' }).expect(201)).body;
   };
 

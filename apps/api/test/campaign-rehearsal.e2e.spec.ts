@@ -47,6 +47,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
+import { markScannedClean } from './platform-fakes';
 
 const OWNER_URL = process.env.TEST_DATABASE_URL;
 const APP_URL = process.env.TEST_APP_DATABASE_URL;
@@ -138,6 +139,8 @@ d('Campaign and organisation rehearsal (synthetic)', () => {
 
   async function attachDocument(who: Persona, txId: string, kind: string, label: string) {
     const file = (await http(who).post('/finance/files').attach('file', pdf(label), { filename: `${label}.pdf`, contentType: 'application/pdf' }).expect(201)).body;
+    // The malware-scanning job records a clean verdict; approval needs CLEAN supporting documents.
+    await markScannedClean(owner, file.id);
     return (await http(who).post(`/finance/transactions/${txId}/documents`).send({ fileId: file.id, kind }).expect(201)).body;
   }
 

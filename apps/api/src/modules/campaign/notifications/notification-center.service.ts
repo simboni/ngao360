@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, Optional } from '@nestjs/common';
 import type { Prisma, TenantTx } from '@ngao360/db';
 import {
   type AcknowledgeNotification,
@@ -30,6 +30,9 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { TenantModulesService } from '../../../tenant-modules/tenant-modules.service';
 import { CAMPAIGN_ENTITY } from '../campaign.constants';
 import { pageArgs, usersWithPermission } from '../common';
+import { MESSAGE_OUTBOX, type MessageOutboxPort } from '../../../platform/messaging/outbox.types';
+import { MessageProviderRegistry } from '../../../platform/messaging/message-provider.registry';
+import { enqueueExternalNotifications } from './providers/outbox-bridge';
 import { NOTIFICATION_CHANNEL_PROVIDERS, type NotificationChannelProvider } from './providers/notification-provider';
 
 export interface NotifyInput {
@@ -99,6 +102,9 @@ export class NotificationCenterService implements OnModuleDestroy {
     readonly audit: AuditService,
     private readonly modules: TenantModulesService,
     @Inject(NOTIFICATION_CHANNEL_PROVIDERS) readonly providers: NotificationChannelProvider[],
+    // External channels go through the durable outbox when the platform provides it (API contract §31).
+    @Optional() @Inject(MESSAGE_OUTBOX) private readonly outbox?: MessageOutboxPort,
+    @Optional() private readonly messageProviders?: MessageProviderRegistry,
   ) {}
 
   onModuleDestroy(): void {
@@ -154,7 +160,19 @@ export class NotificationCenterService implements OnModuleDestroy {
       created.push(n.id);
       if (!dedupe) for (const channel of external) pending.push({ tenantId: input.tenantId, notificationId: n.id, userId, channel });
     }
-    if (pending.length) this.scheduleDispatch(pending);
+    if (pending.length) {
+      if (this.outbox) {
+        await enqueueExternalNotifications(
+          tx,
+          this.outbox,
+          pending,
+          { title: input.title, body: input.body, link: input.link, severity, quiet: inQuietHours() },
+          (channel) => this.messageProviders?.get(channel).name ?? this.provider(channel)?.name ?? 'outbox',
+        );
+      } else {
+        this.scheduleDispatch(pending);
+      }
+    }
     return created;
   }
 
@@ -293,8 +311,18 @@ export class NotificationCenterService implements OnModuleDestroy {
         preferences.push({ channel, type, enabled: notificationEnabled(rows, channel, type), locked });
       }
     }
-    const availableChannels: NotificationChannel[] = ['IN_APP', ...EXTERNAL.filter((c) => this.provider(c)?.isAvailable())];
-    return { preferences, availableChannels, emailVerified: false, smsConsent: false };
+    const registry = this.messageProviders;
+    const availableChannels: NotificationChannel[] = ['IN_APP', ...EXTERNAL.filter((c) => (registry ? registry.isDeliveryConfigured(c) : this.provider(c)?.isAvailable()))];
+    const contacts = await tx.contactVerification.findMany({
+      where: { userId: auth.userId, supersededAt: null, verifiedAt: { not: null } },
+      select: { channel: true, smsConsentVersion: true, smsOptedOutAt: true },
+    });
+    return {
+      preferences,
+      availableChannels,
+      emailVerified: contacts.some((c) => c.channel === 'EMAIL'),
+      smsConsent: contacts.some((c) => c.channel === 'SMS' && c.smsConsentVersion !== null && c.smsOptedOutAt === null),
+    };
   }
 
   getPreferences(auth: AuthContext): Promise<NotificationPreferences> {

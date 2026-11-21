@@ -1,12 +1,8 @@
-import {
-  Injectable,
-  Logger,
-  type OnApplicationBootstrap,
-  type OnApplicationShutdown,
-} from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
-import { AUDIT_ACTIONS } from '@ngao360/shared';
+import { AUDIT_ACTIONS, JOB_KEYS } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
+import { JobScheduler } from '../../../platform/jobs/job-scheduler';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { TenantModulesService } from '../../../tenant-modules/tenant-modules.service';
 import { resolveFieldCycle } from '../common/field-cycle';
@@ -24,7 +20,9 @@ export interface RecorderRunResult {
  * Derived station-status history (blueprint 7.2), recorded by a periodic job
  * instead of by War Room reads:
  *
- * - every FIELD_WARROOM_RECORD_SECONDS (default 60; 0 disables the timer) it
+ * - as the durable `field.station_status_record` job (BullMQ repeatable job with
+ *   a `job_runs` record per run, one schedule across API instances) every
+ *   FIELD_WARROOM_RECORD_SECONDS (default 60; 0 = on demand only) it
  *   computes the full derived status (tally intake included) of every expected
  *   station of each tenant's field cycle, in one set-based query;
  * - one statement upserts `station_statuses` only where the derived status
@@ -37,39 +35,27 @@ export interface RecorderRunResult {
  * never the time somebody happened to open a page.
  */
 @Injectable()
-export class StationStatusRecorderService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class StationStatusRecorderService implements OnModuleInit {
   private readonly logger = new Logger(StationStatusRecorderService.name);
-  private timer: NodeJS.Timeout | null = null;
-  private running = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly modules: TenantModulesService,
     private readonly warroom: WarRoomService,
+    private readonly jobs: JobScheduler,
   ) {}
 
-  onApplicationBootstrap(): void {
+  onModuleInit(): void {
     const s = Number(process.env.FIELD_WARROOM_RECORD_SECONDS ?? 60);
-    if (!Number.isFinite(s) || s <= 0) return;
-    this.timer = setInterval(() => void this.runSafely(), s * 1000);
-    this.timer.unref();
-  }
-
-  onApplicationShutdown(): void {
-    if (this.timer) clearInterval(this.timer);
-  }
-
-  private async runSafely(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      await this.runAll();
-    } catch (err) {
-      this.logger.warn(`Station status recording failed: ${(err as Error).message}`);
-    } finally {
-      this.running = false;
-    }
+    this.jobs.register({
+      key: JOB_KEYS.FIELD_STATION_STATUS_RECORD,
+      everyMs: Number.isFinite(s) && s > 0 ? Math.round(s * 1000) : 0,
+      handler: async () => {
+        const runs = await this.runAll();
+        return { tenants: runs.length, changed: runs.reduce((n, r) => n + r.changed, 0) };
+      },
+    });
   }
 
   /** One pass over every active tenant with the field module on. */

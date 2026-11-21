@@ -82,6 +82,20 @@ export const OutboxMessageSummarySchema = z.object({
 });
 export type OutboxMessageSummary = z.infer<typeof OutboxMessageSummarySchema>;
 
+/** One outbox transition (attempt history). Errors never contain addresses or secrets. */
+export const MessageOutboxEventSchema = z.object({
+  id: UuidSchema,
+  messageId: UuidSchema,
+  attempt: z.number().int(),
+  fromStatus: MessageStatusSchema.nullable(),
+  toStatus: MessageStatusSchema,
+  provider: z.string().nullable(),
+  deliveryStatus: MessageDeliveryReportStatusSchema.nullable(),
+  error: z.string().nullable(),
+  createdAt: IsoDateTimeSchema,
+});
+export type MessageOutboxEvent = z.infer<typeof MessageOutboxEventSchema>;
+
 export const OutboxListQuerySchema = z.object({
   status: MessageStatusSchema.optional(),
   channel: MessageChannelSchema.optional(),

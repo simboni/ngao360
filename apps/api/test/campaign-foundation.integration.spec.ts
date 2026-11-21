@@ -100,7 +100,8 @@ d('campaign and organisation foundation (database)', () => {
     }
     ids.userB = (await owner.user.create({ data: { tenantId: tB, email: 'b@campaign.example.org', displayName: 'B', status: 'ACTIVE' } })).id;
     const file = await owner.storedFile.create({
-      data: { tenantId: tA, sha256: 'a'.repeat(64), mimeType: 'application/pdf', sizeBytes: 10n, originalFilename: 'invoice.pdf', purpose: 'FINANCE_DOCUMENT', storageDriver: 'LOCAL', storageKey: `k-${tA}`, uploadedById: ids.officer! },
+      // Recorded clean by the malware scan (approval needs a CLEAN supporting document).
+      data: { tenantId: tA, sha256: 'a'.repeat(64), mimeType: 'application/pdf', sizeBytes: 10n, originalFilename: 'invoice.pdf', purpose: 'FINANCE_DOCUMENT', storageDriver: 'LOCAL', storageKey: `k-${tA}`, uploadedById: ids.officer!, malwareScanStatus: 'CLEAN', scanEngine: 'test-scanner', scannedAt: new Date() },
     });
     ids.file = file.id;
 

@@ -10,6 +10,7 @@ import {
   complianceBlocks,
   type CreateFinanceTransaction,
   ERROR_CODES,
+  isScanClean,
   type FinanceDocument,
   type FinanceExportRequest,
   financeApprovalBlockers,
@@ -174,7 +175,8 @@ export class FinanceService {
       contributionSourceId: t.contributionSourceId,
       counterAccountId: t.counterAccountId,
       externalReference: t.externalReference,
-      documentCount: t.documents.filter((d) => d.file.malwareScanStatus !== 'INFECTED').length,
+      // Fail closed (API contract §34): only documents whose malware scan came back CLEAN count.
+      documentCount: t.documents.filter((d) => isScanClean(d.file.malwareScanStatus)).length,
       infectedDocumentCount: t.documents.filter((d) => d.file.malwareScanStatus === 'INFECTED').length,
     });
   }

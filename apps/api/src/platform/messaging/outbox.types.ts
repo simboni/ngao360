@@ -40,6 +40,8 @@ export interface OutboxEnqueueResult {
    * (unverified e-mail, SMS without consent or opted out, no push subscription).
    */
   status: 'QUEUED' | 'SKIPPED';
+  /** SKIPPED only: why nothing will be sent (no addresses, no secrets). */
+  skipReason?: string | null;
 }
 
 export interface MessageOutboxPort {

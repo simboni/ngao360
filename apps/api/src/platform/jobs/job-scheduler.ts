@@ -15,7 +15,7 @@
  * Without Redis (QUEUES_ENABLED=false or JOBS_ENABLED=false) nothing is scheduled; `runNow` still
  * works (tests, the S30 "run now" action, an external scheduler).
  */
-import { Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown, Optional } from '@nestjs/common';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import { AppConfig } from '../../config/app-config';
 import { PLATFORM_JOBS_QUEUE } from '../../queue/queue.constants';
@@ -45,6 +45,9 @@ export interface JobRunOutcome {
   error: string | null;
 }
 
+/** Optional override of the BullMQ queue name (tests use their own queue). */
+export const JOB_QUEUE_NAME = Symbol('JOB_QUEUE_NAME');
+
 @Injectable()
 export class JobScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(JobScheduler.name);
@@ -53,10 +56,15 @@ export class JobScheduler implements OnApplicationBootstrap, OnApplicationShutdo
   private worker: Worker | null = null;
   private started = false;
 
+  private readonly queueName: string;
+
   constructor(
     private readonly config: AppConfig,
     private readonly recorder: JobRunRecorder,
-  ) {}
+    @Optional() @Inject(JOB_QUEUE_NAME) queueName?: string,
+  ) {
+    this.queueName = queueName ?? PLATFORM_JOBS_QUEUE;
+  }
 
   get enabled(): boolean {
     return this.config.values.QUEUES_ENABLED && this.config.values.JOBS_ENABLED;
@@ -90,9 +98,33 @@ export class JobScheduler implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * Ask for an extra run of a registered job soon (e.g. dispatch right after a message was queued,
+   * scan right after an upload). Kicks within the same few seconds collapse into one BullMQ job, and
+   * the periodic schedule still covers anything a kick misses (for example a kick that runs before
+   * the caller's transaction committed). Without queues this is a no-op. Never throws.
+   */
+  trigger(key: string, delayMs = 1000): void {
+    const def = this.definitions.get(key);
+    // On-demand-only definitions (everyMs 0, e.g. the scan job without a scanner) are not kicked.
+    if (!this.enabled || !def?.everyMs) return;
+    const queue = this.ensureWorker();
+    if (!queue) return;
+    const bucket = Math.floor(Date.now() / 5000);
+    void queue
+      .add(key, {}, { jobId: `${key}-kick-${bucket}`, delay: delayMs, attempts: 1, removeOnComplete: 100, removeOnFail: 100 })
+      .catch((err: Error) => this.logger.warn(`Could not queue ${key}: ${err.message}`));
+  }
+
   async onApplicationBootstrap(): Promise<void> {
     this.started = true;
     for (const def of this.definitions.values()) await this.schedule(def);
+  }
+
+  /** Remove a key's repeatable schedule from Redis (e.g. a job retired in a new release). */
+  async unschedule(key: string): Promise<void> {
+    const queue = this.ensureWorker();
+    await queue?.removeJobScheduler(key);
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -105,9 +137,9 @@ export class JobScheduler implements OnApplicationBootstrap, OnApplicationShutdo
     if (!this.enabled) return null;
     if (this.queue) return this.queue;
     const connection = this.connection();
-    this.queue = new Queue(PLATFORM_JOBS_QUEUE, { connection, prefix: 'ngao360' });
+    this.queue = new Queue(this.queueName, { connection, prefix: 'ngao360' });
     this.worker = new Worker(
-      PLATFORM_JOBS_QUEUE,
+      this.queueName,
       async (job) => {
         const outcome = await this.runNow(job.name, { queueJobId: job.id ?? null, scheduledFor: job.timestamp ? new Date(job.timestamp) : null });
         // Throw so BullMQ applies its retry/backoff; the failed run is already recorded.

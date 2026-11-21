@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma, type TenantTx } from '@ngao360/db';
 import { AUDIT_ACTIONS, type CreateUser, type OkResponse, type Paginated, type ResetMfa, type UpdateUser, type UserDetail, type UserStatusChange, type UserSummary } from '@ngao360/shared';
 import type { UserSession } from '@ngao360/shared';
@@ -6,13 +6,15 @@ import { AuditService } from '../../audit/audit.service';
 import { AuthService } from '../../auth/auth.service';
 import type { AuthContext } from '../../auth/auth.types';
 import { AppException } from '../../common/http/app-exception';
+import { MessageProviderRegistry } from '../../platform/messaging/message-provider.registry';
+import { MESSAGE_OUTBOX, type MessageOutboxPort } from '../../platform/messaging/outbox.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { assertAssignmentAllowed } from './access-policy';
 import { activeAssignmentWhere, ASSIGNMENT_INCLUDE, paginate, toAssignment, toUserDetail, toUserSummary, userInclude, userSnapshot } from './admin.mappers';
 import type { UserQueryDto } from './admin.dto';
 
 function toInvitation(i: { token: string; expiresAt: Date }) {
-  return { token: i.token, expiresAt: i.expiresAt.toISOString(), acceptPath: `/accept-invitation#token=${i.token}` };
+  return { token: i.token, expiresAt: i.expiresAt.toISOString(), acceptPath: `/accept-invitation#token=${i.token}`, delivery: 'SHOWN_ONCE' as const };
 }
 
 const USER_SORT: Record<string, keyof Prisma.UserOrderByWithRelationInput> = {
@@ -30,7 +32,44 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly authService: AuthService,
+    @Optional() @Inject(MESSAGE_OUTBOX) private readonly outbox?: MessageOutboxPort,
+    @Optional() private readonly messageProviders?: MessageProviderRegistry,
   ) {}
+
+  /**
+   * Invitation delivery (API contract §32.4). Once e-mail delivery is configured the token goes only
+   * into the sealed secret payload of an `auth.invitation` message to the invited address, in this
+   * transaction; the administrator gets the message id, never the link (any NODE_ENV). Without a
+   * channel the link is shown once, as before.
+   */
+  private async issueInvitation(
+    tx: TenantTx,
+    auth: AuthContext,
+    user: { id: string; email: string },
+    invitation: { token: string; tokenHash: string; expiresAt: Date },
+  ): Promise<NonNullable<UserDetail['invitation']>> {
+    if (!this.outbox || !this.messageProviders?.isDeliveryConfigured('EMAIL')) return toInvitation(invitation);
+    const tenant = await tx.tenant.findUnique({ where: { id: auth.tenantId }, select: { name: true } });
+    const queued = await this.outbox.enqueueInTx(tx, {
+      tenantId: auth.tenantId,
+      channel: 'EMAIL',
+      templateKey: 'auth.invitation',
+      recipientUserId: user.id,
+      addressOverride: user.email,
+      payload: {
+        organisationName: tenant?.name ?? null,
+        expiresAt: new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Nairobi', dateStyle: 'medium', timeStyle: 'short' }).format(invitation.expiresAt),
+      },
+      secretPayload: { token: invitation.token },
+      idempotencyKey: `invitation:${user.id}:${invitation.tokenHash.slice(0, 16)}`,
+      createdById: auth.userId,
+    });
+    if (queued.status !== 'QUEUED') {
+      // The invited address cannot receive e-mail: refuse rather than fall back to showing the link.
+      throw AppException.conflict('The invitation could not be queued for e-mail delivery to this address', { reason: queued.skipReason ?? 'NOT_DELIVERABLE' });
+    }
+    return { expiresAt: invitation.expiresAt.toISOString(), delivery: 'OUTBOX', messageId: queued.messageId };
+  }
 
   list(q: UserQueryDto): Promise<Paginated<UserSummary>> {
     return this.prisma.tenantTx(async (tx) => {
@@ -103,7 +142,7 @@ export class UsersService {
           tx,
         );
       }
-      return { ...toUserDetail(await this.load(tx, user.id)), invitation: toInvitation(invitation) };
+      return { ...toUserDetail(await this.load(tx, user.id)), invitation: await this.issueInvitation(tx, auth, user, invitation) };
     });
   }
 
@@ -129,7 +168,7 @@ export class UsersService {
         },
         tx,
       );
-      return { ...toUserDetail(await this.load(tx, id)), invitation: toInvitation(invitation) };
+      return { ...toUserDetail(await this.load(tx, id)), invitation: await this.issueInvitation(tx, auth, before, invitation) };
     });
   }
 

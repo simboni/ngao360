@@ -1,7 +1,8 @@
-import { Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
-import { AUDIT_ACTIONS } from '@ngao360/shared';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { AUDIT_ACTIONS, JOB_KEYS } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
 import { AppConfig } from '../../../config/app-config';
+import { JobScheduler } from '../../../platform/jobs/job-scheduler';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { TenantModulesService } from '../../../tenant-modules/tenant-modules.service';
 import { addMonths, nairobiToday, toDbDate } from '../common';
@@ -24,14 +25,13 @@ export interface RetentionRunResult {
  *   description, location text, requester messages and photos are removed and
  *   an anonymised record stays.
  *
- * Runs in process every OFFICE_RETENTION_INTERVAL_MINUTES. Each run is
- * idempotent, so several API instances running it is harmless.
+ * Runs as the durable `office.retention` job (BullMQ repeatable job with a
+ * `job_runs` record per run) every OFFICE_RETENTION_INTERVAL_MINUTES (0 = on
+ * demand only). One schedule across API instances; each run is idempotent.
  */
 @Injectable()
-export class CaseRetentionService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class CaseRetentionService implements OnModuleInit {
   private readonly logger = new Logger(CaseRetentionService.name);
-  private timer: NodeJS.Timeout | null = null;
-  private running = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -39,30 +39,20 @@ export class CaseRetentionService implements OnApplicationBootstrap, OnApplicati
     private readonly modules: TenantModulesService,
     private readonly cases: CasesService,
     private readonly config: AppConfig,
+    private readonly jobs: JobScheduler,
   ) {}
 
-  onApplicationBootstrap(): void {
+  onModuleInit(): void {
     const minutes = this.config.values.OFFICE_RETENTION_INTERVAL_MINUTES;
-    if (minutes <= 0) return;
-    this.timer = setInterval(() => void this.runSafely(), minutes * 60_000);
-    this.timer.unref();
-  }
-
-  onApplicationShutdown(): void {
-    if (this.timer) clearInterval(this.timer);
-  }
-
-  private async runSafely(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      const r = await this.runAll();
-      if (r.contactsErased || r.casesRedacted) this.logger.log(`Office retention: ${r.contactsErased} contacts erased, ${r.casesRedacted} cases redacted`);
-    } catch (err) {
-      this.logger.error(`Office retention run failed: ${(err as Error).message}`);
-    } finally {
-      this.running = false;
-    }
+    this.jobs.register({
+      key: JOB_KEYS.OFFICE_RETENTION,
+      everyMs: minutes > 0 ? minutes * 60_000 : 0,
+      handler: async () => {
+        const r = await this.runAll();
+        if (r.contactsErased || r.casesRedacted) this.logger.log(`Office retention: ${r.contactsErased} contacts erased, ${r.casesRedacted} cases redacted`);
+        return { ...r };
+      },
+    });
   }
 
   /** One pass over every active tenant with the Office module on. */

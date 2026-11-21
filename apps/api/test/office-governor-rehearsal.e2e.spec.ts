@@ -551,9 +551,11 @@ d('NGAO360 Office governor rehearsal (synthetic)', () => {
 
   it('the public-information editor publishes approved fields; the public page shows only those', async () => {
     await citizen().get(`/public/${slug}/projects/${projectId}`).expect(404);
-    // Documents reach the public only after a clean malware scan (recorded by the scanner).
-    const report = await owner.projectEvidence.findUniqueOrThrow({ where: { id: reportId } });
-    await owner.storedFile.update({ where: { id: report.storedFileId }, data: { malwareScanStatus: 'CLEAN', scannedAt: new Date() } });
+    // Documents and photos reach the public only after a clean malware scan (recorded by the scanner).
+    for (const evidenceId of [reportId, photoId]) {
+      const ev = await owner.projectEvidence.findUniqueOrThrow({ where: { id: evidenceId } });
+      await owner.storedFile.update({ where: { id: ev.storedFileId }, data: { malwareScanStatus: 'CLEAN', scannedAt: new Date() } });
+    }
     const body = { isPublic: true, publicFields: ['schedule', 'evidence'], publicEvidenceIds: [reportId, photoId], reason: 'Publish verified completion', expectedVersion: projectVersion };
     await http('projects').put(`/office/projects/${projectId}/publication`).send(body).expect(403);
     const stale = await http('editor').put(`/office/projects/${projectId}/publication`).send(body).expect(401);

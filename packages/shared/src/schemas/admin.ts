@@ -55,11 +55,20 @@ export const UserDetailSchema = UserSummarySchema.extend({
   privacyNoticeAcceptedAt: IsoDateTimeSchema.nullable(),
   /**
    * Present only in the response that issues an invitation (create or
-   * re-issue). The raw token is never stored and is not shown again; relay it
-   * to the invited person through a separate channel.
+   * re-issue). With e-mail delivery configured (API contract §32.4) the link
+   * goes to the invited person through the outbox and is never returned:
+   * `delivery: 'OUTBOX'` with the message id, no token. Without a channel the
+   * token is shown once (`delivery: 'SHOWN_ONCE'`); relay it through a
+   * separate channel. The raw token is never stored.
    */
   invitation: z
-    .object({ token: z.string(), expiresAt: IsoDateTimeSchema, acceptPath: z.string() })
+    .object({
+      token: z.string().optional(),
+      expiresAt: IsoDateTimeSchema,
+      acceptPath: z.string().optional(),
+      delivery: z.enum(['OUTBOX', 'SHOWN_ONCE']).optional(),
+      messageId: z.string().uuid().optional(),
+    })
     .optional(),
 });
 export type UserDetail = z.infer<typeof UserDetailSchema>;
