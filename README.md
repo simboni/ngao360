@@ -26,6 +26,8 @@ What this build covers (see [docs/DECISIONS.md](docs/DECISIONS.md)):
 
 Prerequisites: Node 22, pnpm 10, PostgreSQL 16 and Redis 7. You can run local binaries or `docker compose -f docker-compose.dev.yml up -d`. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) has the full setup, including running a throwaway Postgres cluster under `/tmp` without Docker.
 
+Production runs on **app.ngao360.co.ke**: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the host names, DNS and e-mail records and the first-deployment checklist.
+
 ```bash
 pnpm install && cp .env.example .env
 psql -h 127.0.0.1 -p 5433 -U postgres -f scripts/db-bootstrap.sql   # roles + databases (once per cluster)

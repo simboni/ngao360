@@ -56,6 +56,7 @@ describeDb('platform delivery (outbox, contacts, providers, webhooks)', () => {
       AFRICASTALKING_DLR_TOKEN: DLR_TOKEN,
       PUSH_PROVIDER: 'log',
       WEB_ORIGIN: 'https://app.ngao360.example',
+      WEBAUTHN_RP_ID: 'ngao360.example',
       CITIZEN_SMS_DAILY_BUDGET_PER_TENANT: '5',
     });
     f = await createCampaignFixture({

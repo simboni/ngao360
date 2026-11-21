@@ -180,6 +180,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfigValue
       throw new Error('MESSAGING_ENCRYPTION_KEY and MESSAGING_HASH_KEY are required in production');
     }
   }
+  const rpProblem = webAuthnRpIdProblem(parsed.data.WEBAUTHN_RP_ID, parsed.data.WEB_ORIGIN);
+  if (rpProblem) throw new Error(`Invalid environment configuration: ${rpProblem}`);
   const missing = missingProviderEnv(parsed.data);
   if (missing.length > 0) {
     // Names only, never values.
@@ -211,4 +213,22 @@ export function missingProviderEnv(v: AppConfigValues): string[] {
     need.push([!!v.MESSAGING_ENCRYPTION_KEY, 'MESSAGING_ENCRYPTION_KEY'], [!!v.MESSAGING_HASH_KEY, 'MESSAGING_HASH_KEY']);
   }
   return need.filter(([ok]) => !ok).map(([, name]) => name);
+}
+
+/**
+ * Passkeys only work when the relying-party id is the web origin's host or a parent domain of it
+ * (e.g. WEB_ORIGIN https://app.ngao360.co.ke with WEBAUTHN_RP_ID ngao360.co.ke). A mismatch would
+ * only surface at the first passkey sign-in, so it stops start-up instead. Returns null when valid.
+ */
+export function webAuthnRpIdProblem(rpId: string, webOrigin: string): string | null {
+  let host: string;
+  try {
+    host = new URL(webOrigin).hostname.toLowerCase();
+  } catch {
+    return 'WEB_ORIGIN is not a valid URL';
+  }
+  const rp = rpId.trim().toLowerCase();
+  if (!rp || rp.includes('/') || rp.includes(':')) return 'WEBAUTHN_RP_ID must be a bare host name, without scheme, port or path';
+  if (host === rp || host.endsWith(`.${rp}`)) return null;
+  return `WEBAUTHN_RP_ID (${rp}) must equal the WEB_ORIGIN host (${host}) or be a parent domain of it`;
 }
