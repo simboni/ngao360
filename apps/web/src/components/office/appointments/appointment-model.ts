@@ -102,3 +102,14 @@ export function followUpDue(a: Pick<AppointmentSummary, 'followUpRequired' | 'fo
   if (!a.followUpRequired || !a.followUpDate) return false;
   return Date.parse(`${a.followUpDate}T00:00:00Z`) <= Date.parse(`${today}T00:00:00Z`) + days * 86_400_000;
 }
+
+/**
+ * Why the requester-details erasure (API `POST /office/appointments/:id/contact/erase`) is not
+ * available, or null when it is. Mirrors the API: `office.appointments.manage`; already-erased
+ * details cannot be erased (or restored) again.
+ */
+export function appointmentErasureBlock(appt: Pick<AppointmentDetail, 'contactErasedAt'>, canManage: boolean): string | null {
+  if (appt.contactErasedAt) return 'The requester’s name and contact details were already erased.';
+  if (!canManage) return 'Erasing requester details needs permission to manage appointments.';
+  return null;
+}

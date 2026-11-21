@@ -29,6 +29,7 @@ import { auditActionLabel, stationLabel } from '../common/field-model';
 import { ProvenanceTag } from '../common/field-ui';
 import { useFieldCycle } from '../common/use-field-cycle';
 import { AccreditationDialog, AgentStatusDialog, TrainingDialog } from './agent-dialogs';
+import { EraseAgentData } from './erase-agent-data';
 import { SensitivePanel } from './reveal-panel';
 
 type Dialog = 'status' | 'training' | 'accreditation' | null;
@@ -121,6 +122,7 @@ export function AgentProfile({ id }: { id: string }) {
           </Card>
 
           <SensitivePanel agent={a} />
+          <EraseAgentData agent={a} onErased={() => void agent.reload()} />
 
           <Card>
             <CardHeader title="Status history" description="Append-only; every change has a reason." />

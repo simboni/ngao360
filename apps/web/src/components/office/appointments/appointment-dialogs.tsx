@@ -37,6 +37,7 @@ import { type AppointmentActionSpec, availableAppointmentActions } from './appoi
 import { AppointmentStatusBadge } from './appointment-badges';
 import { useOfficePrivacyNotices } from '../office-api';
 import { appointmentsApi } from './appointments-api';
+import { EraseAppointmentContact } from './erase-appointment-contact';
 
 export const APPOINTMENT_OFFICER_ROLES = ['CORRESPONDENCE_CLERK', 'OFFICE_ADMINISTRATOR', 'CASE_OFFICER'] as const;
 
@@ -346,6 +347,14 @@ export function AppointmentDrawer({ id, onClose, onChanged }: { id: string; onCl
               ) : null}
             </section>
           ) : null}
+          <EraseAppointmentContact
+            appt={appt}
+            onErased={(next) => {
+              setData(next);
+              setMessage('Requester details erased. The erasure is recorded in the audit log.');
+              onChanged();
+            }}
+          />
         </div>
       ) : null}
       {appt && action ? (
