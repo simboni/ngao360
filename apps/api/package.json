@@ -32,6 +32,7 @@
     "@nestjs/throttler": "6.4.0",
     "@ngao360/db": "workspace:*",
     "@ngao360/shared": "workspace:*",
+    "@simplewebauthn/server": "13.2.2",
     "argon2": "0.44.0",
     "bullmq": "5.61.0",
     "cookie-parser": "1.4.7",
