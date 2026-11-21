@@ -215,6 +215,15 @@ credentials in the database or in `tenant_integration_settings` (a DB check refu
 in-process fakes only (fake SMTP / HTTP servers, a fake clamd speaking INSTREAM with the EICAR test string); the
 build environment cannot reach the vendors.
 
+Fakes and helpers live in `apps/api/test/platform-fakes.ts` (`startFakeSmtp`, `startFakeHttp`, `startFakeClamd`,
+`markScannedClean` for suites that need CLEAN files without a scanner). Suites run with `QUEUES_ENABLED=false`, so no
+job is scheduled; call the services directly (`OutboxDispatcherService.dispatchDue`, `FileScanService.scanPending`,
+`TasksDueSoonService.runForTenant`) or `POST /platform/jobs/:key/run`. The BullMQ test uses its own queue name.
+Locally, `MALWARE_SCANNER=clamd` needs a clamd on `CLAMD_HOST:CLAMD_PORT` (Docker: `--profile scanner`); a clamd
+that is down leaves files ERROR (retried with backoff), never CLEAN. With `QUEUES_ENABLED=true` and
+`JOBS_ENABLED=true` the dev API schedules the durable jobs on the local Redis (`platform-jobs` queue); `GET
+/api/platform/jobs` shows them with their last run.
+
 ## 5. Working with the schema
 
 - Edit `packages/db/prisma/schema.prisma`, then run `pnpm db:migrate:dev --name <change>`. It uses a shadow database, so the owner role needs `CREATEDB`, which the bootstrap grants.

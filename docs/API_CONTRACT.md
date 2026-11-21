@@ -1112,7 +1112,7 @@ Drills are recorded with `isDrill: true` and labelled everywhere. The register h
 
 ## Pilot hardening conventions (§31–36)
 
-Status: **contract only** (prepared on `feat/pilot-hardening`). The schema (migration
+Status: **being built** on `feat/pilot-hardening` (as-built notes for §31 and §34 in §34.1). The schema (migration
 `20261128000000_pilot_hardening_foundation`), the shared types (`packages/shared/src/platform/`), the platform interfaces
 (`apps/api/src/platform/`), empty modules and the web route stubs exist; the endpoints below are built by four parallel
 agents (ownership in [ARCHITECTURE.md](./ARCHITECTURE.md) §16). Every rule in §1 applies. In addition:
@@ -1304,6 +1304,23 @@ Job keys (`JOB_KEYS`): `messaging.dispatch`, `files.scan_pending`, `office.reten
 `OFFICE_RETENTION_INTERVAL_MINUTES` becomes its interval), `field.station_status_record` (replaces the recorder timer),
 `tally.comparison_retry` (re-runs failed cross-stage comparisons), `tasks.due_soon`, `auth.recovery_expiry`. Each run
 writes a `job_runs` row (RUNNING → SUCCEEDED with counts / FAILED with error; frozen when finished).
+
+#### 34.1 Implementation notes (platform-infra, as built)
+
+| Topic | As built |
+| --- | --- |
+| Re-run comparison | `POST /tally/submissions/:id/stage-comparison` — `tally.discrepancy.manage` (geo via the submission), module `tally`. VERIFIED collation / declaration forms only (409 otherwise). Response `{ submissionId, differences, caseId }` (`caseId` null when equal or a case is already open). Audit: `tally.stage_comparison.completed` (also written by every successful inline comparison). The `tally.comparison_retry` job (every 5 min) re-runs VERIFIED later-stage forms verified in the last 7 days (and ≥ 2 min ago) with no completion event and no cross-stage case, as the verifier; failures are audited (`tally.stage_comparison.failed`) and retried at 1, 2, 4 … min, at most 8 times. |
+| Rescan | `POST /files/:id/rescan` scans the file now when a scanner is configured and returns the new verdict; without a scanner it answers 409 (the file stays PENDING). INFECTED / CLEAN → 409 `INVALID_TRANSITION`. |
+| Scan job | ERROR files back off 1, 2, 4 … min (max 6 h) after each error. Every upload kicks the job (BullMQ, collapsed per 5 s). Quarantined objects: `StorageService.signedUrl()` refuses 409 `FILE_NOT_CLEAN` for any storage key with an INFECTED / quarantined row (SECURITY DEFINER `ngao_storage_key_quarantined`), and the local file route answers 404 for links issued before quarantine. |
+| CLEAN consumers | Office public evidence (documents **and** photos) needs CLEAN: publishing unscanned evidence answers 409 `FILE_NOT_CLEAN` (`details.evidenceIds`), the public file route answers 404. Ledger approval counts CLEAN documents only (service and DB guard, migration `20261129000200`). |
+| Field evidence | `FIELD_EVIDENCE` images are re-encoded without EXIF / XMP / GPS by `StorageService.storeImmutable` itself (the cleaned bytes are the stored original); HEIC is refused there (400). |
+| Outbox recipients | `recipient_ref_type` also `CITIZEN_CASE` (Office acknowledgements; no user, the contact the requester gave; migration `20261129000000`). The sealed address of a citizen message is wiped at its final status (masked copy kept). Push messages go one row per active subscription (`PUSH_SUBSCRIPTION`); the outbox stores only a mask. |
+| Push endpoints | `POST /me/push/subscriptions` accepts only HTTPS endpoints of known push services (`*.fcm.googleapis.com`, `*.push.services.mozilla.com`, `*.notify.windows.com`, `*.push.apple.com`; 400 otherwise) so the server never POSTs to arbitrary URLs. An endpoint already registered by another user of the tenant is revoked for them. 409 when the server has no messaging keys. |
+| Inbound SMS | `STOP`, `STOP ALL`, `UNSUBSCRIBE`, `END`, `CANCEL`, `QUIT` (case-insensitive) opt out. A late `Buffered` report never overwrites a final one. |
+| Notification centre | External channels are queued as `notification.alert` outbox messages in the `notify()` transaction (preferences, mandatory types and the 10-minute dedupe as before; quiet hours skip non-CRITICAL). `notification_deliveries` gets `QUEUED` (or `SKIPPED` with the reason) at enqueue and `SENT` / `FAILED` / `SKIPPED` per attempt, with the channel's provider name. `GET /notifications/preferences` reports `emailVerified` / `smsConsent` from contact verifications and `availableChannels` from configured providers. |
+| Templates | `auth.invitation` and `auth.recovery_link` are e-mail only (an SMS or push enqueue throws); `addressOverride` is accepted only for invitation, recovery-link and verification templates. |
+| Rate limits | Public `POST /auth/*` (except logout): `AUTH_RATE_LIMIT_MAX` per minute per IP and per 15 minutes per hashed identity (organisation + e-mail, `challengeToken`, one-time `token`) in `RATE_LIMIT_STORE`; the portal limiter uses the same store with hashed IP keys. Production always uses Redis; store errors answer 503 `RATE_LIMITED`. |
+| Jobs | Intervals: `messaging.dispatch` `MESSAGING_DISPATCH_INTERVAL_SECONDS`; `files.scan_pending` `SCAN_INTERVAL_SECONDS` (on demand only without a scanner); `office.retention` `OFFICE_RETENTION_INTERVAL_MINUTES`; `field.station_status_record` `FIELD_WARROOM_RECORD_SECONDS`; `tally.comparison_retry` 5 min; `tasks.due_soon` hourly (owner only, once per due date, tasks due within 24 h). |
 
 ### 35. Display holds and redacted copies (`apps/api/src/modules/tally/controllers/display-holds.controller.ts`) — owner field-pin
 
