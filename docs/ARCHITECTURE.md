@@ -194,6 +194,13 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 Staging and production use separate compose projects and env files. Secrets are supplied through
 environment files that are never committed.
 
+`docker-compose.prod.yml` is the hardened production stack: the API runs with `PROCESS_ROLE=api` (HTTP only)
+behind Caddy in two replicas and a separate `worker` (`dist/worker.js`, `PROCESS_ROLE=worker`) runs every
+BullMQ processor and durable job; application containers are read-only and unprivileged; originals go to a
+MinIO bucket with Object Lock (COMPLIANCE retention set on every write by the S3 driver); clamd always runs.
+Operations, load-test results and the backup / restore drill: [OPERATIONS.md](./OPERATIONS.md); procedures:
+[RUNBOOKS.md](./RUNBOOKS.md).
+
 ## 12. NGAO360 Office
 
 Office (blueprint section 9) is a separate tenant module (`office`, default off) on the same

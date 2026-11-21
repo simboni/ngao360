@@ -281,3 +281,20 @@ export class SubmissionsController {
 - **Web pages load without styles or scripts (static chunks return 400).** An older `next start` is still holding port 3000 with a previous build. Stop it (`ss -ltnp | grep :3000`) and start it again after `pnpm build`.
 - **`IMMUTABLE_RECORD: polling stations can only change in a DRAFT registry version`.** Create a new registry version and import into it; approved versions never change.
 - **Uploaded originals.** With `STORAGE_DRIVER=local`, files are stored under `STORAGE_LOCAL_ROOT`, which is relative to the API's working directory (`apps/api/storage` under `pnpm dev`). They are content-addressed by SHA-256 and never overwritten.
+
+## 8. Load test and backup drill (local)
+
+```bash
+set -a; . ./.env; set +a
+pnpm --filter @ngao360/api build
+scripts/load/setup-load-db.sh        # ngao360_load: 55k stations and election-day data (synthetic), ~40 s
+scripts/load/run-load.sh             # private Redis :6380, API :4100 (PROCESS_ROLE=api) + worker; results in .load/
+LOAD_MIX=1 LOAD_DURATION_S=60 scripts/load/run-load.sh    # every scenario at once
+
+BACKUP_DIR=/tmp/ngao-backups scripts/ops/backup.sh
+BACKUP_DIR=/tmp/ngao-backups scripts/ops/restore-drill.sh
+```
+
+`setup-load-db.sh` refuses a database name without "load". The run uses the pre-enrolled demo TOTP secret
+and enrols load users on first sign-in (secrets kept in `.load/totp-secrets.json`, synthetic accounts only).
+Results and their interpretation: [OPERATIONS.md](./OPERATIONS.md).
