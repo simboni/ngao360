@@ -295,6 +295,7 @@ export const AUDIT_ACTIONS = {
   // Appointments and meetings
   APPOINTMENT_CREATED: 'office.appointment.created',
   APPOINTMENT_UPDATED: 'office.appointment.updated',
+  APPOINTMENT_CONTACT_ERASED: 'office.appointment.contact_erased',
   APPOINTMENT_STATUS_CHANGED: 'office.appointment.status_changed',
   MEETING_CREATED: 'office.meeting.created',
   MEETING_UPDATED: 'office.meeting.updated',
@@ -336,6 +337,7 @@ export const AUDIT_ACTIONS = {
   AGENT_STATUS_CHANGED: 'field.agent.status_changed',
   AGENT_SENSITIVE_REVEALED: 'field.agent.sensitive_revealed',
   AGENT_SENSITIVE_UPDATED: 'field.agent.sensitive_updated',
+  AGENT_SENSITIVE_ERASED: 'field.agent.sensitive_erased',
   AGENT_TRAINING_RECORDED: 'field.agent.training_recorded',
   AGENT_ACCREDITATION_RECORDED: 'field.agent.accreditation_recorded',
   AGENT_USER_LINKED: 'field.agent.user_linked',

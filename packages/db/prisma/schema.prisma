@@ -1990,6 +1990,8 @@ model Appointment {
   followUpDate           DateTime?         @map("follow_up_date") @db.Date
   followUpNotes          String?           @map("follow_up_notes")
   privacyNoticeVersion   String            @map("privacy_notice_version")
+  /// Set when the requester's name and contact details were erased (request or retention).
+  contactErasedAt        DateTime?         @map("contact_erased_at") @db.Timestamptz(3)
   linkedCaseId           String?           @map("linked_case_id") @db.Uuid
   linkedCorrespondenceId String?           @map("linked_correspondence_id") @db.Uuid
   createdById            String            @map("created_by_id") @db.Uuid
@@ -2669,6 +2671,8 @@ model AgentSensitive {
   nextOfKinName         String?  @map("next_of_kin_name")
   nextOfKinPhone        String?  @map("next_of_kin_phone")
   nextOfKinRelationship String?  @map("next_of_kin_relationship")
+  /// Set when the personal data was erased (request or field.agent_retention); stays erased.
+  erasedAt              DateTime? @map("erased_at") @db.Timestamptz(3)
   updatedById           String   @map("updated_by_id") @db.Uuid
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

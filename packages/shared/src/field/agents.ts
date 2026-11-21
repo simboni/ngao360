@@ -220,6 +220,10 @@ export const AgentSensitiveFieldSchema = z.enum(AGENT_SENSITIVE_FIELDS);
 export type AgentSensitiveField = z.infer<typeof AgentSensitiveFieldSchema>;
 
 /** POST /field/agents/:id/reveal — ask for the fields actually needed. */
+/** POST /field/agents/:id/sensitive/erase: erase the personal data (allowed for WITHDRAWN agents). */
+export const EraseAgentSensitiveSchema = z.object({ reason: ReasonSchema });
+export type EraseAgentSensitive = z.infer<typeof EraseAgentSensitiveSchema>;
+
 export const RevealAgentSensitiveSchema = z.object({
   fields: z.array(AgentSensitiveFieldSchema).min(1),
   reason: ReasonSchema,

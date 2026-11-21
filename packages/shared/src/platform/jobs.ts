@@ -21,6 +21,8 @@ export const JOB_KEYS = {
   TASKS_DUE_SOON: 'tasks.due_soon',
   /** Expire account recovery requests and delete spent WebAuthn challenges (auth-recovery). */
   AUTH_RECOVERY_EXPIRY: 'auth.recovery_expiry',
+  /** Erase personal data of agents withdrawn longer than the field retention period. */
+  FIELD_AGENT_RETENTION: 'field.agent_retention',
 } as const;
 export type JobKey = (typeof JOB_KEYS)[keyof typeof JOB_KEYS];
 export const JobKeySchema = z.enum(Object.values(JOB_KEYS) as [JobKey, ...JobKey[]]);

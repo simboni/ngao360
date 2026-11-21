@@ -103,6 +103,17 @@ export class TenantModulesService {
       .withTenant(auth.tenantId, async (tx) => {
         const before = await tx.tenantModule.findFirst({ where: { moduleKey: key } });
         let config = this.configFor(key, dto.config ?? before?.config);
+        if (key === 'office') {
+          const office = OfficeModuleConfigSchema.parse(config);
+          if (office.publicPortalEnabled || office.publicProjectsEnabled) {
+            const t = await tx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId }, select: { historicalDemo: true } });
+            if (t.historicalDemo) {
+              throw AppException.validation('A historical demo organisation cannot publish a public portal or public projects', [
+                { path: ['config', 'publicPortalEnabled'], message: 'Not allowed for a historical demo' },
+              ]);
+            }
+          }
+        }
         if (key === 'office' && dto.enabled) {
           const office = OfficeModuleConfigSchema.parse(config);
           if (!office.portalServiceUserId) {

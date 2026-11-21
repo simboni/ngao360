@@ -33,6 +33,7 @@ import {
   assertUpdated,
   auditEventsFor,
   changedFields,
+  withoutFreeText,
   immutableRecord,
   iso,
   isoDate,
@@ -266,8 +267,8 @@ export class CorrespondenceService {
           action: AUDIT_ACTIONS.CORRESPONDENCE_UPDATED,
           entityType: ENTITY,
           entityId: id,
-          before: diff.before,
-          after: diff.after,
+          // Names, subject and summary may hold personal details: audited by field name only.
+          ...withoutFreeText(diff, ['subject', 'senderName', 'senderOrganisation', 'recipientName', 'recipientOrganisation', 'externalReference', 'summary']),
           reason: dto.reason ?? null,
         },
         tx,

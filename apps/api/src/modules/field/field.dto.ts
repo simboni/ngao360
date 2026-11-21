@@ -4,6 +4,7 @@
  * §15–22). Shared by the field sub-modules so they never define ad-hoc shapes.
  */
 import {
+  EraseAgentSensitiveSchema,
   BulkCreateDeploymentSchema,
   IdParamSchema,
   AddIncidentEventSchema,
@@ -70,6 +71,7 @@ export class UpdateAgentDto extends createZodDto(UpdateAgentSchema) {}
 export class AgentStatusChangeDto extends createZodDto(AgentStatusChangeSchema) {}
 export class UpdateAgentSensitiveDto extends createZodDto(UpdateAgentSensitiveSchema) {}
 export class RevealAgentSensitiveDto extends createZodDto(RevealAgentSensitiveSchema) {}
+export class EraseAgentSensitiveDto extends createZodDto(EraseAgentSensitiveSchema) {}
 export class RecordTrainingDto extends createZodDto(RecordTrainingSchema) {}
 export class UpdateTrainingDto extends createZodDto(UpdateTrainingSchema) {}
 export class SetAccreditationDto extends createZodDto(SetAccreditationSchema) {}

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { nextReference, type Prisma, type TenantTx } from '@ngao360/db';
 import {
+  type EraseAgentSensitive,
   ACTIVE_DEPLOYMENT_STATUSES,
   AGENT_STATUS_TRANSITIONS,
   AUDIT_ACTIONS,
@@ -469,12 +470,27 @@ export class AgentsService {
     });
   }
 
+  /**
+   * Erase the agent's national ID, phone, M-Pesa and next-of-kin details (data-subject request or
+   * end of the retention period). Allowed for WITHDRAWN agents; audited with field names only;
+   * erased data cannot be restored (database trigger).
+   */
+  eraseSensitive(auth: AuthContext, id: string, dto: EraseAgentSensitive): Promise<AgentDetail> {
+    return this.prisma.tenantTx(async (tx) => {
+      const a = await this.loadAgent(tx, id);
+      if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot erase your own agent record’s personal data');
+      await eraseAgentSensitiveInTx(tx, this.audit, { tenantId: auth.tenantId, actorId: auth.userId, agentId: id, reason: dto.reason, trigger: 'REQUEST' });
+      return this.detailInTx(tx, auth, id);
+    });
+  }
+
   updateSensitive(auth: AuthContext, id: string, dto: UpdateAgentSensitive): Promise<AgentDetail> {
     return this.prisma.tenantTx(async (tx) => {
       const a = await this.loadAgent(tx, id);
       if (await this.isOwnRecord(tx, a, auth.userId)) throw AppException.separationOfDuties('You cannot change your own agent record’s personal data');
       if (a.status === 'WITHDRAWN') throw immutableRecord('A withdrawn agent record cannot be edited');
       const current = await tx.agentSensitive.findUnique({ where: { agentId: id } });
+      if (current?.erasedAt) throw immutableRecord('This agent’s personal data was erased and cannot be re-entered on this record');
       const keys = ['nationalIdNumber', 'phone', 'mpesaNumber', 'nextOfKinName', 'nextOfKinPhone', 'nextOfKinRelationship'] as const;
       const patch: Record<string, string | null> = {};
       const changed: string[] = [];
@@ -750,4 +766,47 @@ export class AgentsService {
       return { fileId: f.id, sha256: f.sha256, mimeType: f.mimeType, sizeBytes: Number(f.sizeBytes), duplicate };
     });
   }
+}
+
+/**
+ * Erase an agent's sensitive personal data in the caller's transaction (request or retention).
+ * Returns false when there was nothing left to erase.
+ */
+export async function eraseAgentSensitiveInTx(
+  tx: TenantTx,
+  audit: AuditService,
+  input: { tenantId: string; actorId: string | null; agentId: string; reason: string; trigger: 'REQUEST' | 'RETENTION' },
+): Promise<boolean> {
+  const now = new Date();
+  const current = await tx.agentSensitive.findUnique({ where: { agentId: input.agentId }, select: { erasedAt: true } });
+  if (current?.erasedAt) return false;
+  const cleared = {
+    nationalIdNumber: null,
+    phone: null,
+    mpesaNumber: null,
+    nextOfKinName: null,
+    nextOfKinPhone: null,
+    nextOfKinRelationship: null,
+    erasedAt: now,
+  };
+  if (current) {
+    await tx.agentSensitive.update({ where: { agentId: input.agentId }, data: { ...cleared, ...(input.actorId ? { updatedById: input.actorId } : {}) } });
+  }
+  await tx.agent.update({
+    where: { id: input.agentId },
+    data: { phoneMasked: null, nationalIdMasked: null, hasMpesaNumber: false, hasNextOfKin: false, version: { increment: 1 } },
+  });
+  await audit.record(
+    {
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      action: AUDIT_ACTIONS.AGENT_SENSITIVE_ERASED,
+      entityType: FIELD_ENTITY.AGENT,
+      entityId: input.agentId,
+      after: { fields: ['nationalIdNumber', 'phone', 'mpesaNumber', 'nextOfKin'], erasedAt: now.toISOString(), trigger: input.trigger },
+      reason: input.reason,
+    },
+    tx,
+  );
+  return true;
 }

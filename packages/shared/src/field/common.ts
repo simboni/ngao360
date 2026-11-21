@@ -46,6 +46,11 @@ export const FieldModuleConfigSchema = z.object({
    * `STALE` so a lost phone cannot replay old reports days later.
    */
   offlineMaxAgeHours: z.number().int().min(1).max(24 * 14).default(72),
+  /**
+   * Months after an agent is WITHDRAWN before the `field.agent_retention` job erases their
+   * national ID, phone, M-Pesa and next-of-kin details (the agent record itself is kept).
+   */
+  agentSensitiveRetentionMonths: z.number().int().min(1).max(120).default(12),
 });
 export type FieldModuleConfig = z.infer<typeof FieldModuleConfigSchema>;
 

@@ -43,6 +43,23 @@ d('Postgres RLS and integrity guards', () => {
     expect(rows.map((r) => r.tenantId)).toEqual([tA]);
   });
 
+  it('tenants: a tenant transaction sees and updates only its own tenant, never its identity columns', async () => {
+    // Inside tenant A: tenant B is invisible and cannot be updated.
+    const seen = await withTenant(app, tA, (tx) => tx.tenant.findMany({ where: { id: { in: [tA, tB] } }, select: { id: true } }));
+    expect(seen.map((t) => t.id)).toEqual([tA]);
+    const other = await withTenant(app, tA, (tx) => tx.tenant.updateMany({ where: { id: tB }, data: { displayName: 'hijacked' } }));
+    expect(other.count).toBe(0);
+    // Own settings can change; type, status, slug and the demo flag cannot (column grants).
+    await withTenant(app, tA, (tx) => tx.tenant.update({ where: { id: tA }, data: { displayName: 'Synthetic A' } }));
+    await expect(withTenant(app, tA, (tx) => tx.tenant.update({ where: { id: tA }, data: { type: 'PLATFORM' } }))).rejects.toThrow(/permission denied/);
+    await expect(withTenant(app, tA, (tx) => tx.tenant.update({ where: { id: tA }, data: { status: 'ARCHIVED' } }))).rejects.toThrow(/permission denied/);
+    await expect(withTenant(app, tA, (tx) => tx.tenant.update({ where: { id: tA }, data: { slug: 'stolen-slug' } }))).rejects.toThrow(/permission denied/);
+    expect((await owner.tenant.findUniqueOrThrow({ where: { id: tA } })).type).toBe('CAMPAIGN');
+    // Without a tenant context (sign-in by organisation code, jobs) rows are readable but not writable.
+    expect(await app.tenant.count({ where: { id: { in: [tA, tB] } } })).toBe(2);
+    expect((await app.tenant.updateMany({ where: { id: tB }, data: { displayName: 'no context' } })).count).toBe(0);
+  });
+
   it('rejects writes into another tenant', async () => {
     await expect(
       withTenant(app, tA, (tx) =>

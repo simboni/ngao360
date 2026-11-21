@@ -248,6 +248,29 @@ export function changedFields<T extends Record<string, unknown>>(
   return { before: b, after: a, keys: Object.keys(a) };
 }
 
+/**
+ * Drop personal free-text values from an audit diff, keeping only the names of the changed fields
+ * (`changedFreeTextFields`). The audit log is append-only, so a value written there could never
+ * be removed by redaction, erasure or retention; the values stay only in the record itself.
+ */
+export function withoutFreeText(
+  diff: { before: Record<string, unknown>; after: Record<string, unknown> },
+  fields: readonly string[],
+): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const before = { ...diff.before };
+  const after = { ...diff.after };
+  const changed: string[] = [];
+  for (const f of fields) {
+    if (f in after || f in before) {
+      delete before[f];
+      delete after[f];
+      changed.push(f);
+    }
+  }
+  if (changed.length > 0) after.changedFreeTextFields = changed;
+  return { before, after };
+}
+
 /** Pagination arithmetic shared by list endpoints. */
 export function paging(q: { page: number; pageSize: number }): { skip: number; take: number } {
   return { skip: (q.page - 1) * q.pageSize, take: q.pageSize };

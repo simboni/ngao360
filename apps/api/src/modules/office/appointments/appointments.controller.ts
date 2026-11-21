@@ -2,12 +2,13 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nes
 import type { AppointmentDetail, AppointmentSummary, Paginated } from '@ngao360/shared';
 import type { AuthContext } from '../../../auth/auth.types';
 import { CurrentAuth } from '../../../common/decorators/auth.decorators';
-import { RequirePermission } from '../../../rbac/require-permission.decorator';
+import { RequirePermission, RequireReauth } from '../../../rbac/require-permission.decorator';
 import { RequireModule } from '../../../tenant-modules/require-module.decorator';
 import {
   AppointmentQueryDto,
   AppointmentTransitionDto,
   CreateAppointmentDto,
+  EraseAppointmentContactDto,
   OfficeIdParamDto,
   UpdateAppointmentDto,
 } from '../office.dto';
@@ -48,5 +49,14 @@ export class AppointmentsController {
   @RequirePermission('office.appointments.manage')
   transition(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto, @Body() body: AppointmentTransitionDto): Promise<AppointmentDetail> {
     return this.appointments.transition(auth, p.id, body);
+  }
+
+  /** Erase the requester's name and contact details (data-subject request). */
+  @Post(':id/contact/erase')
+  @HttpCode(200)
+  @RequirePermission('office.appointments.manage')
+  @RequireReauth()
+  eraseContact(@CurrentAuth() auth: AuthContext, @Param() p: OfficeIdParamDto, @Body() body: EraseAppointmentContactDto): Promise<AppointmentDetail> {
+    return this.appointments.eraseContact(auth, p.id, body);
   }
 }

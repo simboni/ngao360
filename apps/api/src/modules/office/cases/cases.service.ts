@@ -61,6 +61,7 @@ import {
   auditEventsFor,
   callerCovers,
   changedFields,
+  withoutFreeText,
   immutableRecord,
   isoDate,
   issueOfficeFileUrl,
@@ -105,6 +106,9 @@ interface NewEvent {
   actorType?: CaseEventActorType;
 }
 
+/** Free-text case fields that may hold personal details: audited by name only (redaction must be able to remove them). */
+const CASE_FREE_TEXT_FIELDS = ['title', 'locationDescription'] as const;
+const REFERRAL_FREE_TEXT_FIELDS = ['institutionReference', 'responseSummary'] as const;
 /** Sensitivity levels visible only with `office.cases.confidential` (as for correspondence). */
 const RESTRICTED: readonly SensitivityLevel[] = ['CONFIDENTIAL', 'HIGHLY_RESTRICTED'];
 const RESTRICTED_WHERE: Prisma.CitizenCaseWhereInput = { sensitivity: { notIn: [...RESTRICTED] } };
@@ -367,7 +371,7 @@ export class CasesService {
       const result = await tx.citizenCase.updateMany({ where: { id, version: dto.expectedVersion }, data: { ...patch, version: { increment: 1 } } });
       assertUpdated(result, 'case');
       await this.audit.record(
-        { tenantId: auth.tenantId, action: AUDIT_ACTIONS.CASE_UPDATED, entityType: CASE_ENTITY, entityId: id, before: diff.before, after: diff.after, reason: dto.reason },
+        { tenantId: auth.tenantId, action: AUDIT_ACTIONS.CASE_UPDATED, entityType: CASE_ENTITY, entityId: id, ...withoutFreeText(diff, CASE_FREE_TEXT_FIELDS), reason: dto.reason },
         tx,
       );
       return this.loadDetail(tx, auth, id);
@@ -764,8 +768,7 @@ export class CasesService {
           action: AUDIT_ACTIONS.CASE_REFERRAL_UPDATED,
           entityType: 'CaseReferral',
           entityId: referralId,
-          before: diff.before,
-          after: { ...diff.after, caseId: id },
+          ...((r) => ({ before: r.before, after: { ...r.after, caseId: id } }))(withoutFreeText(diff, REFERRAL_FREE_TEXT_FIELDS)),
         },
         tx,
       );

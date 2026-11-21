@@ -8,11 +8,13 @@ import { TenantModulesService } from '../../../tenant-modules/tenant-modules.ser
 import { addMonths, nairobiToday, toDbDate } from '../common';
 import { CASE_ENTITY } from './case-support';
 import { CasesService } from './cases.service';
+import { eraseAppointmentContactInTx } from '../appointments/appointments.service';
 
 export interface RetentionRunResult {
   tenants: number;
   contactsErased: number;
   casesRedacted: number;
+  appointmentContactsErased: number;
 }
 
 /**
@@ -24,6 +26,15 @@ export interface RetentionRunResult {
  * - closed cases are redacted `caseRetentionMonths` after closure: the
  *   description, location text, requester messages and photos are removed and
  *   an anonymised record stays.
+ *
+ * - appointment requester names and contact details are erased
+ *   `contactRetentionMonths` after the appointment ended (declined, cancelled,
+ *   completed or no-show).
+ *
+ * Retention runs for EVERY tenant, whatever its status (active, suspended,
+ * archived) and whether or not the Office module is still switched on: the
+ * periods the privacy notice promised keep applying to data already collected.
+ * The periods come from the stored office configuration (defaults when none).
  *
  * Runs as the durable `office.retention` job (BullMQ repeatable job with a
  * `job_runs` record per run) every OFFICE_RETENTION_INTERVAL_MINUTES (0 = on
@@ -49,32 +60,37 @@ export class CaseRetentionService implements OnModuleInit {
       everyMs: minutes > 0 ? minutes * 60_000 : 0,
       handler: async () => {
         const r = await this.runAll();
-        if (r.contactsErased || r.casesRedacted) this.logger.log(`Office retention: ${r.contactsErased} contacts erased, ${r.casesRedacted} cases redacted`);
+        if (r.contactsErased || r.casesRedacted || r.appointmentContactsErased) {
+          this.logger.log(`Office retention: ${r.contactsErased} contacts erased, ${r.casesRedacted} cases redacted, ${r.appointmentContactsErased} appointment contacts erased`);
+        }
         return { ...r };
       },
     });
   }
 
-  /** One pass over every active tenant with the Office module on. */
+  /** One pass over every tenant (any status, Office module on or off). */
   async runAll(now = new Date()): Promise<RetentionRunResult> {
-    const tenants = await this.prisma.client.tenant.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
-    const total: RetentionRunResult = { tenants: 0, contactsErased: 0, casesRedacted: 0 };
+    const tenants = await this.prisma.client.tenant.findMany({ select: { id: true } });
+    const total: RetentionRunResult = { tenants: 0, contactsErased: 0, casesRedacted: 0, appointmentContactsErased: 0 };
     for (const t of tenants) {
       const r = await this.runForTenant(t.id, now);
       if (r === null) continue;
       total.tenants += 1;
       total.contactsErased += r.contactsErased;
       total.casesRedacted += r.casesRedacted;
+      total.appointmentContactsErased += r.appointmentContactsErased;
     }
     return total;
   }
 
-  /** Returns null when the Office module is off for the tenant. */
+  /** Returns null when the tenant holds no Office data. */
   runForTenant(tenantId: string, now = new Date()): Promise<Omit<RetentionRunResult, 'tenants'> | null> {
     return this.prisma.withTenant(
       tenantId,
       async (tx) => {
-        if (!(await this.modules.isEnabled(tx, 'office'))) return null;
+        // Deliberately no module or tenant-status check (see class comment).
+        const [cases, appointments] = await Promise.all([tx.citizenCase.count(), tx.appointment.count()]);
+        if (cases === 0 && appointments === 0) return null;
         const config = await this.modules.officeConfig(tx);
         const today = toDbDate(nairobiToday(now));
 
@@ -118,7 +134,32 @@ export class CaseRetentionService implements OnModuleInit {
           );
           if (done) casesRedacted += 1;
         }
-        return { contactsErased: dueContacts.length, casesRedacted };
+        const appointmentCutoff = addMonths(now, -config.contactRetentionMonths);
+        const dueAppointments = await tx.appointment.findMany({
+          where: {
+            contactErasedAt: null,
+            status: { in: ['DECLINED', 'CANCELLED', 'COMPLETED', 'NO_SHOW'] },
+            OR: [
+              { confirmedEnd: { lt: appointmentCutoff } },
+              { confirmedEnd: null, confirmedStart: { lt: appointmentCutoff } },
+              { confirmedEnd: null, confirmedStart: null, updatedAt: { lt: appointmentCutoff } },
+            ],
+          },
+          select: { id: true },
+          take: 500,
+        });
+        let appointmentContactsErased = 0;
+        for (const a of dueAppointments) {
+          const done = await eraseAppointmentContactInTx(tx, this.audit, {
+            tenantId,
+            actorId: null,
+            appointmentId: a.id,
+            reason: `Contact retention period (${config.contactRetentionMonths} months after the appointment) ended`,
+            trigger: 'RETENTION',
+          });
+          if (done) appointmentContactsErased += 1;
+        }
+        return { contactsErased: dueContacts.length, casesRedacted, appointmentContactsErased };
       },
       { timeout: 120_000 },
     );

@@ -1,4 +1,5 @@
 import {
+  EraseAppointmentContactSchema,
   AddCaseEventSchema,
   AppointmentQuerySchema,
   AppointmentTransitionSchema,
@@ -74,6 +75,7 @@ export class AppointmentQueryDto extends createZodDto(AppointmentQuerySchema) {}
 export class CreateAppointmentDto extends createZodDto(CreateAppointmentSchema) {}
 export class UpdateAppointmentDto extends createZodDto(UpdateAppointmentSchema) {}
 export class AppointmentTransitionDto extends createZodDto(AppointmentTransitionSchema) {}
+export class EraseAppointmentContactDto extends createZodDto(EraseAppointmentContactSchema) {}
 export class MeetingQueryDto extends createZodDto(MeetingQuerySchema) {}
 export class CreateMeetingDto extends createZodDto(CreateMeetingSchema) {}
 export class UpdateMeetingDto extends createZodDto(UpdateMeetingSchema) {}

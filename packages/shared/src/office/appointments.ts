@@ -49,6 +49,8 @@ export const AppointmentDetailSchema = AppointmentSummarySchema.extend({
   followUpNotes: z.string().nullable(),
   /** Version of the appointment privacy notice shown or read to the requester. */
   privacyNoticeVersion: z.string(),
+  /** Set once the requester's name and contact details were erased (request or retention). */
+  contactErasedAt: IsoDateTimeSchema.nullable(),
   linkedCase: RecordRefSchema.nullable(),
   linkedCorrespondence: RecordRefSchema.nullable(),
   createdBy: UserRefSchema,
@@ -56,6 +58,10 @@ export const AppointmentDetailSchema = AppointmentSummarySchema.extend({
   version: z.number().int(),
 });
 export type AppointmentDetail = z.infer<typeof AppointmentDetailSchema>;
+
+/** POST /office/appointments/:id/contact/erase (data-subject request; re-authentication). */
+export const EraseAppointmentContactSchema = z.object({ reason: ReasonSchema });
+export type EraseAppointmentContact = z.infer<typeof EraseAppointmentContactSchema>;
 
 const AppointmentBaseSchema = z.object({
   source: AppointmentSourceSchema,

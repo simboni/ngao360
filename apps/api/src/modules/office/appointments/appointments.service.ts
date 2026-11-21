@@ -9,6 +9,7 @@ import {
   type AppointmentTransition,
   CURRENT_APPOINTMENT_PRIVACY_NOTICE_VERSION,
   type CreateAppointment,
+  type EraseAppointmentContact,
   type Paginated,
   type UpdateAppointment,
   canTransitionAppointment,
@@ -36,6 +37,48 @@ import { OFFICE_REFERENCE_PREFIX } from '../office.constants';
 const ENTITY = 'Appointment';
 const CLOSED: readonly AppointmentStatus[] = ['DECLINED', 'CANCELLED', 'COMPLETED'];
 const FOLLOW_UP_KEYS = new Set(['followUpRequired', 'followUpDate', 'followUpNotes']);
+const CONTACT_KEYS = new Set(['requesterName', 'requesterOrganisation', 'contactPhone', 'contactEmail', 'contactPreference']);
+/** Replaces an erased requester name (the column is required). */
+export const ERASED_REQUESTER_NAME = '[erased]';
+
+/**
+ * Erase an appointment requester's name and contact details in the caller's transaction, audited
+ * (field names only). Used by the data-subject endpoint and the office.retention job. Returns
+ * false when already erased. A database trigger keeps erased details from being restored.
+ */
+export async function eraseAppointmentContactInTx(
+  tx: TenantTx,
+  audit: AuditService,
+  input: { tenantId: string; actorId: string | null; appointmentId: string; reason: string; trigger: 'REQUEST' | 'RETENTION' },
+): Promise<boolean> {
+  const now = new Date();
+  const r = await tx.appointment.updateMany({
+    where: { id: input.appointmentId, contactErasedAt: null },
+    data: {
+      requesterName: ERASED_REQUESTER_NAME,
+      requesterOrganisation: null,
+      contactPhone: null,
+      contactEmail: null,
+      contactPreference: 'NONE',
+      contactErasedAt: now,
+      version: { increment: 1 },
+    },
+  });
+  if (r.count !== 1) return false;
+  await audit.record(
+    {
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      action: AUDIT_ACTIONS.APPOINTMENT_CONTACT_ERASED,
+      entityType: ENTITY,
+      entityId: input.appointmentId,
+      after: { erasedAt: now.toISOString(), fields: [...CONTACT_KEYS], trigger: input.trigger },
+      reason: input.reason,
+    },
+    tx,
+  );
+  return true;
+}
 
 const SUMMARY_INCLUDE = { assignedTo: USER_REF } satisfies Prisma.AppointmentInclude;
 const DETAIL_INCLUDE = {
@@ -200,6 +243,9 @@ export class AppointmentsService {
       };
       const diff = changedFields(row as unknown as Record<string, unknown>, patch as Record<string, unknown>);
       if (diff.keys.length === 0) return this.loadDetail(tx, auth, id);
+      if (row.contactErasedAt && diff.keys.some((k) => CONTACT_KEYS.has(k))) {
+        throw immutableRecord('The requester details of this appointment were erased and cannot be changed');
+      }
       if (CLOSED.includes(row.status) && diff.keys.some((k) => !FOLLOW_UP_KEYS.has(k))) {
         throw immutableRecord('A declined, cancelled or completed appointment can only change its follow-up');
       }
@@ -273,6 +319,18 @@ export class AppointmentsService {
     });
   }
 
+  /** Data-subject request: erase the requester's name and contact details (re-authentication). */
+  eraseContact(auth: AuthContext, id: string, dto: EraseAppointmentContact): Promise<AppointmentDetail> {
+    return this.prisma.tenantTx(async (tx) => {
+      const row = await tx.appointment.findUnique({ where: { id }, select: { id: true, contactErasedAt: true } });
+      if (!row) throw AppException.notFound('Appointment not found');
+      if (!row.contactErasedAt) {
+        await eraseAppointmentContactInTx(tx, this.audit, { tenantId: auth.tenantId, actorId: auth.userId, appointmentId: id, reason: dto.reason, trigger: 'REQUEST' });
+      }
+      return this.loadDetail(tx, auth, id);
+    });
+  }
+
   /* -------------------------------- Internals -------------------------------- */
 
   private async assertLinks(
@@ -335,6 +393,7 @@ export class AppointmentsService {
       outcomeRecordedAt: iso(r.outcomeRecordedAt),
       followUpNotes: r.followUpNotes,
       privacyNoticeVersion: r.privacyNoticeVersion,
+      contactErasedAt: iso(r.contactErasedAt),
       linkedCase: r.linkedCase,
       linkedCorrespondence: corr && corrVisible ? { id: corr.id, reference: corr.reference } : null,
       createdBy: r.createdBy,

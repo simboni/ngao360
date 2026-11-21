@@ -47,9 +47,11 @@ export class PublicPortalService {
   async resolve(tenantSlug: string, feature: 'portal' | 'projects' = 'portal'): Promise<PortalTenant> {
     const tenant = await this.prisma.client.tenant.findUnique({
       where: { slug: tenantSlug.toLowerCase() },
-      select: { id: true, slug: true, name: true, displayName: true, status: true },
+      select: { id: true, slug: true, name: true, displayName: true, status: true, historicalDemo: true },
     });
-    if (!tenant || tenant.status !== 'ACTIVE') throw AppException.notFound();
+    // A historical-demo organisation never has public pages: they could not carry the
+    // "HISTORICAL DEMO / SIMULATED DATA" label that every screen of it must show.
+    if (!tenant || tenant.status !== 'ACTIVE' || tenant.historicalDemo) throw AppException.notFound();
     const config = await this.prisma.withTenant(tenant.id, async (tx) => {
       if (!(await this.modules.isEnabled(tx, 'office'))) return null;
       return this.modules.officeConfig(tx);

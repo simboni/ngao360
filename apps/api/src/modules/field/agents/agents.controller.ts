@@ -24,6 +24,7 @@ import {
   LinkAgentUserDto,
   RecordTrainingDto,
   RevealAgentSensitiveDto,
+  EraseAgentSensitiveDto,
   SetAccreditationDto,
   TrainingParamDto,
   UpdateAgentDto,
@@ -90,6 +91,16 @@ export class AgentsController {
   @RequireReauth()
   updateSensitive(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto, @Body() body: UpdateAgentSensitiveDto): Promise<AgentDetail> {
     return this.service.updateSensitive(auth, p.id, body);
+  }
+
+  /** Erase the personal data (data-subject request); also for WITHDRAWN agents. */
+  @Post(':id/sensitive/erase')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @RequirePermission('field.agents.reveal_sensitive', { geo: AGENT_PERSONAL })
+  @RequireReauth()
+  eraseSensitive(@CurrentAuth() auth: AuthContext, @Param() p: FieldIdParamDto, @Body() body: EraseAgentSensitiveDto): Promise<AgentDetail> {
+    return this.service.eraseSensitive(auth, p.id, body);
   }
 
   @Post(':id/trainings')
