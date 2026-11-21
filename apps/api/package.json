@@ -16,6 +16,7 @@
     "test:rehearsal:office": "dotenv -e ../../.env -- jest test/office-governor-rehearsal",
     "test:rehearsal:field": "dotenv -e ../../.env -- jest test/election-day-rehearsal",
     "test:rehearsal:campaign": "dotenv -e ../../.env -- jest test/campaign-rehearsal",
+    "test:rehearsal:pilot": "dotenv -e ../../.env -- jest test/pilot-readiness-rehearsal",
     "demo:2022-bungoma": "dotenv -e ../../.env -- node dist/demo-2022/cli/demo-2022-bungoma.js",
     "demo:import-34a": "dotenv -e ../../.env -- node dist/demo-2022/cli/import-34a.js",
     "demo:redact-34a": "dotenv -e ../../.env -- node dist/demo-2022/cli/redact-34a.js",

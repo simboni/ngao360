@@ -58,6 +58,30 @@ async function signIn(page, email, { totp = false } = {}) {
   await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20000 });
 }
 
+const DEVICE_PIN = '583920'; // synthetic, non-sequential
+
+/**
+ * The field app asks for a device PIN before it opens the offline queue (contract §36): set one
+ * on the first sign-in, and enter it after every full page load. Navigation by link keeps it open.
+ */
+async function passPinGate(page) {
+  const set = page.getByRole('heading', { name: 'Set a PIN for this phone' });
+  const enter = page.getByRole('heading', { name: 'Enter your PIN' });
+  const home = page.getByText(/AGT-2027-|station/i).first();
+  await Promise.race([set.waitFor({ timeout: 20000 }), enter.waitFor({ timeout: 20000 }), home.waitFor({ timeout: 20000 })]).catch(() => {});
+  if (await set.isVisible().catch(() => false)) {
+    await page.getByLabel('New PIN', { exact: true }).fill(DEVICE_PIN);
+    await page.getByLabel('Repeat the PIN').fill(DEVICE_PIN);
+    await page.getByRole('button', { name: 'Set PIN' }).click();
+    await set.waitFor({ state: 'detached', timeout: 20000 });
+    console.log('  ok  device PIN set for the offline queue');
+  } else if (await enter.isVisible().catch(() => false)) {
+    await page.getByLabel('PIN', { exact: true }).fill(DEVICE_PIN);
+    await page.getByRole('button', { name: 'Open' }).click();
+    await enter.waitFor({ state: 'detached', timeout: 20000 });
+  }
+}
+
 function watchConsole(page, label, errors) {
   page.on('pageerror', (e) => errors.push(`${label}: ${e.message}`));
   page.on('console', (m) => {
@@ -129,12 +153,14 @@ function watchConsole(page, label, errors) {
     watchConsole(mp, 'mobile', errors);
     await signIn(mp, 'agent1@demo.example.org');
     await mp.waitForURL(/\/m(\/|$)/, { timeout: 20000 });
+    await passPinGate(mp);
     await mp.getByText(/AGT-2027-|station/i).first().waitFor({ timeout: 20000 });
     await mp.waitForLoadState('networkidle');
     await mp.waitForTimeout(500);
     await shot(mp, '05-mobile-home');
 
     await mp.goto(`${WEB}/m/incident`);
+    await passPinGate(mp);
     await mp.locator('#inc-desc').waitFor({ timeout: 20000 });
     await mp.waitForLoadState('networkidle');
     await mp.locator('#inc-category').selectOption('MATERIALS');
