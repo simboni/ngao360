@@ -151,11 +151,30 @@ const TOTALS_CACHE_MAX = 500;
  * with one set-based query (about 55k stations in 2027) and cached briefly per
  * tenant, cycle and scope (`asOf` says when they were computed).
  */
+interface StationSummary {
+  reported: number;
+  statusCounts: Map<OperationalStatus, number>;
+  notAssigned: number;
+  checkedInOrOut: number;
+  tallyExpected: number;
+  tallyFormsReceived: number;
+  tallyVerified: number;
+  tallyFlagged: number;
+}
+
 @Injectable()
 export class WarRoomService {
   private readonly logger = new Logger(WarRoomService.name);
   /** One org-wide snapshot per tenant, cycle and registry (bounded, expired entries evicted on write). */
   private readonly cache = new Map<string, Snapshot>();
+  /** Tally intake counts of the overview, per scope and area (same lifetime as the snapshot). */
+  private readonly tallyPanelCache = new Map<string, { at: Date; value: { awaitingCapture: number; awaitingSecondReview: number; openDiscrepancies: number; lastSnapshotAt: Date | null } }>();
+  /** One-pass counts per derived views array (see summary()). */
+  private readonly summaryMemo = new WeakMap<StationState[], StationSummary>();
+  /** Derived per-caller station views of a snapshot's station array (see views()). */
+  private readonly viewMemo = new WeakMap<StationComponents[], Map<string, StationState[]>>();
+  /** Snapshot computations in progress, by cache key (single flight). */
+  private readonly inflight = new Map<string, Promise<Snapshot>>();
   /** Deployment totals per scope and area (small objects; bounded, expired entries evicted on write). */
   private readonly totalsCache = new Map<string, { at: Date; totals: DeploymentTotals }>();
   private readonly ttlMs: number;
@@ -298,14 +317,34 @@ export class WarRoomService {
       this.cache.set(key, hit);
       return hit;
     }
-    const at = new Date();
-    const stations = await withHashJoins(tx, () => this.readStations(tx, cycle, expectedStationSql(registryId)));
-    const snap = { at, stations };
-    if (this.ttlMs > 0) {
-      WarRoomService.evictExpired(this.cache, this.ttlMs, SNAPSHOT_CACHE_MAX);
-      this.cache.set(key, snap);
+    // Single flight: when the snapshot expires under load, concurrent callers wait for the one
+    // computation already running instead of each running the 55k-station query (load test: p95
+    // 5.7 s -> see docs/OPERATIONS.md). If that computation fails, the caller computes with its own
+    // transaction. The snapshot is per tenant (RLS-bound transaction of the same tenant).
+    const running = this.inflight.get(key);
+    if (running) {
+      try {
+        return await running;
+      } catch {
+        // fall through: compute with this caller's transaction
+      }
     }
-    return snap;
+    const work = (async () => {
+      const at = new Date();
+      const stations = await withHashJoins(tx, () => this.readStations(tx, cycle, expectedStationSql(registryId)));
+      const snap = { at, stations };
+      if (this.ttlMs > 0) {
+        WarRoomService.evictExpired(this.cache, this.ttlMs, SNAPSHOT_CACHE_MAX);
+        this.cache.set(key, snap);
+      }
+      return snap;
+    })();
+    if (this.ttlMs > 0) this.inflight.set(key, work);
+    try {
+      return await work;
+    } finally {
+      if (this.inflight.get(key) === work) this.inflight.delete(key);
+    }
   }
 
   /** Deployment totals for a scope and area (cached briefly; tiny entries). */
@@ -334,6 +373,29 @@ export class WarRoomService {
     tally: PermissionScope | null,
     filter: { unitId?: string | null; area?: { countyId?: string; constituencyId?: string; wardId?: string } },
   ): StationState[] {
+    // The caller's view depends only on the (immutable, cached) snapshot array, the two scopes and the
+    // area filter, so it is memoised per snapshot: under load each request re-derived 55k station
+    // states (CPU and garbage collection dominated the overview, p50 ~0.9 s). Entries go with the snapshot.
+    const key = JSON.stringify([this.scopeKey(scope), tally ? this.scopeKey(tally) : null, filter.unitId ?? null, filter.area ?? null]);
+    let memo = this.viewMemo.get(stations);
+    const hit = memo?.get(key);
+    if (hit) return hit;
+    const out = this.deriveViews(stations, scope, tally, filter);
+    if (!memo) {
+      memo = new Map();
+      this.viewMemo.set(stations, memo);
+    }
+    if (memo.size >= 32) memo.delete(memo.keys().next().value as string);
+    memo.set(key, out);
+    return out;
+  }
+
+  private deriveViews(
+    stations: StationComponents[],
+    scope: PermissionScope,
+    tally: PermissionScope | null,
+    filter: { unitId?: string | null; area?: { countyId?: string; constituencyId?: string; wardId?: string } },
+  ): StationState[] {
     const out: StationState[] = [];
     for (const c of stations) {
       if (!stationInScope(scope, c.cols) || !inUnit(filter.unitId, c.cols) || !inArea(filter.area ?? {}, c.cols)) continue;
@@ -344,11 +406,30 @@ export class WarRoomService {
 
   private invalidate(tenantId: string): void {
     for (const k of this.cache.keys()) if (k.startsWith(`${tenantId}|`)) this.cache.delete(k);
+    for (const k of this.inflight.keys()) if (k.startsWith(`${tenantId}|`)) this.inflight.delete(k);
     for (const k of this.totalsCache.keys()) if (k.startsWith(`${tenantId}|`)) this.totalsCache.delete(k);
+    for (const k of this.tallyPanelCache.keys()) if (k.startsWith(`${tenantId}|`)) this.tallyPanelCache.delete(k);
   }
 
-  private reportedCompleteness(stations: StationState[]): Completeness {
-    return completeness(stations.length, stations.filter((s) => s.hasUpdate).length);
+  /** Counts the overview needs, in one pass, memoised per (memoised) views array. */
+  private summary(stations: StationState[]): StationSummary {
+    const hit = this.summaryMemo.get(stations);
+    if (hit) return hit;
+    const sm: StationSummary = { reported: 0, statusCounts: new Map(), notAssigned: 0, checkedInOrOut: 0, tallyExpected: 0, tallyFormsReceived: 0, tallyVerified: 0, tallyFlagged: 0 };
+    for (const st of stations) {
+      if (st.hasUpdate) sm.reported++;
+      sm.statusCounts.set(st.status, (sm.statusCounts.get(st.status) ?? 0) + 1);
+      if (st.deploymentStatus === null) sm.notAssigned++;
+      if (st.deploymentStatus === 'CHECKED_IN' || st.deploymentStatus === 'CHECKED_OUT') sm.checkedInOrOut++;
+      if (st.tallyVisible) {
+        sm.tallyExpected++;
+        if (st.formStatus !== 'NONE') sm.tallyFormsReceived++;
+        if (st.formStatus === 'VERIFIED') sm.tallyVerified++;
+        if (st.formStatus === 'FLAGGED') sm.tallyFlagged++;
+      }
+    }
+    this.summaryMemo.set(stations, sm);
+    return sm;
   }
 
   private async toRows(tx: TenantTx, auth: AuthContext, states: StationState[], asOf: Date): Promise<StationStatusRow[]> {
@@ -381,15 +462,12 @@ export class WarRoomService {
       const stations = this.views(snap.stations, scope, tally, { unitId: q.geographicUnitId });
       const asOf = snap.at.toISOString();
       const expected = stations.length;
-      const reported = this.reportedCompleteness(stations);
+      // One pass over the (memoised) station views, itself memoised per views array.
+      const sm = this.summary(stations);
+      const reported = completeness(expected, sm.reported);
       const tallyAvailable = !!tally;
-      // Tally panels cover the stations inside both the War Room and the tally.view scope.
-      const tallyStations = stations.filter((s) => s.tallyVisible);
       const panel = <T>(data: T, c: Completeness, available = true) => ({ label: WAR_ROOM_LABEL as typeof WAR_ROOM_LABEL, asOf, completeness: c, available, data });
-
-      const statusCounts = new Map<OperationalStatus, number>();
-      for (const s of stations) statusCounts.set(s.status, (statusCounts.get(s.status) ?? 0) + 1);
-      const count = (pred: (s: StationState) => boolean) => stations.filter(pred).length;
+      const statusCounts = sm.statusCounts;
 
       // Incidents (counts only) in the War Room scope and area.
       const incWhere = Prisma.sql`i.election_cycle_id = ${cycle.id}::uuid AND ${scopeSql(scope, cycle.id, FIELD_COLS('i'))} AND ${unitSql(q.geographicUnitId, FIELD_COLS('i'))}`;
@@ -407,7 +485,12 @@ export class WarRoomService {
       let awaitingSecondReview = 0;
       let openDiscrepancies = 0;
       let lastSnapshotAt: Date | null = null;
-      if (tallyAvailable && registry) {
+      const tallyKey = [auth.tenantId, cycle.id, registry?.id ?? '', this.scopeKey(scope), tally ? this.scopeKey(tally) : '', q.geographicUnitId ?? ''].join('|');
+      const tallyHit = this.tallyPanelCache.get(tallyKey);
+      if (tallyAvailable && registry && tallyHit && Date.now() - tallyHit.at.getTime() < this.ttlMs) {
+        // Same freshness as the station snapshot (asOf): the intake counts are a 55k-station query.
+        ({ awaitingCapture, awaitingSecondReview, openDiscrepancies, lastSnapshotAt } = tallyHit.value);
+      } else if (tallyAvailable && registry) {
         const where = Prisma.sql`${this.stationWhere(registry.id, scope, cycle.id, { unitId: q.geographicUnitId })} AND ${scopeSql(tally!, cycle.id, STATION_COLS('ps'))}`;
         const [t] = await withHashJoins(tx, () => tx.$queryRaw<Array<{ capture: bigint; second: bigint; discrepancies: bigint }>>`
           WITH subs AS (
@@ -427,6 +510,10 @@ export class WarRoomService {
         openDiscrepancies = Number(t!.discrepancies);
         const snapRow = await tx.tallySnapshot.findFirst({ where: { electionCycleId: cycle.id }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
         lastSnapshotAt = snapRow?.createdAt ?? null;
+        if (this.ttlMs > 0) {
+          WarRoomService.evictExpired(this.tallyPanelCache, this.ttlMs, TOTALS_CACHE_MAX);
+          this.tallyPanelCache.set(tallyKey, { at: new Date(), value: { awaitingCapture, awaitingSecondReview, openDiscrepancies, lastSnapshotAt } });
+        }
       }
 
       const since = new Date(Date.now() - 15 * 60_000);
@@ -434,9 +521,10 @@ export class WarRoomService {
         tx.clientSubmission.count({ where: { lastSeenAt: { gte: since } } }),
         tx.clientSubmission.count({ where: { lastSeenAt: { gte: since }, outcome: 'CONFLICT' } }),
       ]);
-      const formsReceived = tallyStations.filter((s) => s.formStatus !== 'NONE').length;
-      const verified = tallyStations.filter((s) => s.formStatus === 'VERIFIED').length;
-      const tallyExpected = tallyStations.length;
+      // Tally panels cover the stations inside both the War Room and the tally.view scope.
+      const formsReceived = sm.tallyFormsReceived;
+      const verified = sm.tallyVerified;
+      const tallyExpected = sm.tallyExpected;
       const tallyZero = { received: 0, awaitingCapture: 0, awaitingSecondReview: 0, verified: 0, flagged: 0 };
 
       return {
@@ -450,10 +538,10 @@ export class WarRoomService {
             assignedSlots: deployments.assigned,
             confirmed: deployments.confirmed,
             checkedIn: deployments.checkedIn,
-            stationsNotAssigned: count((s) => s.deploymentStatus === null),
+            stationsNotAssigned: sm.notAssigned,
             trainingCompletedAgents: deployments.trainedAgents,
           },
-          completeness(expected, count((s) => s.deploymentStatus === 'CHECKED_IN' || s.deploymentStatus === 'CHECKED_OUT')),
+          completeness(expected, sm.checkedInOrOut),
         ),
         stationStatus: panel(
           OPERATIONAL_STATUSES.map((status) => ({ status, count: statusCounts.get(status) ?? 0 })),
@@ -471,7 +559,7 @@ export class WarRoomService {
           reported,
         ),
         formIntake: panel(
-          tallyAvailable ? { received: formsReceived, awaitingCapture, awaitingSecondReview, verified, flagged: tallyStations.filter((s) => s.formStatus === 'FLAGGED').length } : tallyZero,
+          tallyAvailable ? { received: formsReceived, awaitingCapture, awaitingSecondReview, verified, flagged: sm.tallyFlagged } : tallyZero,
           tallyAvailable ? completeness(tallyExpected, formsReceived) : completeness(expected, 0),
           tallyAvailable,
         ),
@@ -481,11 +569,18 @@ export class WarRoomService {
           tallyAvailable,
         ),
         systemHealth: panel(
-          { apiOk: true, databaseOk: true, queueOk: await this.queueOk(), syncItemsLast15m: syncItems, syncConflictsLast15m: syncConflicts },
+          { apiOk: true, databaseOk: true, queueOk: await this.queueOkCached(), syncItemsLast15m: syncItems, syncConflictsLast15m: syncConflicts },
           reported,
         ),
       };
     });
+  }
+
+  /** queueOk() opens a Redis connection; under load once per overview request was measurable. */
+  private queueProbe: { at: number; ok: Promise<boolean | null> } | null = null;
+  private queueOkCached(): Promise<boolean | null> {
+    if (!this.queueProbe || Date.now() - this.queueProbe.at > 5_000) this.queueProbe = { at: Date.now(), ok: this.queueOk() };
+    return this.queueProbe.ok;
   }
 
   private async queueOk(): Promise<boolean | null> {
@@ -524,7 +619,7 @@ export class WarRoomService {
       return {
         label: WAR_ROOM_LABEL,
         asOf: snap.at.toISOString(),
-        completeness: this.reportedCompleteness(all),
+        completeness: completeness(all.length, this.summary(all).reported),
         items: await this.toRows(tx, auth, page, snap.at),
         page: q.page,
         pageSize: q.pageSize,
