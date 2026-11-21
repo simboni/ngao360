@@ -293,6 +293,63 @@ export class TallyWorkflowService {
     });
   }
 
+  /**
+   * Bulk form of `participants()` for the work-queue filters: every record in `statuses` that
+   * `userId` took part in, with that user's roles on it drawn from the same sources as
+   * `participants()` (submitter, value changes, current confirmers, the append-only audit stream
+   * of value changes and confirmations, verifications, supervisor actions, resolved cases), plus
+   * whether the latest review round asked for a third check. Records the user never touched are
+   * not returned (no rule can stop them). The sets hold only `userId`, which is all the
+   * separation-of-duties rules look at for that user.
+   */
+  async participationOf(
+    tx: TenantTx,
+    who: { tenantId: string; userId: string },
+    statuses: ReadonlyArray<SubmissionStatus>,
+  ): Promise<Array<{ submissionId: string; participants: SubmissionParticipants; thirdCheckRequested: boolean }>> {
+    const u = who.userId;
+    const rows = await tx.$queryRaw<
+      Array<{ id: string; submitter: boolean; editor: boolean; verifier: boolean; supervisor: boolean; resolver: boolean; last_action: string | null }>
+    >`
+      WITH audited AS (
+        SELECT DISTINCT a.entity_id FROM audit_events a
+         WHERE a.tenant_id = ${who.tenantId}::uuid AND a.actor_id = ${u}::uuid
+           AND a.action = ${AUDIT_ACTIONS.RESULT_VALUE_CHANGED} AND a.entity_id IS NOT NULL
+      ),
+      roles AS (
+        SELECT s.id,
+               s.submitter_id = ${u}::uuid AS submitter,
+               (EXISTS (SELECT 1 FROM result_value_changes c WHERE c.submission_id = s.id AND c.actor_id = ${u}::uuid)
+                 OR EXISTS (SELECT 1 FROM result_values v WHERE v.submission_id = s.id AND v.confirmed_by_id = ${u}::uuid)
+                 OR EXISTS (SELECT 1 FROM audited x WHERE x.entity_id = s.id::text)
+                 OR EXISTS (SELECT 1 FROM result_values v JOIN audited x ON x.entity_id = v.id::text WHERE v.submission_id = s.id)) AS editor,
+               EXISTS (SELECT 1 FROM verifications v WHERE v.submission_id = s.id AND v.reviewer_id = ${u}::uuid) AS verifier,
+               EXISTS (SELECT 1 FROM verifications v WHERE v.submission_id = s.id AND v.supervisor_id = ${u}::uuid) AS supervisor,
+               EXISTS (SELECT 1 FROM discrepancy_case_submissions l JOIN discrepancy_cases c ON c.id = l.case_id
+                        WHERE l.submission_id = s.id AND c.resolved_by_id = ${u}::uuid) AS resolver
+          FROM result_submissions s
+         WHERE s.tenant_id = ${who.tenantId}::uuid AND s.status::text = ANY(${[...statuses]}::text[])
+      )
+      SELECT r.*,
+             (SELECT v.supervisor_action::text FROM verifications v WHERE v.submission_id = r.id
+               ORDER BY v.round DESC, v.reviewed_at DESC LIMIT 1) AS last_action
+        FROM roles r
+       WHERE r.submitter OR r.editor OR r.verifier OR r.supervisor OR r.resolver`;
+    const only = (on: boolean): ReadonlySet<string> => (on ? new Set([u]) : new Set<string>());
+    return rows.map((r) => ({
+      submissionId: r.id,
+      participants: {
+        // Any id other than the user's when they did not submit it.
+        submitterId: r.submitter ? u : '',
+        editorIds: only(r.editor),
+        verifierIds: only(r.verifier),
+        supervisorIds: only(r.supervisor),
+        resolverIds: only(r.resolver),
+      },
+      thirdCheckRequested: r.last_action === 'THIRD_CHECK_REQUESTED',
+    }));
+  }
+
   sod(violation: SodViolation | null): void {
     if (violation) throw AppException.separationOfDuties(SOD_MESSAGES[violation]);
   }

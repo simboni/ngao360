@@ -11,6 +11,7 @@ import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { figuresAccepted, figuresFingerprint } from '../domain/accepted-figures';
 import { arithmeticFailures, type EngineResult, type EngineRun, runValidation } from '../domain/validation-engine';
 import { ENTITY } from '../tally.constants';
 import { toValidationRun } from './mappers';
@@ -101,7 +102,12 @@ export class ValidationService {
     );
 
     const arithmetic = arithmeticFailures(rules, engine);
-    if (opts.openCases && arithmetic.length > 0 && !(await this.workflow.findOpenCase(tx, sub.id, 'ARITHMETIC'))) {
+    if (
+      opts.openCases &&
+      arithmetic.length > 0 &&
+      !(await this.workflow.findOpenCase(tx, sub.id, 'ARITHMETIC')) &&
+      !(await this.arithmeticAccepted(tx, sub.id))
+    ) {
       await this.openArithmeticCase(tx, sub, actorId, runId, arithmetic);
       if (HOLD_ON_ARITHMETIC_FAIL.has(sub.status)) {
         await this.workflow.hold(tx, sub.id, 'Held from the verified aggregate: arithmetic check failed', actorId);
@@ -122,6 +128,13 @@ export class ValidationService {
     runId: string | null,
     failures: EngineResult[],
   ): Promise<void> {
+    const earlier = (
+      await tx.discrepancyCase.findMany({
+        where: { varianceType: 'ARITHMETIC', status: { in: ['RESOLVED', 'CLOSED'] }, links: { some: { submissionId: sub.id } } },
+        select: { reference: true },
+        orderBy: { createdAt: 'asc' },
+      })
+    ).map((c) => c.reference);
     await this.workflow.openCase(tx, {
       tenantId: sub.tenantId,
       electionCycleId: sub.electionCycleId,
@@ -130,7 +143,17 @@ export class ValidationService {
       severity: 'HIGH',
       title: `Arithmetic check failed on ${sub.reference}`,
       description: failures.map((f) => f.message).join('\n'),
-      details: { runId, failures: failures.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, ...f.details })) },
+      details: {
+        runId,
+        failures: failures.map((f) => ({ ruleKey: f.ruleKey, fieldKeys: f.fieldKeys, ...f.details })),
+        ...(earlier.length > 0
+          ? {
+              // An earlier decision accepted different figures: this is the check reopened.
+              reopenedAfter: earlier,
+              reopenReason: 'The figures changed after an earlier arithmetic decision; that decision covered only the figures it accepted.',
+            }
+          : {}),
+      },
       links: [{ submissionId: sub.id, role: 'SOURCE_A' }],
       openedById: actorId,
     });
@@ -140,9 +163,14 @@ export class ValidationService {
    * Blueprint 8.5: a form whose printed figures fail arithmetic is held, shows
    * the arithmetic, and goes to second review through the case. Ensures an
    * open ARITHMETIC case is linked and moves the record to DISPUTED (held).
+   * When a supervisor already accepted exactly these figures as printed, nothing
+   * is opened or held (returns false); different figures reopen the check.
    */
-  async holdForArithmetic(tx: TenantTx, submissionId: string, actorId: string, failures: EngineResult[]): Promise<void> {
-    if (!(await this.workflow.findOpenCase(tx, submissionId, 'ARITHMETIC'))) {
+  async holdForArithmetic(tx: TenantTx, submissionId: string, actorId: string, failures: EngineResult[]): Promise<boolean> {
+    const open = await this.workflow.findOpenCase(tx, submissionId, 'ARITHMETIC');
+    // A supervisor already accepted exactly these figures as printed: nothing new to decide.
+    if (!open && (await this.arithmeticAccepted(tx, submissionId))) return false;
+    if (!open) {
       const sub = await tx.resultSubmission.findUniqueOrThrow({
         where: { id: submissionId },
         select: { id: true, tenantId: true, electionCycleId: true, contestId: true, reference: true },
@@ -150,14 +178,37 @@ export class ValidationService {
       await this.openArithmeticCase(tx, sub, actorId, null, failures);
     }
     await this.workflow.hold(tx, submissionId, 'Held from the verified aggregate: arithmetic check failed on the figures as printed', actorId);
+    return true;
   }
 
-  /** True when a supervisor has resolved an arithmetic case on this record (figures accepted as printed). */
-  async arithmeticAccepted(tx: TenantTx, submissionId: string): Promise<boolean> {
-    const n = await tx.discrepancyCase.count({
-      where: { varianceType: 'ARITHMETIC', status: { in: ['RESOLVED', 'CLOSED'] }, links: { some: { submissionId } } },
+  /** Fingerprint of the figures currently on a record (see domain/accepted-figures). */
+  async currentFingerprint(tx: TenantTx, submissionId: string): Promise<string> {
+    const values = await tx.resultValue.findMany({
+      where: { submissionId },
+      select: { fieldKey: true, candidateReferenceId: true, numericValue: true },
     });
-    return n > 0;
+    return figuresFingerprint(values);
+  }
+
+  /**
+   * True when a supervisor resolved an arithmetic case on this record accepting exactly the figures
+   * it carries now (figures as printed). A resolution of other figures, or one recorded without a
+   * fingerprint, accepts nothing.
+   */
+  async arithmeticAccepted(tx: TenantTx, submissionId: string): Promise<boolean> {
+    const resolutions = await tx.discrepancyCaseAction.findMany({
+      where: {
+        action: 'RESOLVED',
+        case: { varianceType: 'ARITHMETIC', status: { in: ['RESOLVED', 'CLOSED'] }, links: { some: { submissionId } } },
+      },
+      select: { data: true },
+    });
+    if (resolutions.length === 0) return false;
+    return figuresAccepted(
+      resolutions.map((r) => r.data),
+      submissionId,
+      await this.currentFingerprint(tx, submissionId),
+    );
   }
 
   /** POST /tally/submissions/:id/validate */

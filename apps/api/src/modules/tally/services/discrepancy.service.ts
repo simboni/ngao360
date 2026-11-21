@@ -22,6 +22,7 @@ import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { PermissionService } from '../../../rbac/permission.service';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { type AcceptedFigures, figuresFingerprint } from '../domain/accepted-figures';
 import { closureViolation, supervisorViolation } from '../domain/separation-of-duties';
 import { ENTITY, HOLDING_CASE_TYPES, OPEN_CASE_STATUSES } from '../tally.constants';
 import { caseSummaryInclude, iso, toCaseSummary, userRef } from './mappers';
@@ -307,6 +308,20 @@ export class DiscrepancyService {
         this.workflow.sod(supervisorViolation(auth.userId, await this.workflow.participants(tx, sid)));
       }
 
+      // An arithmetic decision covers the exact figures it was taken on ("figures as printed"):
+      // fingerprint them so a later recapture with different figures reopens the check.
+      const acceptedFigures: AcceptedFigures[] = [];
+      if (c.varianceType === 'ARITHMETIC') {
+        for (const sid of linked) {
+          if (exclude.has(sid)) continue;
+          const values = await tx.resultValue.findMany({
+            where: { submissionId: sid },
+            select: { fieldKey: true, candidateReferenceId: true, numericValue: true },
+          });
+          acceptedFigures.push({ submissionId: sid, fingerprint: figuresFingerprint(values) });
+        }
+      }
+
       // Claim the case first so two concurrent resolutions cannot both apply effects.
       const now = new Date();
       await this.setStatus(tx, id, c.status, {
@@ -367,7 +382,7 @@ export class DiscrepancyService {
           actorId: auth.userId,
           action: 'RESOLVED',
           note: body.resolution,
-          data: { effects } as Prisma.InputJsonValue,
+          data: { effects, ...(acceptedFigures.length > 0 ? { acceptedFigures } : {}) } as unknown as Prisma.InputJsonValue,
         },
       });
       await this.audit.record(
@@ -377,7 +392,7 @@ export class DiscrepancyService {
           entityType: ENTITY.DISCREPANCY,
           entityId: id,
           before: { status: c.status },
-          after: { status: 'RESOLVED', effects },
+          after: { status: 'RESOLVED', effects, ...(acceptedFigures.length > 0 ? { acceptedFigures } : {}) },
           reason: body.resolution,
         },
         tx,

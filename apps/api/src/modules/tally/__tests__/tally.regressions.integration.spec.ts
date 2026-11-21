@@ -467,6 +467,124 @@ d('NGAO TALLY review-finding regressions (integration)', () => {
     expect((await http('supervisor').get(`/tally/submissions/${id}`)).body.status).toBe('DISPUTED');
   });
 
+  /* ------------- Go-live: figures-as-printed fingerprint and SoD-consistent work queues ------------- */
+
+  /** Save figures again, sending each cell's current change version (a recapture). */
+  const recapture = async (id: string, a: number, b: number, total: number) => {
+    const detail = await http('clerk').get(`/tally/submissions/${id}`);
+    const version = new Map<string, number>(
+      (detail.body.values as Array<{ fieldKey: string; candidateReferenceId: string | null; changeVersion: number }>).map((v) => [`${v.fieldKey}|${v.candidateReferenceId ?? ''}`, v.changeVersion]),
+    );
+    const body = values(a, b, { total }).map((v) => ({ ...v, expectedChangeVersion: version.get(`${v.fieldKey}|${v.candidateReferenceId ?? ''}`) ?? 0 }));
+    const res = await http('clerk').put(`/tally/submissions/${id}/values`).send({ values: body, reason: 'Recaptured after return' });
+    expect(res.status).toBe(200);
+  };
+  const arithmeticCases = async (id: string) =>
+    (await http('supervisor').get(`/tally/discrepancies?submissionId=${id}&varianceType=ARITHMETIC&sort=createdAt&order=asc`)).body as {
+      total: number;
+      items: Array<{ id: string; reference: string; status: string }>;
+    };
+  const accepted = async (id: string): Promise<boolean> => {
+    const { ValidationService } = await import('../services/validation.service');
+    const { PrismaService } = await import('../../../prisma/prisma.service');
+    return app.get(PrismaService).withTenant(tenantId, (tx) => app.get(ValidationService).arithmeticAccepted(tx, id));
+  };
+
+  it('a "figures as printed" decision covers only the exact figures it accepted; a recapture with different figures reopens the check', async () => {
+    const id = await upload(ids.s6!);
+    await capture(id, 600, 400, 'clerk', { total: 1004 });
+    expect((await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({})).body.status).toBe('DISPUTED');
+    const first = (await arithmeticCases(id)).items[0]!;
+    const resolved = await http('supervisor')
+      .post(`/tally/discrepancies/${first.id}/resolve`)
+      .send({ resolution: 'Figures confirmed exactly as printed on the source image; accepted for second review.', excludeSubmissionIds: [] });
+    expect(resolved.status).toBe(200);
+    // The decision is tied to a fingerprint of the accepted figures (append-only case action and audit).
+    const action = resolved.body.actions.find((a: { action: string }) => a.action === 'RESOLVED');
+    expect(action).toBeDefined();
+    const stored = await owner.discrepancyCaseAction.findFirstOrThrow({ where: { caseId: first.id, action: 'RESOLVED' } });
+    expect((stored.data as { acceptedFigures: Array<{ submissionId: string; fingerprint: string }> }).acceptedFigures).toEqual([
+      { submissionId: id, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    ]);
+    expect(await accepted(id)).toBe(true);
+    // Running the checks again on the same figures neither reopens nor re-holds.
+    expect((await http('verifier').post(`/tally/submissions/${id}/validate`).send({})).status).toBeLessThan(300);
+    expect((await http('verifier').get(`/tally/submissions/${id}`)).body.status).toBe('SECOND_REVIEW_PENDING');
+
+    // Returned and re-sent with the SAME figures: the decision still covers them; no new case.
+    const ret = await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'RETURN', checklist, notes: 'Please confirm the stamp area against the image.' });
+    expect(ret.status).toBe(201);
+    await recapture(id, 600, 400, 1004);
+    expect(await accepted(id)).toBe(true);
+    expect((await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({})).body.status).toBe('SECOND_REVIEW_PENDING');
+    expect((await arithmeticCases(id)).total).toBe(1);
+
+    // Returned again and recaptured with DIFFERENT figures that still do not add up: the earlier
+    // decision no longer applies, so the check reopens as a new held arithmetic case.
+    expect((await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'RETURN', checklist, notes: 'Candidate A looks like 601 on the image.' })).status).toBe(201);
+    await recapture(id, 601, 400, 1004);
+    expect(await accepted(id)).toBe(false);
+    expect((await http('clerk').post(`/tally/submissions/${id}/submit-for-review`).send({})).body.status).toBe('DISPUTED');
+    const after = await arithmeticCases(id);
+    expect(after.total).toBe(2);
+    const reopened = await http('supervisor').get(`/tally/discrepancies/${after.items[1]!.id}`);
+    expect(reopened.body.status).toBe('OPEN');
+    expect(reopened.body.details.reopenedAfter).toEqual([first.reference]);
+    // Nothing may pass on the strength of the earlier decision.
+    const pass = await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'PASS', checklist });
+    expect(pass.status).toBe(409);
+    ids.reopened = id;
+  });
+
+  it('work queues list exactly the records the caller may act on, by the same separation-of-duties rules as the actions', async () => {
+    // A: clerk2 confirmed the values, then clerk re-saved the same values (clerk2 survives only in the audit stream).
+    const a = await upload(ids.s6!);
+    await capture(a, 70, 30, 'clerk');
+    await capture(a, 70, 30, 'clerk2', { version: 1 });
+    await capture(a, 70, 30, 'clerk', { version: 1 });
+    expect((await http('clerk').post(`/tally/submissions/${a}/submit-for-review`).send({})).status).toBe(200);
+    // B: untouched by clerk2 and verifier.
+    const b = await toReview(ids.s6!, 80, 20);
+    // C: verified by verifier, then a supervisor asks for a third check (needs a fresh reviewer).
+    const c = await verified(ids.s6!, 90, 10);
+    const third = await http('supervisor')
+      .post(`/tally/verifications/${c.verificationId}/supervisor-action`)
+      .send({ action: 'THIRD_CHECK_REQUESTED', reason: 'Third reviewer to read the source independently' });
+    expect(third.status).toBe(200);
+    expect((await http('supervisor').get(`/tally/submissions/${c.id}`)).body.status).toBe('SECOND_REVIEW_PENDING');
+
+    const queue = async (who: Persona, view: 'awaiting_me' | 'awaiting_supervisor') => {
+      const r = await http(who).get(`/tally/submissions?view=${view}&pageSize=200`);
+      expect(r.status).toBe(200);
+      return new Set((r.body.items as Array<{ id: string }>).map((x) => x.id));
+    };
+    const clerk2Queue = await queue('clerk2', 'awaiting_me');
+    const verifierQueue = await queue('verifier', 'awaiting_me');
+    expect(clerk2Queue.has(a)).toBe(false); // audit-stream confirmer
+    expect(clerk2Queue.has(b)).toBe(true);
+    expect(clerk2Queue.has(c.id)).toBe(true);
+    expect(verifierQueue.has(b)).toBe(true);
+    expect(verifierQueue.has(c.id)).toBe(false); // prior reviewer on a third check
+    expect(verifierQueue.has(ids.reopened!)).toBe(false); // not awaiting review (held)
+
+    // Every record in the tenant: in the queue exactly when the detail's allowed actions offer it.
+    const all = await owner.resultSubmission.findMany({ where: { tenantId }, select: { id: true, status: true } });
+    for (const who of ['clerk2', 'verifier'] as const) {
+      const listed = who === 'clerk2' ? clerk2Queue : verifierQueue;
+      for (const s of all.filter((x) => x.status === 'SECOND_REVIEW_PENDING')) {
+        const d = await http(who).get(`/tally/submissions/${s.id}`);
+        expect([s.id, who, listed.has(s.id)]).toEqual([s.id, who, d.body.allowedActions.includes('VERIFY')]);
+      }
+    }
+    for (const who of ['supervisor', 'supervisor2'] as const) {
+      const listed = await queue(who, 'awaiting_supervisor');
+      for (const s of all.filter((x) => ['SECOND_REVIEW_PENDING', 'VERIFIED', 'RETURNED', 'DISPUTED'].includes(x.status))) {
+        const d = await http(who).get(`/tally/submissions/${s.id}`);
+        expect([s.id, who, listed.has(s.id)]).toEqual([s.id, who, d.body.allowedActions.includes('SUPERVISOR_ACTION')]);
+      }
+    }
+  });
+
   it('matches records to a newly approved registry version by station code and refuses to orphan filed forms', async () => {
     const before = await live();
     expect(before.includedStationCount).toBeGreaterThan(0);

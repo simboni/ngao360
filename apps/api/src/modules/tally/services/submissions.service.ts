@@ -25,7 +25,7 @@ import { pathToUnitIds, stationGeoLocation } from '../../../rbac/scope';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { StorageService } from '../../../storage/storage.service';
 import { allowedActions } from '../domain/allowed-actions';
-import { supervisorViolation } from '../domain/separation-of-duties';
+import { supervisorViolation, verificationViolation } from '../domain/separation-of-duties';
 import { outcomeByCell, cellKey } from '../domain/validation-engine';
 import { TallyOcrService } from '../ocr/ocr.service';
 import { DisplayHoldsService } from './display-holds.service';
@@ -53,6 +53,11 @@ export interface UploadedSourceFile {
 }
 
 /** Map a form level to the tally-centre level it must be submitted against. */
+/** `view=awaiting_me`: records waiting for an independent second review. */
+const AWAITING_ME_STATUSES: ReadonlyArray<SubmissionStatus> = ['SECOND_REVIEW_PENDING'];
+/** `view=awaiting_supervisor`: outcomes that can still carry a verification without a supervisor action. */
+const AWAITING_SUPERVISOR_STATUSES: ReadonlyArray<SubmissionStatus> = ['SECOND_REVIEW_PENDING', 'VERIFIED', 'RETURNED', 'DISPUTED'];
+
 const CENTRE_LEVEL_FOR_FORM: Record<string, string | undefined> = {
   CONSTITUENCY: 'CONSTITUENCY',
   COUNTY: 'COUNTY',
@@ -477,29 +482,29 @@ export class SubmissionsService {
       });
     }
     if (q.view === 'mine') and.push({ submitterId: auth.userId });
-    if (q.view === 'awaiting_me') {
-      and.push(
-        { status: 'SECOND_REVIEW_PENDING' },
-        { submitterId: { not: auth.userId } },
-        { valueChanges: { none: { actorId: auth.userId } } },
-        { values: { none: { confirmedById: auth.userId } } },
-      );
-    }
-    if (q.view === 'awaiting_supervisor') {
-      and.push(
-        { status: { in: ['SECOND_REVIEW_PENDING', 'VERIFIED', 'RETURNED', 'DISPUTED'] } },
-        { verifications: { some: { supervisorAction: null } } },
-        { submitterId: { not: auth.userId } },
-        { valueChanges: { none: { actorId: auth.userId } } },
-        { values: { none: { confirmedById: auth.userId } } },
-        { verifications: { none: { reviewerId: auth.userId } } },
-      );
-    }
-    const where: Prisma.ResultSubmissionWhereInput = { AND: and };
     const sortable = new Set(['createdAt', 'updatedAt', 'reference', 'status', 'submittedAt']);
     const sortKey = q.sort && sortable.has(q.sort) ? q.sort : 'updatedAt';
-    const [total, rows] = await this.prisma.tenantTx((tx) =>
-      Promise.all([
+    const [total, rows] = await this.prisma.tenantTx(async (tx) => {
+      // Work queues: the records the caller may actually act on. Separation of duties is decided
+      // by the same rules and participation sources the actions use (workflow.participationOf).
+      if (q.view === 'awaiting_me') {
+        const blocked = (await this.workflow.participationOf(tx, auth, AWAITING_ME_STATUSES))
+          .filter((p) => verificationViolation(auth.userId, p.participants, { thirdCheck: p.thirdCheckRequested }) !== null)
+          .map((p) => p.submissionId);
+        and.push({ status: { in: [...AWAITING_ME_STATUSES] } }, ...(blocked.length > 0 ? [{ id: { notIn: blocked } }] : []));
+      }
+      if (q.view === 'awaiting_supervisor') {
+        const blocked = (await this.workflow.participationOf(tx, auth, AWAITING_SUPERVISOR_STATUSES))
+          .filter((p) => supervisorViolation(auth.userId, p.participants) !== null)
+          .map((p) => p.submissionId);
+        and.push(
+          { status: { in: [...AWAITING_SUPERVISOR_STATUSES] } },
+          { verifications: { some: { supervisorAction: null } } },
+          ...(blocked.length > 0 ? [{ id: { notIn: blocked } }] : []),
+        );
+      }
+      const where: Prisma.ResultSubmissionWhereInput = { AND: and };
+      return Promise.all([
         tx.resultSubmission.count({ where }),
         tx.resultSubmission.findMany({
           where,
@@ -508,8 +513,8 @@ export class SubmissionsService {
           skip: (q.page - 1) * q.pageSize,
           take: q.pageSize,
         }),
-      ]),
-    );
+      ]);
+    });
     return { items: rows.map(toSubmissionSummary), page: q.page, pageSize: q.pageSize, total };
   }
 
