@@ -14,6 +14,8 @@
 #   BACKUP_COPY_BLOBS    true | false: copy local blobs into the backup (default true for local)
 #   BACKUP_VERIFY_BLOBS  all | none | <N>: re-hash local blobs against the database while backing up (default all)
 #   BACKUP_RETENTION_DAYS  delete backup folders older than this many days (default 0 = keep all)
+#   BACKUP_ALLOW_MISSING_BLOBS  true to finish (exit 0) although originals are missing from storage; they are
+#                        listed in blobs-missing.txt and the restore drill reports them (default false: fail)
 #
 # Never prints secrets: the connection string is passed to libpq only. Exit status is non-zero on any
 # failure (including a blob whose bytes do not match its recorded SHA-256).

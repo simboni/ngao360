@@ -68,7 +68,14 @@ pass "backup files match SHA256SUMS"
 "${PSQL[@]}" "$ADMIN_URL" -c "CREATE DATABASE \"$SCRATCH\"" || die "cannot create $SCRATCH"
 cleanup() {
   if [ "$KEEP" != true ]; then
-    "${PSQL[@]}" "$ADMIN_URL" -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" >/dev/null || log "could not drop $SCRATCH"
+    # Plain DROP (not WITH FORCE): it stops an autovacuum worker analysing the fresh copy by itself,
+    # whereas FORCE needs the right to signal that superuser-owned process.
+    local i
+    for i in 1 2 3 4 5; do
+      "${PSQL[@]}" "$ADMIN_URL" -c "DROP DATABASE IF EXISTS \"$SCRATCH\"" >/dev/null 2>&1 && return 0
+      sleep 2
+    done
+    log "could not drop $SCRATCH (drop it by hand)"
   else
     log "kept scratch database $SCRATCH"
   fi
@@ -147,6 +154,16 @@ else
   fail "stored_files manifest differs from the backup"
 fi
 if [ "$SAMPLE" = all ]; then PICK=(cat); else PICK=(shuf -n "$SAMPLE"); fi
+# Originals the backup itself recorded as missing (only possible with BACKUP_ALLOW_MISSING_BLOBS=true)
+# are reported, not sampled: the backup already failed loudly or was explicitly allowed to continue.
+KNOWN_MISSING=0
+SAMPLE_SRC="$SRC/restored-storage-manifest.tsv"
+if [ -s "$SRC/blobs-missing.txt" ]; then
+  KNOWN_MISSING=$(wc -l < "$SRC/blobs-missing.txt")
+  log "WARNING: $KNOWN_MISSING original(s) were already missing at backup time (blobs-missing.txt); not sampled"
+  SAMPLE_SRC="$SRC/sample-candidates.tsv"
+  awk -F'\t' 'NR == FNR { miss[$0] = 1; next } !($4 in miss)' "$SRC/blobs-missing.txt" "$SRC/restored-storage-manifest.tsv" > "$SAMPLE_SRC"
+fi
 SAMPLED=0; SAMPLE_BAD=0; SAMPLE_LIVE=0; SAMPLE_COPY=0
 while IFS=$'\t' read -r _id _tenant driver key sha size _scan; do
   SAMPLED=$((SAMPLED + 1))
@@ -168,7 +185,7 @@ while IFS=$'\t' read -r _id _tenant driver key sha size _scan; do
   if [ ! -f "$SRC/blobs/$key" ] && [ -z "$live" ]; then
     SAMPLE_BAD=$((SAMPLE_BAD + 1)); log "no readable copy of $key"
   fi
-done < <("${PICK[@]}" "$SRC/restored-storage-manifest.tsv")
+done < <("${PICK[@]}" "$SAMPLE_SRC")
 [ "$SAMPLE_BAD" = 0 ] && pass "$SAMPLED sampled originals re-hash correctly ($SAMPLE_COPY from the backup copy, $SAMPLE_LIVE from live storage)" \
   || fail "$SAMPLE_BAD problem(s) in $SAMPLED sampled originals"
 
@@ -226,6 +243,7 @@ node -e '
   const report = { format: "ngao360-restore-drill/1", backup: src, backupCreatedAt: b.createdAt, ranAt: new Date().toISOString(),
     status, totalSeconds: Number(total), pgRestoreSeconds: Number(restore), dumpBytes: b.dumpBytes, tables: b.tables, rows: b.rows,
     auditEvents: Number(events), auditChainDigest: digest, storageFiles: b.storage.files, sampledOriginals: Number(sampled),
+    originalsMissingAtBackup: b.storage.blobsMissing,
     failures: failures ? failures.split("\n") : [] };
   require("fs").writeFileSync(src + "/restore-report.json", JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report));
