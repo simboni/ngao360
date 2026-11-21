@@ -4,7 +4,8 @@
 # Malware scanning (recommended before any pilot): set MALWARE_SCANNER=clamd in .env.docker and add
 # `--profile scanner` so the clamd service runs. Without it uploads stay PENDING and nothing that
 # needs a clean scan (public project documents and photos, ledger approval) can proceed.
-# Separate staging/production with distinct project names (-p) and env files.
+# Separate staging/production with distinct project names (-p) and env files. The hardened production
+# stack (separate worker, Object Lock originals, read-only containers) is docker-compose.prod.yml.
 name: ngao360
 
 x-api-env: &api-env
@@ -27,6 +28,9 @@ x-api-env: &api-env
   S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
   S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
   S3_FORCE_PATH_STYLE: "true"
+  # Originals are written with COMPLIANCE retention; the bucket is created with Object Lock.
+  S3_OBJECT_LOCK_MODE: COMPLIANCE
+  S3_OBJECT_LOCK_DAYS: ${S3_OBJECT_LOCK_DAYS:-2555}
   # Pilot hardening: secrets from .env.docker; every provider defaults to the log / no-op one.
   MESSAGING_ENCRYPTION_KEY: ${MESSAGING_ENCRYPTION_KEY:?set MESSAGING_ENCRYPTION_KEY}
   MESSAGING_HASH_KEY: ${MESSAGING_HASH_KEY:?set MESSAGING_HASH_KEY}
@@ -106,7 +110,7 @@ services:
       interval: 5s
       retries: 20
 
-  # Creates the private, versioned bucket once.
+  # Creates the private bucket once, with Object Lock (implies versioning) and default retention.
   minio-init:
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     depends_on:
@@ -116,12 +120,13 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       S3_BUCKET: ${S3_BUCKET:-ngao360}
+      S3_OBJECT_LOCK_DAYS: ${S3_OBJECT_LOCK_DAYS:-2555}
     entrypoint: >
       /bin/sh -c "
       mc alias set ngao http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
-      mc mb --ignore-existing ngao/$${S3_BUCKET} &&
-      mc anonymous set none ngao/$${S3_BUCKET} &&
-      mc version enable ngao/$${S3_BUCKET}"
+      mc mb --ignore-existing --with-lock ngao/$${S3_BUCKET} &&
+      mc retention set --default COMPLIANCE $${S3_OBJECT_LOCK_DAYS}d ngao/$${S3_BUCKET} &&
+      mc anonymous set none ngao/$${S3_BUCKET}"
     restart: "no"
 
   # One-shot: apply Prisma migrations (incl. RLS) as the schema owner.
@@ -129,18 +134,26 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    image: ngao360-api:latest
-    command: ["sh", "-c", "cd /repo/packages/db && npx prisma migrate deploy"]
+      target: migrate
+    image: ngao360-migrate:latest
     environment: *api-env
     depends_on:
       postgres:
         condition: service_healthy
     restart: "no"
 
+  # Single container running HTTP and the BullMQ workers (PROCESS_ROLE=all). For a separate worker,
+  # read-only containers and an Object Lock bucket use docker-compose.prod.yml.
   api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: api
     image: ngao360-api:latest
     restart: unless-stopped
-    environment: *api-env
+    environment:
+      <<: *api-env
+      PROCESS_ROLE: all
     depends_on:
       migrate:
         condition: service_completed_successfully
