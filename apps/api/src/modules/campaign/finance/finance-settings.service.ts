@@ -64,7 +64,8 @@ export class FinanceSettingsService {
   ) {}
 
   private fingerprint(tenantId: string, value: string): string {
-    return identifierFingerprint(tenantId, value, this.config.values.MFA_ENCRYPTION_KEY);
+    // IDENTIFIER_FINGERPRINT_KEY keeps fingerprints stable when MFA_ENCRYPTION_KEY is rotated.
+    return identifierFingerprint(tenantId, value, this.config.values.IDENTIFIER_FINGERPRINT_KEY ?? this.config.values.MFA_ENCRYPTION_KEY);
   }
 
   /* ------------------------------------------------------------- limits */

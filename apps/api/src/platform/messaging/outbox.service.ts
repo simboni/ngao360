@@ -237,8 +237,7 @@ export class MessageOutboxService implements MessageOutboxPort {
       where: { userId, channel, supersededAt: null },
       select: { addressHash: true, verifiedAt: true, smsConsentVersion: true, smsOptedOutAt: true },
     });
-    const hash = this.crypto.contactHash(channel, normalised);
-    if (!contact || contact.addressHash !== hash || !contact.verifiedAt) {
+    if (!contact || !this.crypto.matchesContactHash(channel, normalised, contact.addressHash) || !contact.verifiedAt) {
       return channel === 'EMAIL' ? 'E-mail address not verified' : 'Phone number not verified';
     }
     if (channel === 'SMS') {

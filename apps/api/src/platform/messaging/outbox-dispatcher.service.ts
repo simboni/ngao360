@@ -256,7 +256,7 @@ export class OutboxDispatcherService implements OnModuleInit {
         } else if (row.channel === 'SMS') {
           // Even a verification code is not sent to a number that replied STOP.
           const optedOut = await tx.contactVerification.count({
-            where: { userId: row.recipient_user_id, channel: 'SMS', supersededAt: null, addressHash: this.crypto.contactHash('SMS', to), smsOptedOutAt: { not: null } },
+            where: { userId: row.recipient_user_id, channel: 'SMS', supersededAt: null, addressHash: { in: this.crypto.contactHashes('SMS', to) }, smsOptedOutAt: { not: null } },
           });
           if (optedOut > 0) return { skip: 'Opted out of SMS' };
         }

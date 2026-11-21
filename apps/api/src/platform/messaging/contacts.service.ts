@@ -86,7 +86,7 @@ export class ContactsService {
   private async contactStatus(tx: TenantTx, userId: string, channel: ContactChannel): Promise<ContactStatus> {
     const address = await this.currentAddress(tx, userId, channel);
     const row = await tx.contactVerification.findFirst({ where: { userId, channel, supersededAt: null } });
-    const sameAddress = !!row && !!address && row.addressHash === this.crypto.contactHash(channel, address);
+    const sameAddress = !!row && !!address && this.crypto.matchesContactHash(channel, address, row.addressHash);
     const verifiedAt = sameAddress ? row!.verifiedAt : null;
     const consentCurrent = sameAddress && row!.smsConsentVersion === SMS_CONSENT_NOTICE.version;
     return {
@@ -104,7 +104,8 @@ export class ContactsService {
   private async currentRow(tx: TenantTx, auth: AuthContext, channel: ContactChannel, address: string, create: boolean) {
     const hash = this.crypto.contactHash(channel, address);
     const row = await tx.contactVerification.findFirst({ where: { userId: auth.userId, channel, supersededAt: null } });
-    if (row && row.addressHash === hash) return row;
+    // During a MESSAGING_HASH_KEY rotation the row may still carry the previous key's hash.
+    if (row && this.crypto.matchesContactHash(channel, address, row.addressHash)) return row;
     if (row) {
       await tx.contactVerification.update({ where: { id: row.id }, data: { supersededAt: new Date() } });
       await tx.contactVerificationEvent.create({ data: { tenantId: auth.tenantId, verificationId: row.id, type: 'SUPERSEDED', source: 'settings', actorId: auth.userId } });
@@ -260,7 +261,7 @@ export class ContactsService {
     }
     const hash = this.crypto.hash('PUSH', body.endpoint);
     return this.prisma.withTenant(auth.tenantId, async (tx) => {
-      const existing = await tx.pushSubscription.findFirst({ where: { endpointHash: hash, revokedAt: null } });
+      const existing = await tx.pushSubscription.findFirst({ where: { endpointHash: { in: this.crypto.hashes('PUSH', body.endpoint) }, revokedAt: null } });
       if (existing && existing.userId === auth.userId) return toPushSummary(existing);
       if (existing) {
         // The same browser profile now belongs to someone else: the old owner's subscription ends.

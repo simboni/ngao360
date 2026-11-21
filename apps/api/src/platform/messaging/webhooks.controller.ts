@@ -112,13 +112,19 @@ export class SmsWebhooksController {
     if (!STOP_WORDS.has(text.replace(/[.!]+$/, ''))) return 0;
     const phone = typeof body.from === 'string' ? normalisePhone(body.from) : null;
     if (!phone) return 0;
-    const hash = this.crypto.contactHash('SMS', phone);
-    const tenants = await this.prisma.client.$queryRaw<Array<{ t: string }>>`SELECT ngao_sms_contact_tenants(${hash}) AS t`;
+    // Every configured hash key: during a MESSAGING_HASH_KEY rotation a STOP must still reach rows
+    // that carry the previous key's hash.
+    const hashes = this.crypto.contactHashes('SMS', phone);
+    const tenantIds = new Set<string>();
+    for (const hash of hashes) {
+      const rows = await this.prisma.client.$queryRaw<Array<{ t: string }>>`SELECT ngao_sms_contact_tenants(${hash}) AS t`;
+      for (const r of rows) tenantIds.add(r.t);
+    }
     let optedOut = 0;
-    for (const { t: tenantId } of tenants) {
+    for (const tenantId of tenantIds) {
       optedOut += await this.prisma.withTenant(tenantId, async (tx) => {
         const contacts = await tx.contactVerification.findMany({
-          where: { channel: 'SMS', supersededAt: null, addressHash: hash, smsOptedOutAt: null },
+          where: { channel: 'SMS', supersededAt: null, addressHash: { in: hashes }, smsOptedOutAt: null },
           select: { id: true, userId: true },
         });
         for (const c of contacts) {

@@ -8,6 +8,7 @@ import { CAPTCHA_VERIFIERS, type CaptchaVerifier, CaptchaVerifierRegistry, HttpC
 import { JobRunRecorder, JobScheduler } from './jobs';
 import { TallyComparisonRetryService } from './jobs/handlers/tally-comparison-retry.service';
 import { TasksDueSoonService } from './jobs/handlers/tasks-due-soon.service';
+import { JobRunsRetentionService } from './jobs/handlers/job-runs-retention.service';
 import { StageComparisonController } from './jobs/handlers/stage-comparison.controller';
 import { defaultMessageProviders, MESSAGE_OUTBOX, MESSAGE_PROVIDERS, type MessageProvider, MessageProviderRegistry } from './messaging';
 import { CaseAcknowledgementService } from './messaging/case-acknowledgement.service';
@@ -104,7 +105,7 @@ export function rateLimitStoreFromConfig(config: AppConfig): RateLimitStore {
  *   CAPTCHA_VERIFIERS  -> none (a tenant that selects a provider is refused), or hCaptcha / Turnstile
  *   RATE_LIMIT_STORE   -> memory in development, Redis with RATE_LIMIT_STORE=redis and always in production
  * Durable jobs registered here: messaging.dispatch, files.scan_pending, tally.comparison_retry,
- * tasks.due_soon (office.retention and field.station_status_record register from their modules).
+ * tasks.due_soon, platform.job_runs_retention (office.retention and field.station_status_record register from their modules).
  */
 @Global()
 @Module({
@@ -140,6 +141,7 @@ export function rateLimitStoreFromConfig(config: AppConfig): RateLimitStore {
     FileScanService,
     TallyComparisonRetryService,
     TasksDueSoonService,
+    JobRunsRetentionService,
   ],
   exports: [
     MESSAGE_PROVIDERS,

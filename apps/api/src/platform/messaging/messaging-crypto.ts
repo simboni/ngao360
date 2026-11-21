@@ -8,12 +8,17 @@
  *   every tenant's contact for it (through a SECURITY DEFINER lookup that returns tenant ids only).
  * - `mask`: what administrators and logs may see ("u***@example.org", "+2547******78").
  *
+ * Key rotation (`pnpm ops:rotate-keys --target messaging`): MESSAGING_ENCRYPTION_KEY_PREVIOUS still
+ * opens values sealed under the old key, and lookups compare stored hashes against the hash under
+ * MESSAGING_HASH_KEY_PREVIOUS too (`contactHashes`, `matchesContactHash`), so an opt-out or a
+ * verified address is never missed while rows are being re-hashed.
+ *
  * Without the keys (development with the log providers) nothing is sealed: the outbox stores the
  * masked address only and every message is SKIPPED by the log provider. Production refuses to start
  * without both keys, and so does any deployment that selects a vendor provider.
  */
 import { Injectable } from '@nestjs/common';
-import { openSecret, sealSecret } from '@ngao360/db';
+import { HmacKeyring, SealKeyring, sealSecret } from '@ngao360/db';
 import { createHmac } from 'node:crypto';
 import { AppConfig } from '../../config/app-config';
 
@@ -76,7 +81,25 @@ export class MessagingCrypto {
   open(sealed: string): string {
     const key = this.config.values.MESSAGING_ENCRYPTION_KEY;
     if (!key) throw new Error('MESSAGING_ENCRYPTION_KEY is not set');
-    return openSecret(sealed, key);
+    return new SealKeyring(key, [this.config.values.MESSAGING_ENCRYPTION_KEY_PREVIOUS]).open(sealed);
+  }
+
+  /** Hashes of a normalised address under the current and (during a rotation) the previous key. */
+  hashes(kind: AddressKind, normalised: string): string[] {
+    const key = this.config.values.MESSAGING_HASH_KEY;
+    if (!key) throw new Error('MESSAGING_HASH_KEY is not set');
+    return new HmacKeyring(key, [this.config.values.MESSAGING_HASH_KEY_PREVIOUS]).candidates(`${kind}:${normalised}`);
+  }
+
+  /** `contactHash` under every configured key, current first (lookups by hash). */
+  contactHashes(kind: AddressKind, normalised: string): string[] {
+    if (this.config.values.MESSAGING_HASH_KEY) return this.hashes(kind, normalised);
+    return [this.contactHash(kind, normalised)];
+  }
+
+  /** True when a stored contact hash is this address's hash under any configured key. */
+  matchesContactHash(kind: AddressKind, normalised: string, stored: string | null | undefined): boolean {
+    return !!stored && this.contactHashes(kind, normalised).includes(stored);
   }
 
   /** Keyed hash of a normalised address (hex, 64 chars). */
