@@ -35,12 +35,10 @@ import { type SignInAssessment, SignInProtectionService } from './signin-protect
 
 const INVALID_CREDENTIALS = 'Organisation, email or password is incorrect';
 const CAPTCHA_NEEDED = 'Please complete the check below, then sign in again.';
-/** Placeholder user id for the recognised-device query when the account does not exist (equal timing). */
+/** Placeholder user id for the recognised-device check when the account does not exist (equal timing). */
 const NO_USER_ID = '00000000-0000-0000-0000-000000000000';
 // Precomputed hash used to equalise timing when the user does not exist.
 const DUMMY_HASH_PROMISE = argon2.hash('ngao360-timing-equaliser', { type: argon2.argon2id });
-/** A device (client IP) that completed a sign-in to the account this recently is "recognised". */
-const KNOWN_DEVICE_DAYS = 30;
 
 export interface IssuedTokens {
   access: string;
@@ -50,6 +48,12 @@ export interface IssuedTokens {
 export interface SessionMeta {
   ip: string | null;
   userAgent: string | null;
+  /**
+   * The browser's signed known-device cookie (KNOWN_DEVICE_COOKIE), if any. A "recognised device" is
+   * a browser holding a valid mark for the account, never a client address: people behind the same
+   * carrier NAT or office Wi-Fi share an address.
+   */
+  knownDevice?: string;
 }
 
 @Injectable()
@@ -126,10 +130,10 @@ export class AuthService {
 
     return this.prisma.withTenant(tenant.id, async (tx) => {
       const user = await tx.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email: dto.email } } });
-      // A recognised device skips the delay and the captcha (the same query runs for an unknown
+      // A recognised device skips the delay and the captcha (the same check runs for an unknown
       // account so the timing does not tell them apart).
       if (protection.checkRecognised) {
-        const known = await this.isRecognisedDevice(tx, user?.id ?? NO_USER_ID, meta.ip);
+        const known = this.isRecognisedDevice(meta, tenant.id, user?.id ?? NO_USER_ID);
         if (known && user) protection.onRecognised();
         if (protection.needsCaptcha && !(known && user)) {
           await argon2.verify(await DUMMY_HASH_PROMISE, dto.password).catch(() => false);
@@ -148,10 +152,10 @@ export class AuthService {
       // nor its timing tells an outsider whether the account exists, is locked or is suspended.
       const valid = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
       const now = new Date();
-      // Password lockout is per account but does not apply to a recognised device (an IP that
-      // completed a sign-in in the last KNOWN_DEVICE_DAYS days): an outsider cannot lock the real
-      // person out by sending wrong passwords. Passkey sign-in ignores this lock altogether.
-      const locked = !!user.lockedUntil && user.lockedUntil > now && !(await this.isRecognisedDevice(tx, user.id, meta.ip));
+      // Password lockout is per account but does not apply to a recognised device (a browser holding
+      // a signed mark from a sign-in to this account in the last KNOWN_DEVICE_DAYS days): an outsider
+      // cannot lock the real person out by sending wrong passwords. Passkey sign-in ignores this lock.
+      const locked = !!user.lockedUntil && user.lockedUntil > now && !this.isRecognisedDevice(meta, tenant.id, user.id);
       if (!valid || locked) {
         const failures = user.failedLoginCount + 1;
         const lock = !valid && failures >= this.config.values.LOGIN_MAX_FAILURES;
@@ -210,11 +214,12 @@ export class AuthService {
     });
   }
 
-  /** True when this client IP completed a sign-in to the account recently (see KNOWN_DEVICE_DAYS). */
-  private async isRecognisedDevice(tx: TenantTx, userId: string, ip: string | null): Promise<boolean> {
-    if (!ip) return false;
-    const since = new Date(Date.now() - KNOWN_DEVICE_DAYS * 86_400_000);
-    return (await tx.session.count({ where: { userId, ipAddress: ip, createdAt: { gt: since } } })) > 0;
+  /**
+   * True when this browser carries a valid signed mark from a completed sign-in to the account in the
+   * last KNOWN_DEVICE_DAYS days (TokenService.markKnownDevice). The client address plays no part.
+   */
+  private isRecognisedDevice(meta: SessionMeta, tenantId: string, userId: string): boolean {
+    return this.tokens.isKnownDevice(meta.knownDevice, tenantId, userId);
   }
 
   private async isMfaRequired(tx: TenantTx, tenantId: string, userId: string, mfaEnabled: boolean): Promise<boolean> {

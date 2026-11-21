@@ -32,13 +32,20 @@ d('auth review fixes (integration)', () => {
   });
 
   /** POST from a given client IP (the API trusts one proxy hop). */
-  const postFrom = (ip: string, path: string, body: object, bearer?: string) => {
+  const postFrom = (ip: string, path: string, body: object, bearer?: string, cookie?: string) => {
     let r = request(h.app.getHttpServer()).post(`/api${path}`).set('x-ngao-client', 'web').set('x-forwarded-for', ip);
     if (bearer) r = r.set('authorization', `Bearer ${bearer}`);
+    if (cookie) r = r.set('cookie', cookie);
     return r.send(body);
   };
-  const login = (key: string, password = PASSWORD, ip = '198.51.100.10') =>
-    postFrom(ip, '/auth/login', { tenantSlug: h.slug, email: h.emailOf(key), password });
+  const login = (key: string, password = PASSWORD, ip = '198.51.100.10', cookie?: string) =>
+    postFrom(ip, '/auth/login', { tenantSlug: h.slug, email: h.emailOf(key), password }, undefined, cookie);
+  /** The browser's known-device mark from a response (`ngao_kd=...`), as a Cookie header value. */
+  const knownDevice = (r: request.Response): string => {
+    const raw = ([] as string[]).concat((r.headers['set-cookie'] as unknown as string[] | undefined) ?? []).find((c) => c.startsWith('ngao_kd='));
+    if (!raw) throw new Error('no known-device cookie');
+    return raw.split(';')[0]!;
+  };
 
   async function registerPasskey(key: string): Promise<SoftAuthenticator> {
     const authn = new SoftAuthenticator();
@@ -176,7 +183,9 @@ d('auth review fixes (integration)', () => {
   it('wrong passwords from elsewhere do not lock the real person out of a recognised device or their passkey', async () => {
     await h.mkUser('wes', ['tally.view']);
     const home = '198.51.100.30';
-    expect((await login('wes', PASSWORD, home)).body.status).toBe('AUTHENTICATED');
+    const first = await login('wes', PASSWORD, home);
+    expect(first.body.status).toBe('AUTHENTICATED');
+    const homeDevice = knownDevice(first);
     const authn = await registerPasskey('wes');
     // An outsider locks the account from another IP.
     for (let i = 0; i < 5; i++) expect((await login('wes', 'wrong-password-guess', '203.0.113.99')).status).toBe(401);
@@ -184,8 +193,12 @@ d('auth review fixes (integration)', () => {
     expect(user.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
     // Still refused from an unrecognised device, even with the right password.
     expect((await login('wes', PASSWORD, '203.0.113.99')).status).toBe(401);
-    // From the device the person signed in from before, the right password still works.
-    const fromHome = await login('wes', PASSWORD, home);
+    // Sharing the person's address (carrier NAT, office Wi-Fi) is not their device: still locked.
+    expect((await login('wes', PASSWORD, home)).status).toBe(401);
+    // A forged or other account's mark does not help either.
+    expect((await login('wes', PASSWORD, home, `ngao_kd=${Math.floor(Date.now() / 1000) + 3600}.${'A'.repeat(43)}`)).status).toBe(401);
+    // From the browser the person signed in from before (its known-device mark), the right password still works.
+    const fromHome = await login('wes', PASSWORD, '203.0.113.200', homeDevice);
     expect(fromHome.status).toBe(200);
     expect(fromHome.body.status).toBe('MFA_REQUIRED');
     // And passwordless passkey sign-in is not affected by the password lock.

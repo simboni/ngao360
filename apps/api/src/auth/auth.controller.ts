@@ -19,14 +19,15 @@ import type { AppRequest } from '../common/http/app-request';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AcceptInvitationDto, LoginDto, MfaEnrolConfirmDto, MfaEnrolStartDto, MfaVerifyDto, ReauthDto } from './auth.dto';
 import { AuthService, type SessionMeta } from './auth.service';
-import { type AuthContext, REFRESH_COOKIE } from './auth.types';
+import { type AuthContext, KNOWN_DEVICE_COOKIE, REFRESH_COOKIE } from './auth.types';
 import { TokenService } from './token.service';
 import { AppConfig } from '../config/app-config';
 
 const AUTH_THROTTLE = { default: { limit: Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10), ttl: 60_000 } };
 
 function meta(req: AppRequest): SessionMeta {
-  return { ip: req.ip ?? null, userAgent: req.header('user-agent')?.slice(0, 500) ?? null };
+  const knownDevice = (req.cookies as Record<string, string> | undefined)?.[KNOWN_DEVICE_COOKIE];
+  return { ip: req.ip ?? null, userAgent: req.header('user-agent')?.slice(0, 500) ?? null, ...(knownDevice ? { knownDevice } : {}) };
 }
 
 @Controller('auth')
@@ -55,7 +56,7 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() dto: LoginDto, @Req() req: AppRequest, @Res({ passthrough: true }) res: Response): Promise<LoginResponse> {
     const { response, tokens } = await this.auth.login(dto, meta(req));
-    if (tokens) this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    if (tokens) this.signedIn(req, res, tokens);
     return response;
   }
 
@@ -66,7 +67,7 @@ export class AuthController {
   @HttpCode(200)
   async verifyMfa(@Body() dto: MfaVerifyDto, @Req() req: AppRequest, @Res({ passthrough: true }) res: Response): Promise<MeResponse> {
     const { me, tokens } = await this.auth.verifyMfa(dto.challengeToken, dto.code, meta(req));
-    this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    this.signedIn(req, res, tokens);
     return me;
   }
 
@@ -94,7 +95,7 @@ export class AuthController {
   ): Promise<MeResponse> {
     const who = await this.resolveEnrolSubject(dto.challengeToken, req);
     const { me, tokens } = await this.auth.enrolConfirm(who, dto.factorId, dto.code, !!dto.challengeToken, meta(req));
-    if (tokens) this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    if (tokens) this.signedIn(req, res, tokens);
     return me;
   }
 
@@ -108,6 +109,12 @@ export class AuthController {
     const tokens = await this.auth.refresh(token);
     this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
     return { ok: true };
+  }
+
+  /** A completed sign-in: session cookies, and this browser is remembered for the account. */
+  private signedIn(req: AppRequest, res: Response, tokens: { access: string; refresh: string }): void {
+    this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    this.tokens.markKnownDevice(res, (req.cookies as Record<string, string> | undefined)?.[KNOWN_DEVICE_COOKIE], tokens.access);
   }
 
   @AuthenticatedOnly()

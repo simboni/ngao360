@@ -6,7 +6,7 @@ import { AuthenticatedOnly, CurrentAuth, Public } from '../../common/decorators/
 import type { AppRequest } from '../../common/http/app-request';
 import { RequireReauth } from '../../rbac/require-permission.decorator';
 import type { SessionMeta } from '../auth.service';
-import type { AuthContext } from '../auth.types';
+import { type AuthContext, KNOWN_DEVICE_COOKIE } from '../auth.types';
 import { TokenService } from '../token.service';
 import {
   PasskeyIdParamDto,
@@ -116,6 +116,7 @@ export class PasskeysController {
   ): Promise<LoginResponse> {
     const { me, tokens } = await this.passkeys.loginVerify(dto, meta(req));
     this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    this.tokens.markKnownDevice(res, (req.cookies as Record<string, string> | undefined)?.[KNOWN_DEVICE_COOKIE], tokens.access);
     return { status: 'AUTHENTICATED', me };
   }
 
@@ -140,6 +141,7 @@ export class PasskeysController {
   ): Promise<MeResponse> {
     const { me, tokens } = await this.passkeys.mfaVerify(dto, meta(req));
     this.tokens.setAuthCookies(res, tokens.access, tokens.refresh);
+    this.tokens.markKnownDevice(res, (req.cookies as Record<string, string> | undefined)?.[KNOWN_DEVICE_COOKIE], tokens.access);
     return me;
   }
 }

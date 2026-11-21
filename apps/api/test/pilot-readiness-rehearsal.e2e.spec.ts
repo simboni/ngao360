@@ -97,10 +97,11 @@ function accessFrom(res: request.Response): string {
   return decodeURIComponent(c.split(';')[0]!.slice(ACCESS_COOKIE.length + 1));
 }
 
-function client(app: INestApplication, opts: { bearer?: string; ip?: string } = {}) {
+function client(app: INestApplication, opts: { bearer?: string; ip?: string; cookie?: string } = {}) {
   const from = opts.ip ?? ip();
   const wrap = (r: request.Test) => {
-    const base = r.set('x-ngao-client', 'web').set('x-forwarded-for', from);
+    let base = r.set('x-ngao-client', 'web').set('x-forwarded-for', from);
+    if (opts.cookie) base = base.set('cookie', opts.cookie);
     return opts.bearer ? base.set('authorization', `Bearer ${opts.bearer}`) : base;
   };
   const s = () => request(app.getHttpServer());
@@ -1117,6 +1118,12 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
       })
       .expect(200);
     adminToken = accessFrom(confirm);
+    // The completed sign-in remembers this browser (signed, httpOnly known-device mark).
+    const mark = ([] as string[])
+      .concat((confirm.headers['set-cookie'] as unknown as string[] | undefined) ?? [])
+      .find((c) => c.startsWith('ngao_kd='));
+    expect(mark).toMatch(/HttpOnly/i);
+    (globalThis as { __pilotAdminDevice?: string }).__pilotAdminDevice = mark!.split(';')[0]!;
     expect(
       (await client(appA, { bearer: adminToken }).get('/auth/me').expect(200)).body.user.id,
     ).toBe(subjectId);
@@ -1134,8 +1141,14 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
     }
     const email = emailOf('admin');
     const attacker = ip();
-    const login = (app: INestApplication, password: string, from: string, captchaToken?: string) =>
-      client(app, { ip: from }).post('/auth/login', {
+    const login = (
+      app: INestApplication,
+      password: string,
+      from: string,
+      captchaToken?: string,
+      cookie?: string,
+    ) =>
+      client(app, { ip: from, ...(cookie ? { cookie } : {}) }).post('/auth/login', {
         tenantSlug: slug,
         email,
         password,
@@ -1205,9 +1218,14 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
     expect(new URLSearchParams(captcha.requests.at(-1)!.body).get('sitekey')).toBe(
       CAPTCHA_SITE_KEY,
     );
-    // From their recognised device: neither captcha nor delay.
+    // Someone sharing their public address (carrier NAT) without their browser is not recognised.
     const home = (globalThis as { __pilotAdminHome?: string }).__pilotAdminHome!;
-    const [atHome, homeMs] = await timed(() => login(appB, RECOVERED_PASSWORD, home));
+    expect((await login(appB, RECOVERED_PASSWORD, home)).body.code).toBe('CAPTCHA_REQUIRED');
+    // From their recognised browser (the signed mark), on any address: neither captcha nor delay.
+    const device = (globalThis as { __pilotAdminDevice?: string }).__pilotAdminDevice!;
+    const [atHome, homeMs] = await timed(() =>
+      login(appB, RECOVERED_PASSWORD, ip(), undefined, device),
+    );
     expect(atHome.status).toBe(200);
     expect(atHome.body.status).toBe('MFA_REQUIRED');
     expect(homeMs).toBeLessThan(SIGNIN_DELAY_MS * 2);

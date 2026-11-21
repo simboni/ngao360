@@ -125,12 +125,16 @@ d('sign-in protection (integration, fake captcha verifier)', () => {
     for (const k of [...Object.keys(EXTRA_ENV), 'CAPTCHA_VERIFY_URL']) delete process.env[k];
   });
 
-  const login = (email: string, password: string, ip: string, captchaToken?: string) =>
-    request(h.app.getHttpServer())
-      .post('/api/auth/login')
-      .set('x-ngao-client', 'web')
-      .set('x-forwarded-for', ip)
-      .send({ tenantSlug: h.slug, email, password, ...(captchaToken ? { captchaToken } : {}) });
+  const login = (email: string, password: string, ip: string, captchaToken?: string, cookie?: string) => {
+    let r = request(h.app.getHttpServer()).post('/api/auth/login').set('x-ngao-client', 'web').set('x-forwarded-for', ip);
+    if (cookie) r = r.set('cookie', cookie);
+    return r.send({ tenantSlug: h.slug, email, password, ...(captchaToken ? { captchaToken } : {}) });
+  };
+  const knownDevice = (r: request.Response): string => {
+    const raw = ([] as string[]).concat((r.headers['set-cookie'] as unknown as string[] | undefined) ?? []).find((c) => c.startsWith('ngao_kd='));
+    if (!raw) throw new Error('no known-device cookie');
+    return raw.split(';')[0]!;
+  };
 
   const timed = async <T>(fn: () => Promise<T>): Promise<[T, number]> => {
     const t = Date.now();
@@ -219,7 +223,10 @@ d('sign-in protection (integration, fake captcha verifier)', () => {
     await h.mkUser('dee', ['tally.view']);
     const email = h.emailOf('dee');
     const home = '198.51.100.80';
-    expect((await login(email, PASSWORD, home)).body.status).toBe('AUTHENTICATED');
+    const first = await login(email, PASSWORD, home);
+    expect(first.body.status).toBe('AUTHENTICATED');
+    const device = knownDevice(first);
+    expect(first.headers['set-cookie']!.toString()).toMatch(/ngao_kd=[^;]+;.*HttpOnly/i);
     // Passkey registered from the signed-in session.
     const authn = new SoftAuthenticator();
     const t = await h.token('dee');
@@ -230,8 +237,15 @@ d('sign-in protection (integration, fake captcha verifier)', () => {
     for (let i = 0; i < 4; i += 1) await login(email, 'wrong-password-guess', '203.0.113.80');
     expect((await login(email, PASSWORD, '203.0.113.81')).body.code).toBe('CAPTCHA_REQUIRED');
 
-    // From the recognised device: no captcha and no delay.
-    const [fromHome, ms] = await timed(() => login(email, PASSWORD, home));
+    // Someone sharing the person's public address (carrier NAT, office Wi-Fi) is not recognised:
+    // captcha, delay and counting still apply to them.
+    expect((await login(email, 'wrong-password-guess', home)).body.code).toBe('CAPTCHA_REQUIRED');
+    const [shared, sharedMs] = await timed(() => login(email, 'wrong-password-guess', home, PASS_TOKEN));
+    expect(shared.body).toMatchObject({ code: 'UNAUTHENTICATED', details: { captcha: expect.anything() } });
+    expect(sharedMs).toBeGreaterThanOrEqual(DELAY_MS - 20);
+
+    // From the recognised browser (its signed mark), from any address: no captcha and no delay.
+    const [fromHome, ms] = await timed(() => login(email, PASSWORD, '203.0.113.180', undefined, device));
     expect(fromHome.status).toBe(200);
     expect(['AUTHENTICATED', 'MFA_REQUIRED']).toContain(fromHome.body.status);
     expect(ms).toBeLessThan(DELAY_MS * 2);

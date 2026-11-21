@@ -47,3 +47,10 @@ export interface MfaChallengeClaims {
 
 export const ACCESS_COOKIE = 'ngao_at';
 export const REFRESH_COOKIE = 'ngao_rt';
+/**
+ * Signed "known device" marks (httpOnly, path /api/auth): one per account that completed a sign-in in
+ * this browser in the last KNOWN_DEVICE_DAYS. Only the browser holds it, so someone sharing the
+ * person's public address (carrier NAT, office Wi-Fi) is not "recognised".
+ */
+export const KNOWN_DEVICE_COOKIE = 'ngao_kd';
+export const KNOWN_DEVICE_DAYS = 30;
