@@ -16,3 +16,4 @@ apps/api/storage/
 .env.docker
 next-env.d.ts
 /backups/
+/.load/
