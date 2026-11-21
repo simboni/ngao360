@@ -41,6 +41,7 @@ import {
   type SystemRoleKey,
 } from '@ngao360/shared';
 import { createHash } from 'node:crypto';
+import { AgentDataCipher, developmentAgentDataKey } from '../keyring';
 import type { ReferenceSeedResult } from './reference-data';
 
 export interface FieldSeedOptions {
@@ -53,6 +54,16 @@ export interface FieldSeedOptions {
 }
 
 const YEAR = 2027;
+
+/** Agent personal data is sealed under AGENT_DATA_KEY (development: derived from MFA_ENCRYPTION_KEY). */
+let cipher: AgentDataCipher | null = null;
+function agentCipher(): AgentDataCipher {
+  if (cipher) return cipher;
+  const key = process.env.AGENT_DATA_KEY || (process.env.NODE_ENV !== 'production' && process.env.MFA_ENCRYPTION_KEY ? developmentAgentDataKey(process.env.MFA_ENCRYPTION_KEY) : undefined);
+  if (!key) throw new Error('Set AGENT_DATA_KEY (or MFA_ENCRYPTION_KEY outside production) to seed agent personal data');
+  cipher = new AgentDataCipher(key);
+  return cipher;
+}
 const DOMAIN = 'demo.example.org';
 const AGENT_COUNT = 120;
 /** Stations s1…s110 are in the planned deployment area; s111…s153 are uncovered on purpose. */
@@ -261,12 +272,18 @@ export async function seedField(prisma: PrismaClient, o: FieldSeedOptions): Prom
       data: {
         agentId: agent.id,
         tenantId,
-        nationalIdNumber: nationalId,
-        phone,
-        mpesaNumber: hasMpesa ? (i % 6 === 0 ? `+2547001${pad(i, 5)}` : phone) : null,
-        nextOfKinName: hasKin ? `Synthetic Relative ${i}` : null,
-        nextOfKinPhone: hasKin ? `+2547002${pad(i, 5)}` : null,
-        nextOfKinRelationship: hasKin ? pick(['Sibling', 'Parent', 'Spouse', 'Friend']) : null,
+        // Column-level encryption (AgentDataCipher), as the API writes it.
+        ...agentCipher().sealRow(
+          { tenantId, agentId: agent.id },
+          {
+            nationalIdNumber: nationalId,
+            phone,
+            mpesaNumber: hasMpesa ? (i % 6 === 0 ? `+2547001${pad(i, 5)}` : phone) : null,
+            nextOfKinName: hasKin ? `Synthetic Relative ${i}` : null,
+            nextOfKinPhone: hasKin ? `+2547002${pad(i, 5)}` : null,
+            nextOfKinRelationship: hasKin ? pick(['Sibling', 'Parent', 'Spouse', 'Friend']) : null,
+          },
+        ),
         updatedById: users.fieldCoord!,
       },
     });

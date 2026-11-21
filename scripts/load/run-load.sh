@@ -69,6 +69,7 @@ common_env=(
   API_PORT="$PORT" API_PUBLIC_URL="http://127.0.0.1:$PORT" WEB_ORIGIN="http://127.0.0.1:3100"
   MESSAGING_ENCRYPTION_KEY="${MESSAGING_ENCRYPTION_KEY:-$(head -c 32 /dev/urandom | base64)}"
   MESSAGING_HASH_KEY="${MESSAGING_HASH_KEY:-$(head -c 48 /dev/urandom | base64)}"
+  AGENT_DATA_KEY="${AGENT_DATA_KEY:-$(head -c 32 /dev/urandom | base64)}"
   EMAIL_PROVIDER=log SMS_PROVIDER=log PUSH_PROVIDER=log MALWARE_SCANNER=none CAPTCHA_PROVIDER=none
 )
 cd "$REPO_ROOT/apps/api"

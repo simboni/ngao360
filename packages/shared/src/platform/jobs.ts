@@ -23,6 +23,8 @@ export const JOB_KEYS = {
   AUTH_RECOVERY_EXPIRY: 'auth.recovery_expiry',
   /** Erase personal data of agents withdrawn longer than the field retention period. */
   FIELD_AGENT_RETENTION: 'field.agent_retention',
+  /** Delete finished job_runs rows older than JOB_RUNS_RETENTION_DAYS. */
+  JOB_RUNS_RETENTION: 'platform.job_runs_retention',
 } as const;
 export type JobKey = (typeof JOB_KEYS)[keyof typeof JOB_KEYS];
 export const JobKeySchema = z.enum(Object.values(JOB_KEYS) as [JobKey, ...JobKey[]]);

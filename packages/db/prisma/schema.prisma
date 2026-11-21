@@ -2671,6 +2671,10 @@ model AgentSensitive {
   nextOfKinName         String?  @map("next_of_kin_name")
   nextOfKinPhone        String?  @map("next_of_kin_phone")
   nextOfKinRelationship String?  @map("next_of_kin_relationship")
+  /// Keyed lookup hashes (HMAC under a key derived from AGENT_DATA_KEY) for duplicate checks;
+  /// the six value columns above hold AES-256-GCM ciphertext ("ag1.…", AgentDataCipher).
+  nationalIdHash        String?  @map("national_id_hash") @db.Char(64)
+  phoneHash             String?  @map("phone_hash") @db.Char(64)
   /// Set when the personal data was erased (request or field.agent_retention); stays erased.
   erasedAt              DateTime? @map("erased_at") @db.Timestamptz(3)
   updatedById           String   @map("updated_by_id") @db.Uuid
@@ -2682,6 +2686,8 @@ model AgentSensitive {
   updatedBy User   @relation("AgentSensitiveUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
+  @@index([tenantId, nationalIdHash])
+  @@index([tenantId, phoneHash])
   @@map("agent_sensitive")
 }
 

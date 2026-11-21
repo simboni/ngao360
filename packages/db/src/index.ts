@@ -74,3 +74,4 @@ export async function nextReference(
 
 export * from './security';
 export * from './provisioning';
+export * from './keyring';

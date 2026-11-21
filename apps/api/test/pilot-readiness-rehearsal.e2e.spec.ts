@@ -213,6 +213,7 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
       WEBAUTHN_ORIGINS: ORIGIN,
       MESSAGING_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString('base64'),
       MESSAGING_HASH_KEY: 'synthetic-pilot-messaging-hash-key-0123456789',
+      AGENT_DATA_KEY: Buffer.alloc(32, 23).toString('base64'),
       EMAIL_PROVIDER: 'smtp',
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: String(smtp.port),

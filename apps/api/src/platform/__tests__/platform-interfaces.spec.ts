@@ -115,9 +115,11 @@ describe('provider configuration (names only, fail closed)', () => {
     }
   });
 
-  it('requires messaging keys in production', () => {
+  it('requires messaging keys and the agent data key in production', () => {
     const env = { ...BASE_ENV, NODE_ENV: 'production', APP_DATABASE_URL: 'postgresql://y@localhost/y', COOKIE_SECURE: 'true' } as NodeJS.ProcessEnv;
     expect(() => loadConfig(env)).toThrow(/MESSAGING_ENCRYPTION_KEY/);
-    expect(() => loadConfig({ ...env, MESSAGING_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString('base64'), MESSAGING_HASH_KEY: 'h'.repeat(40) })).not.toThrow();
+    const messaging = { ...env, MESSAGING_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString('base64'), MESSAGING_HASH_KEY: 'h'.repeat(40) };
+    expect(() => loadConfig(messaging)).toThrow(/AGENT_DATA_KEY is required/);
+    expect(() => loadConfig({ ...messaging, AGENT_DATA_KEY: Buffer.alloc(32, 4).toString('base64') })).not.toThrow();
   });
 });

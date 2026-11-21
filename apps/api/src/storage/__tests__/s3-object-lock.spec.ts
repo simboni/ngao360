@@ -119,6 +119,7 @@ describe('S3 driver: Object Lock retention on originals', () => {
       MFA_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
       MESSAGING_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString('base64'),
       MESSAGING_HASH_KEY: Buffer.alloc(32, 3).toString('base64'),
+      AGENT_DATA_KEY: Buffer.alloc(32, 4).toString('base64'),
       STORAGE_DRIVER: 's3',
     };
     expect(() => loadConfig(base)).toThrow(/S3_OBJECT_LOCK_MODE must be COMPLIANCE/);

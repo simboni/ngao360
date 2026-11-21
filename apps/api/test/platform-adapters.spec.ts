@@ -389,6 +389,7 @@ describe('shared-store rate limiting', () => {
         COOKIE_SECURE: 'true',
         MESSAGING_ENCRYPTION_KEY: Buffer.alloc(32, 2).toString('base64'),
         MESSAGING_HASH_KEY: 'h'.repeat(40),
+        AGENT_DATA_KEY: Buffer.alloc(32, 4).toString('base64'),
         REDIS_URL: redisUrl ?? 'redis://127.0.0.1:6379',
       }),
     );

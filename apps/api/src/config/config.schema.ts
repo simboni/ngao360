@@ -160,6 +160,37 @@ export const ConfigSchema = z.object({
   WEBAUTHN_RP_NAME: z.string().default('NGAO360'),
   /** Comma-separated origins allowed in WebAuthn responses; defaults to WEB_ORIGIN. */
   WEBAUTHN_ORIGINS: z.string().optional().transform(emptyToUndefined),
+
+  // --- Sign-in protection (docs/API_CONTRACT.md §37): progressive delay and captcha after repeated
+  // --- password failures, counted per account and per client IP in RATE_LIMIT_STORE.
+  /** Window over which failed password sign-ins are counted. */
+  SIGNIN_FAILURE_WINDOW_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
+  /** Failures for one organisation + e-mail (any IP) before the delay starts and a captcha is asked for. */
+  SIGNIN_ACCOUNT_FAILURES_BEFORE_CHALLENGE: z.coerce.number().int().min(1).default(3),
+  /** Failures from one client IP (any account) before the delay starts and a captcha is asked for. */
+  SIGNIN_IP_FAILURES_BEFORE_CHALLENGE: z.coerce.number().int().min(1).default(10),
+  /** First delay; doubles with each further failure up to SIGNIN_DELAY_MAX_MS. 0 turns the delay off. */
+  SIGNIN_DELAY_BASE_MS: z.coerce.number().int().min(0).max(10_000).default(500),
+  /** Cap of the progressive delay (bounded so an outsider can slow, never stop, a real person). */
+  SIGNIN_DELAY_MAX_MS: z.coerce.number().int().min(0).max(30_000).default(8000),
+
+  // --- Column-level encryption and key rotation (docs/RUNBOOKS.md "Key rotation").
+  /** 32-byte base64 key for agent personal data (AES-256-GCM; lookup HMAC derived from it). Required in production. */
+  AGENT_DATA_KEY: optionalKey32,
+  /** Previous keys, accepted for reading only while `pnpm ops:rotate-keys` re-encrypts (remove afterwards). */
+  AGENT_DATA_KEY_PREVIOUS: optionalKey32,
+  MFA_ENCRYPTION_KEY_PREVIOUS: optionalKey32,
+  MESSAGING_ENCRYPTION_KEY_PREVIOUS: optionalKey32,
+  MESSAGING_HASH_KEY_PREVIOUS: z.string().optional().transform(emptyToUndefined).pipe(z.string().min(32).optional()),
+  /**
+   * HMAC key for campaign identifier fingerprints (contributor ID, payee tax PIN). Defaults to
+   * MFA_ENCRYPTION_KEY; set it to the old MFA key before rotating MFA_ENCRYPTION_KEY, because the
+   * fingerprints cannot be recomputed (only masked values are stored).
+   */
+  IDENTIFIER_FINGERPRINT_KEY: z.string().optional().transform(emptyToUndefined).pipe(z.string().min(32).optional()),
+
+  /** Days finished `job_runs` rows are kept before the `platform.job_runs_retention` job deletes them. */
+  JOB_RUNS_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
 });
 
 export type AppConfigValues = z.infer<typeof ConfigSchema>;
@@ -179,6 +210,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfigValue
     if (!parsed.data.MESSAGING_ENCRYPTION_KEY || !parsed.data.MESSAGING_HASH_KEY) {
       throw new Error('MESSAGING_ENCRYPTION_KEY and MESSAGING_HASH_KEY are required in production');
     }
+    if (!parsed.data.AGENT_DATA_KEY) throw new Error('AGENT_DATA_KEY is required in production');
   }
   const missing = missingProviderEnv(parsed.data);
   if (missing.length > 0) {

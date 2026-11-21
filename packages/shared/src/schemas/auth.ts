@@ -10,8 +10,20 @@ export const LoginRequestSchema = z.object({
   tenantSlug: z.string().trim().toLowerCase().min(2).max(64),
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1).max(512),
+  /** hCaptcha / Turnstile token, sent only when the server asked for one (CAPTCHA_REQUIRED). */
+  captchaToken: z.string().min(1).max(4000).optional(),
 });
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+/**
+ * `details` of a failed password sign-in (401 UNAUTHENTICATED or CAPTCHA_REQUIRED) when the next
+ * attempt must carry a captcha token. Depends only on the failure counters for the submitted
+ * organisation + e-mail and the client address, never on whether the account exists.
+ */
+export const SignInChallengeDetailsSchema = z.object({
+  captcha: z.object({ provider: z.enum(['hcaptcha', 'turnstile']), siteKey: z.string() }),
+});
+export type SignInChallengeDetails = z.infer<typeof SignInChallengeDetailsSchema>;
 
 export const PermissionGrantSchema = z.object({
   permission: PermissionKeySchema,

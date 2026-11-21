@@ -79,6 +79,11 @@ export const ERROR_CODES = {
   CONTACT_NOT_VERIFIED: 'CONTACT_NOT_VERIFIED',
   /** A passkey ceremony failed (unknown credential, bad signature, counter regression, expired challenge). */
   PASSKEY_VERIFICATION_FAILED: 'PASSKEY_VERIFICATION_FAILED',
+  /**
+   * Password sign-in needs a captcha after repeated failures for this organisation + e-mail or from
+   * this address (details: SignInChallengeDetails). Says nothing about whether the account exists.
+   */
+  CAPTCHA_REQUIRED: 'CAPTCHA_REQUIRED',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

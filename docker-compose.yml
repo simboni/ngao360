@@ -34,6 +34,7 @@ x-api-env: &api-env
   # Pilot hardening: secrets from .env.docker; every provider defaults to the log / no-op one.
   MESSAGING_ENCRYPTION_KEY: ${MESSAGING_ENCRYPTION_KEY:?set MESSAGING_ENCRYPTION_KEY}
   MESSAGING_HASH_KEY: ${MESSAGING_HASH_KEY:?set MESSAGING_HASH_KEY}
+  AGENT_DATA_KEY: ${AGENT_DATA_KEY:?set AGENT_DATA_KEY}
   EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}
   EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
   SMTP_HOST: ${SMTP_HOST:-}
