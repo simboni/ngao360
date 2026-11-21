@@ -2,11 +2,11 @@
 
 /**
  * Captcha hook for public writes. Offices use the honeypot and rate limits
- * only (`captchaProvider: 'none'`) unless they configure a provider. A widget
- * for a provider is registered with `registerCaptchaWidget`; none is bundled,
- * because the portal loads no third-party scripts by default. Without a
- * widget the form explains that the check is unavailable, matching the API,
- * which fails closed (no verifier bound → every public write is refused).
+ * only (`captchaProvider: 'none'`) unless they configure a provider. Widgets
+ * for hCaptcha and Turnstile are registered in `captcha-widgets.tsx`; their
+ * script loads only on a portal whose office chose that provider. Without a
+ * widget or site key the form explains that the check is unavailable, matching
+ * the API, which fails closed (no verifier bound → every public write is refused).
  */
 import type { PublicPortalInfo } from '@ngao360/shared';
 import type { ComponentType } from 'react';

@@ -407,6 +407,8 @@ export function financeApprovalBlockers(input: {
   documentCount: number;
   /** Attached documents flagged as infected by the malware scan. */
   infectedDocumentCount?: number;
+  /** Attached documents still waiting for (or erroring in) the malware scan. */
+  pendingDocumentCount?: number;
 }): string[] {
   const out: string[] = [];
   if (!input.categoryId) out.push('CATEGORY_MISSING');
@@ -414,7 +416,10 @@ export function financeApprovalBlockers(input: {
   if ((input.type === 'EXPENSE' || input.type === 'REFUND') && !input.payeeId) out.push('PAYEE_MISSING');
   if (input.type === 'TRANSFER' && !input.counterAccountId) out.push('COUNTER_ACCOUNT_MISSING');
   if (!input.externalReference) out.push('REFERENCE_MISSING');
-  if (input.documentCount < 1) out.push('SUPPORTING_DOCUMENT_MISSING');
+  if (input.documentCount < 1) {
+    // Documents are attached but none has a CLEAN scan yet: say so instead of "missing" (PI3).
+    out.push((input.pendingDocumentCount ?? 0) > 0 ? 'SUPPORTING_DOCUMENT_NOT_CLEAN' : 'SUPPORTING_DOCUMENT_MISSING');
+  }
   if ((input.infectedDocumentCount ?? 0) > 0) out.push('SUPPORTING_DOCUMENT_INFECTED');
   return out;
 }
@@ -427,5 +432,6 @@ export const FINANCE_APPROVAL_BLOCKER_LABELS: Record<string, string> = {
   REFERENCE_MISSING: 'Add the receipt, invoice or payment reference',
   SUPPORTING_DOCUMENT_MISSING: 'Attach at least one supporting document',
   SUPPORTING_DOCUMENT_INFECTED: 'A supporting document failed the malware scan; replace it',
+  SUPPORTING_DOCUMENT_NOT_CLEAN: 'Wait for the malware scan of the supporting document to finish (it must be clean)',
 };
 

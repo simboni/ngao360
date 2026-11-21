@@ -82,6 +82,22 @@ export const PasskeyLoginVerifySchema = z.object({
 });
 export type PasskeyLoginVerify = z.infer<typeof PasskeyLoginVerifySchema>;
 
+/** POST /auth/mfa/passkey/options: passkey as the second factor after the password. */
+export const PasskeyMfaOptionsSchema = z.object({ challengeToken: z.string().min(10) });
+export type PasskeyMfaOptions = z.infer<typeof PasskeyMfaOptionsSchema>;
+
+/** POST /auth/mfa/passkey/verify. */
+export const PasskeyMfaVerifySchema = z.object({
+  challengeToken: z.string().min(10),
+  challengeId: UuidSchema,
+  response: WebauthnJsonSchema,
+});
+export type PasskeyMfaVerify = z.infer<typeof PasskeyMfaVerifySchema>;
+
+/** POST /auth/passkeys/reauth/verify: re-authenticate with a passkey instead of password + TOTP. */
+export const PasskeyReauthVerifySchema = z.object({ challengeId: UuidSchema, response: WebauthnJsonSchema });
+export type PasskeyReauthVerify = z.infer<typeof PasskeyReauthVerifySchema>;
+
 // --- Recovery codes ---------------------------------------------------------------------------
 
 /** Shown once after generation; only argon2id hashes are stored. */

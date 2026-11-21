@@ -22,6 +22,7 @@ import type { Queue } from 'bullmq';
 import { AuditService } from '../../../audit/audit.service';
 import { AppException } from '../../../common/http/app-exception';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { MessageOutboxService } from '../../../platform/messaging/outbox.service';
 import { NOTIFICATION_QUEUE } from '../../../queue/queue.constants';
 import { pathToUnitIds } from '../../../rbac/scope';
 import { sniffMimeType } from '../../../storage/file-sniff';
@@ -79,6 +80,7 @@ export class CasePortalService {
     private readonly storage: StorageService,
     private readonly cases: CasesService,
     @Optional() @InjectQueue(NOTIFICATION_QUEUE) private readonly queue?: Queue,
+    @Optional() private readonly outbox?: MessageOutboxService,
   ) {}
 
   /** Validate and record a parsed submission (abuse checks already passed). */
@@ -170,6 +172,20 @@ export class CasePortalService {
             },
           });
           ackChannel = dto.contactPreference as CaseAcknowledgementJob['channel'];
+          // PI7: the acknowledgement goes into the durable outbox in this same transaction, so it
+          // exists exactly when the request does (with or without job queues). PHONE sends nothing.
+          const address = dto.contactPreference === 'EMAIL' ? dto.email : dto.contactPreference === 'SMS' ? dto.phone : null;
+          if (this.outbox && address && (dto.contactPreference === 'EMAIL' || dto.contactPreference === 'SMS')) {
+            await this.outbox.enqueueCitizenInTx(tx, {
+              tenantId: tenant.id,
+              caseId: row.id,
+              channel: dto.contactPreference,
+              address,
+              payload: { reference: publicReference },
+              idempotencyKey: `case-ack:${row.id}:${dto.contactPreference}`,
+            });
+            ackChannel = null;
+          }
         }
         await tx.caseEvent.create({
           data: { tenantId: tenant.id, caseId: row.id, type: 'SUBMITTED', visibility: 'PUBLIC', actorType: 'REQUESTER', toStatus: 'SUBMITTED' },

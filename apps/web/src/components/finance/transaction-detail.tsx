@@ -299,6 +299,8 @@ function ApprovalChecklist({ tx }: { tx: FinanceTransactionDetail }) {
         : [{ key: 'PAYEE_MISSING', label: 'Payee' }]),
     { key: 'REFERENCE_MISSING', label: 'Receipt / invoice / payment reference' },
     { key: 'SUPPORTING_DOCUMENT_MISSING', label: 'At least one supporting document' },
+    ...(tx.approvalBlockers.includes('SUPPORTING_DOCUMENT_NOT_CLEAN') ? [{ key: 'SUPPORTING_DOCUMENT_NOT_CLEAN', label: 'Malware scan of the supporting document' }] : []),
+    ...(tx.approvalBlockers.includes('SUPPORTING_DOCUMENT_INFECTED') ? [{ key: 'SUPPORTING_DOCUMENT_INFECTED', label: 'Supporting document passed the malware scan' }] : []),
   ];
   const missing = new Set(tx.approvalBlockers);
   return (

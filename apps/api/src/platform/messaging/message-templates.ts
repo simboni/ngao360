@@ -76,10 +76,13 @@ export function renderMessage(input: RenderInput): RenderedMessage {
     case MESSAGE_TEMPLATE_KEYS.AUTH_INVITATION: {
       if (channel !== 'EMAIL') throw new TemplateRenderError('Invitations are sent by e-mail only');
       if (!s.token) throw new TemplateRenderError('Invitation token missing');
-      const link = absolute(webOrigin, `/accept-invitation#token=${encodeURIComponent(s.token)}`);
+      // WA4: the organisation code travels in the link (and the body) so a first administrator of a
+      // new organisation does not need to be told it separately. Only a well-formed code is used.
+      const slug = /^[a-z0-9][a-z0-9-]{1,62}$/.test(str(p.tenantSlug)) ? str(p.tenantSlug) : null;
+      const link = absolute(webOrigin, `/accept-invitation#${slug ? `tenant=${slug}&` : ''}token=${encodeURIComponent(s.token)}`);
       const expires = str(p.expiresAt);
       const lines = [
-        `You have been invited to ${org} on ${productName}.`,
+        `You have been invited to ${org} on ${productName}.` + (slug ? ` Your organisation code is ${slug}.` : ''),
         'Open the link below to set your password. The link works once' + (expires ? ` and expires on ${expires}.` : '.'),
         'If you did not expect this invitation, ignore this e-mail.',
       ];

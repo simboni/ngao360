@@ -226,6 +226,11 @@ describe('templates and address helpers', () => {
     const inv = renderMessage({ ...base, templateKey: 'auth.invitation', channel: 'EMAIL', secrets: { token: 'tok-123' }, payload: { organisationName: 'Synthetic Office' } });
     expect(inv.link).toBe('https://app.ngao360.example/accept-invitation#token=tok-123');
     expect(inv.text).toContain('Synthetic Office');
+    const withCode = renderMessage({ ...base, templateKey: 'auth.invitation', channel: 'EMAIL', secrets: { token: 'tok-123' }, payload: { tenantSlug: 'synthetic-office' } });
+    expect(withCode.link).toBe('https://app.ngao360.example/accept-invitation#tenant=synthetic-office&token=tok-123');
+    expect(withCode.text).toContain('Your organisation code is synthetic-office.');
+    // A malformed code is never put into the link.
+    expect(renderMessage({ ...base, templateKey: 'auth.invitation', channel: 'EMAIL', secrets: { token: 't' }, payload: { tenantSlug: 'x"><script>' } }).link).toBe('https://app.ngao360.example/accept-invitation#token=t');
     expect(() => renderMessage({ ...base, templateKey: 'auth.invitation', channel: 'SMS', secrets: { token: 't' } })).toThrow(TemplateRenderError);
     expect(() => renderMessage({ ...base, templateKey: 'auth.invitation', channel: 'EMAIL' })).toThrow(TemplateRenderError);
     const code = renderMessage({ ...base, templateKey: 'contact.verify_sms', channel: 'SMS', secrets: { code: '123456' } });

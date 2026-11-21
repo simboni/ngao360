@@ -320,6 +320,9 @@ describe('review fixes: contributor identity and infected documents', async () =
   it('an infected supporting document blocks approval and does not count', () => {
     const b = financeApprovalBlockers({ type: 'EXPENSE', categoryId: 'c', payeeId: 'p', contributionSourceId: null, counterAccountId: null, externalReference: 'INV-1', documentCount: 0, infectedDocumentCount: 1 });
     expect(b).toEqual(['SUPPORTING_DOCUMENT_MISSING', 'SUPPORTING_DOCUMENT_INFECTED']);
+    // Attached but not yet scanned clean: a distinct blocker instead of "missing".
+    const pending = financeApprovalBlockers({ type: 'EXPENSE', categoryId: 'c', payeeId: 'p', contributionSourceId: null, counterAccountId: null, externalReference: 'INV-1', documentCount: 0, pendingDocumentCount: 1 });
+    expect(pending).toEqual(['SUPPORTING_DOCUMENT_NOT_CLEAN']);
   });
   it('every compliance flag has a label', () => {
     for (const flag of COMPLIANCE_FLAGS) expect(COMPLIANCE_FLAG_LABELS[flag]).toBeTruthy();

@@ -78,6 +78,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Communications', href: '/comms', icon: Megaphone, anyOf: ['comms.content.view'], module: 'comms' },
       { label: 'Finance', href: '/finance', icon: Banknote, anyOf: ['finance.view'], module: 'finance' },
       { label: 'Finance settings', href: '/finance/settings', icon: SlidersHorizontal, anyOf: ['finance.settings.manage'], module: 'finance' },
+      { label: 'Finance master data', href: '/settings/finance', icon: Banknote, anyOf: ['finance.view'], module: 'finance' },
     ],
   },
   {
@@ -151,6 +152,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // Pilot hardening (S30, S03): owner workspace-admin
       { label: 'System settings', href: '/settings', icon: Settings, anyOf: ['workspace.view', 'workspace.configure'] },
       { label: 'Onboarding', href: '/onboarding', icon: ListChecks, anyOf: ['workspace.configure'] },
+      { label: 'Workspace setup', href: '/setup', icon: Building2, anyOf: ['platform.tenants.manage', 'workspace.configure'] },
     ],
   },
 ];

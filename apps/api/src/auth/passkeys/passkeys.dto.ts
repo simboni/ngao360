@@ -1,6 +1,9 @@
 import {
   PasskeyLoginOptionsSchema,
   PasskeyLoginVerifySchema,
+  PasskeyMfaOptionsSchema,
+  PasskeyMfaVerifySchema,
+  PasskeyReauthVerifySchema,
   PasskeyRegisterVerifySchema,
   PasskeyRenameSchema,
   UuidSchema,
@@ -8,28 +11,7 @@ import {
 import { z } from 'zod';
 import { createZodDto } from '../../common/zod/zod-dto';
 
-/**
- * WebAuthn JSON from the browser is passed through as an opaque object; the server library
- * validates it. Kept local (with the MFA-step and re-authentication schemas below) because the
- * shared package is outside this module's ownership; see docs/CHANGE_REQUESTS.md (auth-recovery).
- */
-const WebauthnJson = z.record(z.unknown());
-
-/** POST /auth/mfa/passkey/options: passkey as the second factor after the password. */
-export const PasskeyMfaOptionsSchema = z.object({ challengeToken: z.string().min(10) });
-export type PasskeyMfaOptions = z.infer<typeof PasskeyMfaOptionsSchema>;
-
-/** POST /auth/mfa/passkey/verify. */
-export const PasskeyMfaVerifySchema = z.object({
-  challengeToken: z.string().min(10),
-  challengeId: UuidSchema,
-  response: WebauthnJson,
-});
-export type PasskeyMfaVerify = z.infer<typeof PasskeyMfaVerifySchema>;
-
-/** POST /auth/passkeys/reauth/verify: re-authenticate with a passkey instead of password + TOTP. */
-export const PasskeyReauthVerifySchema = z.object({ challengeId: UuidSchema, response: WebauthnJson });
-export type PasskeyReauthVerify = z.infer<typeof PasskeyReauthVerifySchema>;
+export type { PasskeyMfaOptions, PasskeyMfaVerify, PasskeyReauthVerify } from '@ngao360/shared';
 
 export class PasskeyRegisterVerifyDto extends createZodDto(PasskeyRegisterVerifySchema) {}
 export class PasskeyRenameDto extends createZodDto(PasskeyRenameSchema) {}

@@ -22,6 +22,9 @@ export function AcceptInvitationForm() {
   useEffect(() => {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     setToken(hash.get('token') ?? '');
+    // Invitation e-mails carry the organisation code too (#tenant=<code>&token=…).
+    const tenant = hash.get('tenant');
+    if (tenant && /^[a-z0-9][a-z0-9-]{1,62}$/.test(tenant)) setTenantSlug(tenant);
   }, []);
 
   const mismatch = confirm.length > 0 && confirm !== password;

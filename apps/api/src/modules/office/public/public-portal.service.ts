@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
 import {
   CASE_CATEGORY_LABELS,
@@ -10,6 +10,7 @@ import {
   portalPrivacyNotice,
 } from '@ngao360/shared';
 import { AppException } from '../../../common/http/app-exception';
+import { CaptchaVerifierRegistry } from '../../../platform/captcha/captcha-verifier';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { TenantModulesService } from '../../../tenant-modules/tenant-modules.service';
 
@@ -30,7 +31,18 @@ export class PublicPortalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly modules: TenantModulesService,
+    @Optional() private readonly captcha?: CaptchaVerifierRegistry,
   ) {}
+
+  /**
+   * Public site key for the widget: the tenant's own when set, else the deployment's key for the
+   * chosen provider (PI4). Never a secret; null when this deployment cannot verify the provider.
+   */
+  private captchaSiteKey(config: OfficeModuleConfig): string | null {
+    if (config.captchaProvider === 'none') return null;
+    if (config.captchaSiteKey) return config.captchaSiteKey;
+    return this.captcha?.get(config.captchaProvider)?.siteKey() ?? null;
+  }
 
   async resolve(tenantSlug: string, feature: 'portal' | 'projects' = 'portal'): Promise<PortalTenant> {
     const tenant = await this.prisma.client.tenant.findUnique({
@@ -85,7 +97,7 @@ export class PublicPortalService {
       categories: config.portalCaseCategories.map((key) => ({ key, label: CASE_CATEGORY_LABELS[key] })),
       constituencies: geography.constituencies,
       wards: geography.wards,
-      captcha: { provider: config.captchaProvider, siteKey: config.captchaSiteKey },
+      captcha: { provider: config.captchaProvider, siteKey: this.captchaSiteKey(config) },
       honeypotField: PUBLIC_HONEYPOT_FIELD,
       maxPhotoBytes: MAX_PUBLIC_PHOTO_BYTES,
       acceptedPhotoTypes: [...PUBLIC_PHOTO_MIME_TYPES],

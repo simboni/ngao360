@@ -178,6 +178,7 @@ export class FinanceService {
       // Fail closed (API contract §34): only documents whose malware scan came back CLEAN count.
       documentCount: t.documents.filter((d) => isScanClean(d.file.malwareScanStatus)).length,
       infectedDocumentCount: t.documents.filter((d) => d.file.malwareScanStatus === 'INFECTED').length,
+      pendingDocumentCount: t.documents.filter((d) => d.file.malwareScanStatus !== 'CLEAN' && d.file.malwareScanStatus !== 'INFECTED').length,
     });
   }
 

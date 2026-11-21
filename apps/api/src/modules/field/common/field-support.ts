@@ -264,7 +264,7 @@ export interface FieldUpload {
 /**
  * Store a field file (evidence or accreditation letter): sniffed images and
  * PDFs only (whatever the declared type), ≤ 25 MB, content-addressed and
- * immutable. Photos are stored as uploaded (gap: EXIF is not stripped yet).
+ * immutable. Images are re-encoded without EXIF or location metadata by `StorageService.storeImmutable` (HEIC refused).
  */
 export async function storeFieldFile(
   storage: StorageService,

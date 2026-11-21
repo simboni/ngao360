@@ -5,6 +5,7 @@ import { Camera, Send, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiRequestError } from '@/lib/api-client';
 import { CaptchaSlot, captchaState } from './captcha';
+import './captcha-widgets';
 import { formatBytes } from './i18n';
 import { photoType, checkPhoto, needsConversion, preparePhoto, type PreparedPhoto } from './photo';
 import { portalApi, portalErrorKey, serverFieldErrors } from './portal-api';

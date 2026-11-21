@@ -258,7 +258,9 @@ describeDb('platform delivery (outbox, contacts, providers, webhooks)', () => {
     await dispatch();
     const mail = smtp.messages.find((m) => m.to.includes(email))!;
     const body = mail.raw.replace(/=\r?\n/g, '');
-    const token = /accept-invitation#token=3D([A-Za-z0-9_-]+)/.exec(body)?.[1];
+    // WA4: the link carries the organisation code before the token.
+    expect(body).toMatch(/accept-invitation#tenant=3D[a-z0-9-]+&token=3D/);
+    const token = /accept-invitation#(?:tenant=3D[a-z0-9-]+&)?token=3D([A-Za-z0-9_-]+)/.exec(body)?.[1];
     expect(token).toBeTruthy();
     expect(JSON.stringify(created.body)).not.toContain(token!);
     // The emailed token is the one the account accepts (its hash is stored, never the token).
