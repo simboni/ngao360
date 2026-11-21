@@ -254,7 +254,7 @@ Web screens: `/admin/users` (S06), `/admin/roles` (S07) and `/admin/audit` (S29)
 | POST | `/admin/users/:id/invitation` | `users.create` **(reauth)** | `{ reason }` | `UserDetail` with a new `invitation` | INVITED users only; the previous token stops working. Audit: `USER_INVITATION_ISSUED`. |
 | PATCH | `/admin/users/:id` | `users.edit` | `UpdateUser` | `UserDetail` | Audit: `USER_UPDATED`. |
 | POST | `/admin/users/:id/status` | `users.suspend` **(reauth)** | `UserStatusChange` | `UserDetail` | Suspending revokes all sessions. A user cannot suspend themself. Audit: `USER_STATUS_CHANGED`. |
-| POST | `/admin/users/:id/reset-mfa` | `users.reset_mfa` **(reauth)** | `ResetMfa` | `UserDetail` | Revokes the factors and sessions. The user must enrol at next login. Audit: `USER_MFA_RESET`. |
+| POST | `/admin/users/:id/reset-mfa` | `users.reset_mfa` **(reauth)** | `ResetMfa` | `UserDetail` | Revokes the TOTP factors, passkeys, unused recovery codes and sessions (§32.1). The user must enrol at next login. Audit: `USER_MFA_RESET`. |
 | GET | `/admin/users/:id/sessions` | `users.view` | `IdParam` | `{ id, createdAt, lastUsedAt, ipAddress, userAgent, mfaVerified }[]` | |
 | POST | `/admin/users/:id/sessions/revoke-all` | `users.suspend` | `{ reason }` | `OkResponse` | Audit: `USER_UPDATED`. |
 
@@ -544,13 +544,13 @@ public writes are (actor `SYSTEM`, `actorId` null).
 
 | Method | Path | Permission | Request | Response | Notes |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/public/:tenantSlug/portal` | public (`read`) | `PublicTenantParam` | `PublicPortalInfo` | Display name, privacy notice (what / why / who / how long / rights / contact, versioned: `CURRENT_PORTAL_PRIVACY_NOTICE_VERSION`), offered categories, constituencies and wards under `portalCountyUnitId`, captcha config, honeypot field name, photo limits, `projectsEnabled`. |
+| GET | `/public/:tenantSlug/portal` | public (`read`) | `PublicTenantParam` | `PublicPortalInfo` | Display name, privacy notice (what / why / who / how long / rights / contact, versioned: `CURRENT_PORTAL_PRIVACY_NOTICE_VERSION`), offered categories, constituencies and wards under `portalCountyUnitId`, captcha config (`provider`, public `siteKey`: the office's own, else the deployment's `CAPTCHA_SITE_KEY` for that provider; never a secret), honeypot field name, photo limits, `projectsEnabled`. |
 
 ### 13.2 Submit a request (S24)
 
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
-| POST | `/public/:tenantSlug/requests` | public (`submit`) | multipart: `payload` (JSON `PublicCaseSubmission`) + optional `photo` | `PublicCaseReceipt` (201) | No account. Checks: abuse check; `privacyNoticeVersion` equals the current version (409 `CONFLICT` "the notice changed, reload"); category offered; `geographicUnitId` is a ward or constituency under `portalCountyUnitId`; photo JPEG/PNG/WebP/HEIC ≤ `MAX_PUBLIC_PHOTO_BYTES` (sniffed). Creates `citizen_cases` (source PORTAL, status SUBMITTED, `createdById` null, random `publicReference`, `trackingCodeHash`), `citizen_case_contacts` only when `contactPreference ≠ NONE` (minimal fields; nothing stored otherwise), event `SUBMITTED` (PUBLIC, actor REQUESTER) and, with a photo, `storeImmutable(purpose: 'CASE_EVIDENCE', uploadedById: config.portalServiceUserId)` + event `EVIDENCE_ADDED` (INTERNAL). Receipt shows `publicReference` and `trackingCode` **once**. An acknowledgement notification is queued only when contact was given and consented (`NOTIFICATION_QUEUE`, channel per preference). Audit: `CASE_PUBLIC_SUBMITTED` (no contact values, no description text). |
+| POST | `/public/:tenantSlug/requests` | public (`submit`) | multipart: `payload` (JSON `PublicCaseSubmission`) + optional `photo` | `PublicCaseReceipt` (201) | No account. Checks: abuse check; `privacyNoticeVersion` equals the current version (409 `CONFLICT` "the notice changed, reload"); category offered; `geographicUnitId` is a ward or constituency under `portalCountyUnitId`; photo JPEG/PNG/WebP/HEIC ≤ `MAX_PUBLIC_PHOTO_BYTES` (sniffed). Creates `citizen_cases` (source PORTAL, status SUBMITTED, `createdById` null, random `publicReference`, `trackingCodeHash`), `citizen_case_contacts` only when `contactPreference ≠ NONE` (minimal fields; nothing stored otherwise), event `SUBMITTED` (PUBLIC, actor REQUESTER) and, with a photo, `storeImmutable(purpose: 'CASE_EVIDENCE', uploadedById: config.portalServiceUserId)` + event `EVIDENCE_ADDED` (INTERNAL). Receipt shows `publicReference` and `trackingCode` **once**. An acknowledgement (SMS or e-mail per preference) is written to the message outbox in the same transaction only when contact was given and consented (`office.case_acknowledgement`, idempotency `case-ack:<caseId>:<channel>`; reference only, never the tracking code); `NOTIFICATION_QUEUE` is used only when no outbox is bound. Audit: `CASE_PUBLIC_SUBMITTED` (no contact values, no description text). |
 
 ### 13.3 Track and feedback
 
@@ -1176,8 +1176,8 @@ external channels move onto the outbox (`notification.alert`, `notification_id` 
 
 **Status: implemented** (`PasskeysService`, `RecoveryCodesService`, `AccountRecoveryService`, `AuthRecoveryModule`;
 tests `apps/api/test/auth-passkeys.integration.spec.ts`, `auth-recovery.integration.spec.ts` with a software
-authenticator). Open items are in CHANGE_REQUESTS.md "Pilot hardening: auth-recovery" (AR1–AR10); in particular §32.4 and
-the reset-mfa addition below are **not yet built** (AR5, AR6).
+authenticator). Open items are in CHANGE_REQUESTS.md "Pilot hardening: auth-recovery" and "integration status"; §32.4
+(invitation delivery) and the reset-mfa addition below are built (AR5, AR6).
 
 WebAuthn ceremonies use `@simplewebauthn/server` with `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS` (comma
 separated, defaults to `WEB_ORIGIN`); `userVerification: 'required'` in options and `requireUserVerification` on verify;
@@ -1210,8 +1210,9 @@ needs MFA answers `MFA_REQUIRED` (not `MFA_ENROLMENT_REQUIRED`).
 | POST | `/auth/passkeys/reauth/options` | Authenticated | — | `PasskeyOptionsResponse` | Re-authentication with a passkey instead of password + TOTP (`REAUTH` challenge). 409 without a passkey. |
 | POST | `/auth/passkeys/reauth/verify` | Authenticated | `{ challengeId, response }` | `OkResponse` | Sets a new access cookie carrying `rat` (like `POST /auth/reauth`). Audit: `AUTH_REAUTH` (`method: passkey`). |
 
-`POST /admin/users/:id/reset-mfa` (§6.1, `users.reset_mfa`, reauth) additionally revokes the user's passkeys and unused
-recovery codes.
+`POST /admin/users/:id/reset-mfa` (§6.1, `users.reset_mfa`, reauth) additionally revokes the user's passkeys
+(`revokedReason: admin_reset`, `revokedById` = the administrator) and unused recovery codes in the same transaction;
+`USER_MFA_RESET.after` carries `passkeysRevoked` and `recoveryCodesRevoked`.
 
 #### 32.2 Recovery codes
 
@@ -1288,10 +1289,10 @@ Workspace sections live in `tenants.settings` (`logoFileId`, `environment`, `def
 | PUT | `/workspace/integrations/:kind` | `workspace.configure` **(reauth)** | `UpdateIntegrationSetting` | `IntegrationStatus` | Provider must be in `INTEGRATION_PROVIDERS[kind]` (400); `config` strict per kind and no secret-looking key (400; DB check too); enabling a provider this server is not configured for → 409 `details.missingEnv`. `captcha` writes `captchaProvider` (`none` unless enabled) and `captchaSiteKey` into the office module config in the same transaction. Audit: `WORKSPACE_INTEGRATION_UPDATED` (before / after; config only). |
 | GET | `/workspace/retention` | `workspace.view` | — | `RetentionResponse` `{ retentionProfile, office, statedUnderNotice, reviewedBy, reviewedAt, lastRun }` | `office` only while the Office module is on. `lastRun` = latest `office.retention` run (tenant row, or platform row read on a connection without a tenant setting; status, times, counts, never error text). |
 | PUT | `/workspace/retention` | `workspace.configure` **(reauth)** | `UpdateRetention` `{ retentionProfile?: minimal \| standard \| extended, office?, newNoticeVersion?, reason }` | same | **Stricter than first contracted:** once Office periods are stated under a privacy-notice version, changing them in **either** direction needs `newNoticeVersion` different from the current and the stated version (409 `CONFLICT`, `details.reason: 'NOTICE_VERSION_REQUIRED'`, `details.statedUnderNotice`); the new version becomes `dataProtection.privacyNoticeVersion` (reviewer = caller) and states the new periods. Without a recorded notice the periods are free and the first notice states them. Records the reviewer (`retention.set`). Audit: `WORKSPACE_RETENTION_UPDATED` (profile, periods, stated notice). |
-| GET | `/workspace/security` | `workspace.view` | — | `WorkspaceSecurityDetail` = `SecuritySettingsResponse` + `{ policy, serverSessionMaxHours, accessTokenMinutes, policyEnforcedAtSignIn, updatedBy, updatedAt }` | Counts only. `usersWithoutMfa` = active privileged users (role `mfa_required`, MFA-requiring permission, `mfaEnabled`, or everyone under `ALL_USERS`) without an active TOTP factor or passkey; `administratorsWithoutRecoveryCodes` = holders of `workspace.configure`, `users.create`, `roles.configure`, `roles.assign`, `users.reset_mfa` or `platform.tenants.manage` without an unused code. `policyEnforcedAtSignIn` is **false** until auth applies the policy (CHANGE_REQUESTS WA1). |
-| PUT | `/workspace/security` | `workspace.configure` **(reauth)** | `UpdateWorkspaceSecurity` `{ mfaPolicy: PRIVILEGED_ROLES \| ALL_USERS, sessionMaxHours \| null, idleTimeoutMinutes \| null, reason }` | `WorkspaceSecurityDetail` | Only tightens the server: `sessionMaxHours` ≤ `JWT_REFRESH_TTL_SECONDS` / 3600 (400); idle ≤ session (400). Audit: `WORKSPACE_PROFILE_UPDATED`, `entityType: WorkspaceSecurityPolicy`. Helpers for auth: `readSecurityPolicy(tx, tenantId)`, `effectiveSignInPolicy(policy, serverRefreshTtl)` in `modules/workspace/workspace-settings.ts`. |
+| GET | `/workspace/security` | `workspace.view` | — | `WorkspaceSecurityDetail` = `SecuritySettingsResponse` + `{ policy, serverSessionMaxHours, accessTokenMinutes, policyEnforcedAtSignIn, updatedBy, updatedAt }` | Counts only. `usersWithoutMfa` = active privileged users (role `mfa_required`, MFA-requiring permission, `mfaEnabled`, or everyone under `ALL_USERS`) without an active TOTP factor or passkey; `administratorsWithoutRecoveryCodes` = holders of `workspace.configure`, `users.create`, `roles.configure`, `roles.assign`, `users.reset_mfa` or `platform.tenants.manage` without an unused code. `policyEnforcedAtSignIn` is **true**: sign-in applies the policy (MFA for everyone under `ALL_USERS` at login, on `/auth/me` and on every request; new sessions end after `sessionMaxHours`; live sessions are refused, and refresh fails, once older than `sessionMaxHours` or idle longer than `idleTimeoutMinutes`, measured from `sessions.last_used_at`, which every authenticated request touches at most once a minute). |
+| PUT | `/workspace/security` | `workspace.configure` **(reauth)** | `UpdateWorkspaceSecurity` `{ mfaPolicy: PRIVILEGED_ROLES \| ALL_USERS, sessionMaxHours \| null, idleTimeoutMinutes \| null, reason }` | `WorkspaceSecurityDetail` | Only tightens the server: `sessionMaxHours` ≤ `JWT_REFRESH_TTL_SECONDS` / 3600 (400); idle ≤ session (400). Audit: `WORKSPACE_SECURITY_POLICY_UPDATED`, `entityType: WorkspaceSecurityPolicy`. Helpers for auth: `readSecurityPolicy(tx, tenantId)`, `effectiveSignInPolicy(policy, serverRefreshTtl)` in `modules/workspace/workspace-settings.ts`. |
 | GET | `/workspace/backup` | `workspace.view` | — | `BackupStatus` `{ last, current, maxAgeDays }` | |
-| POST | `/workspace/backup/verifications` | `workspace.configure` | `RecordBackupVerification` `{ testedOn, backupReference, outcome: RESTORED_OK \| RESTORED_WITH_ISSUES \| FAILED, note }` | `BackupStatus` (201) | A restore test the operator ran outside the app (no credentials in the text); `testedOn` not in the future (400). `current` = RESTORED_OK within 90 days (`backup.verified`). Audit: `WORKSPACE_SETUP_ITEM_UPDATED`, `entityType: BackupVerification`. |
+| POST | `/workspace/backup/verifications` | `workspace.configure` | `RecordBackupVerification` `{ testedOn, backupReference, outcome: RESTORED_OK \| RESTORED_WITH_ISSUES \| FAILED, note }` | `BackupStatus` (201) | A restore test the operator ran outside the app (no credentials in the text); `testedOn` not in the future (400). `current` = RESTORED_OK within 90 days (`backup.verified`). Audit: `WORKSPACE_BACKUP_VERIFIED`, `entityType: BackupVerification`. |
 
 ### 34. Files scanning and durable jobs (`apps/api/src/platform/scanning`, `apps/api/src/platform/jobs`) — owner platform-infra
 
@@ -1337,7 +1338,7 @@ writes a `job_runs` row (RUNNING → SUCCEEDED with counts / FAILED with error; 
 
 ### 35. Display holds and redacted copies (`apps/api/src/modules/tally/controllers/display-holds.controller.ts`) — owner field-pin
 
-HTTP access to what `pnpm demo:redact-34a` does today, through `DisplayHoldsService`. Module `tally`. Every response
+**Status: implemented** (`DisplayHoldsHttpService`; test in `apps/api/test/demo-34a-import.integration.spec.ts`). HTTP access to what `pnpm demo:redact-34a` does, through `DisplayHoldsService`. Every route is `@RequireModule('tally')`; a caller without the permission in play gets 403, an unknown or out-of-scope hold 404; holds on files with no submission are visible only to an organisation-wide grant and are released with the CLI. Module `tally`. Every response
 carries `dataLabel` (parallel-tally disclaimer, plus HISTORICAL DEMO / SIMULATED DATA for demo tenants). A held original
 is never served or altered.
 
