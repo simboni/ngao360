@@ -9,6 +9,9 @@
 # Hardening in this file:
 #   - application containers run as the unprivileged `node` user with a read-only root filesystem,
 #     no Linux capabilities and no-new-privileges; /tmp is a small tmpfs
+#   - the API and worker connect only as the runtime RLS role (ngao_app); migrations run as the
+#     non-superuser schema owner ngao_owner in the one-shot `migrate` container; the Postgres
+#     superuser password is used by nobody but an administrator
 #   - only Caddy publishes ports; Postgres, Redis, MinIO and clamd sit on the internal `backend`
 #     network (no route to the internet), the API and worker reach vendors through `egress`
 #   - the API runs PROCESS_ROLE=api (no BullMQ workers); `worker` runs every processor and job
@@ -33,7 +36,9 @@ x-app-security: &app-security
 
 x-api-env: &api-env
   NODE_ENV: production
-  DATABASE_URL: postgresql://ngao:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/ngao360?schema=public
+  # The API and worker only ever hold the runtime RLS role: DATABASE_URL is the same as
+  # APP_DATABASE_URL here. The schema owner URL is given to the one-shot `migrate` service only.
+  DATABASE_URL: postgresql://ngao_app:${NGAO_APP_DB_PASSWORD:?set NGAO_APP_DB_PASSWORD}@postgres:5432/ngao360?schema=public&connection_limit=${APP_DB_POOL_SIZE:-20}
   APP_DATABASE_URL: postgresql://ngao_app:${NGAO_APP_DB_PASSWORD:?set NGAO_APP_DB_PASSWORD}@postgres:5432/ngao360?schema=public&connection_limit=${APP_DB_POOL_SIZE:-20}
   REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
   QUEUES_ENABLED: "true"
@@ -71,6 +76,9 @@ x-api-env: &api-env
   AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY:-}
   AFRICASTALKING_SENDER_ID: ${AFRICASTALKING_SENDER_ID:-}
   AFRICASTALKING_DLR_TOKEN: ${AFRICASTALKING_DLR_TOKEN:-}
+  CITIZEN_SMS_ALLOWED_PREFIXES: ${CITIZEN_SMS_ALLOWED_PREFIXES:-+254}
+  CITIZEN_MESSAGES_PER_DESTINATION_PER_DAY: ${CITIZEN_MESSAGES_PER_DESTINATION_PER_DAY:-3}
+  CITIZEN_SMS_DAILY_BUDGET_PER_TENANT: ${CITIZEN_SMS_DAILY_BUDGET_PER_TENANT:-200}
   AFRICASTALKING_BASE_URL: ${AFRICASTALKING_BASE_URL:-https://api.africastalking.com}
   PUSH_PROVIDER: ${PUSH_PROVIDER:-log}
   VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
@@ -114,6 +122,8 @@ services:
       POSTGRES_USER: ngao
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       NGAO_APP_DB_PASSWORD: ${NGAO_APP_DB_PASSWORD}
+      # Non-superuser schema owner for migrations and backups (infra/postgres/init-roles.sh).
+      NGAO_OWNER_DB_PASSWORD: ${NGAO_OWNER_DB_PASSWORD:?set NGAO_OWNER_DB_PASSWORD}
       POSTGRES_INITDB_ARGS: --data-checksums
     command:
       - postgres
@@ -200,12 +210,10 @@ services:
     restart: unless-stopped
     # freshclam needs the internet for signature updates; clamd itself listens on backend only.
     networks: [backend, egress]
-    environment:
-      CLAMD_CONF_StreamMaxLength: 30M
-      CLAMD_CONF_MaxFileSize: 30M
-      CLAMD_CONF_MaxScanSize: 100M
+    # Explicit configuration (limits, AlertExceedsMax, AlertEncrypted, ...): deploy/clamav/clamd.conf.
     volumes:
       - clamdb:/var/lib/clamav
+      - ./deploy/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
     healthcheck:
       test: ["CMD", "clamdcheck.sh"]
       interval: 60s
@@ -222,7 +230,10 @@ services:
       target: migrate
     image: ngao360-migrate:${NGAO_VERSION:-latest}
     networks: [backend]
-    environment: *api-env
+    environment:
+      <<: *api-env
+      # Only this one-shot container gets the schema owner (a non-superuser role).
+      DATABASE_URL: postgresql://ngao_owner:${NGAO_OWNER_DB_PASSWORD:?set NGAO_OWNER_DB_PASSWORD}@postgres:5432/ngao360?schema=public
     depends_on:
       postgres:
         condition: service_healthy
@@ -307,6 +318,8 @@ services:
       - "443:443/udp"
     environment:
       NGAO_DOMAIN: ${NGAO_DOMAIN}
+      # Space-separated CIDRs allowed to call the SMS delivery-report webhook (vendor's addresses).
+      AT_WEBHOOK_ALLOWED_IPS: ${AT_WEBHOOK_ALLOWED_IPS:-0.0.0.0/0 ::/0}
     volumes:
       - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data
@@ -318,15 +331,26 @@ services:
   # Nightly logical backup + storage manifest (scripts/ops/backup.sh). Run on demand with
   #   docker compose -f docker-compose.prod.yml --profile ops run --rm backup
   # and schedule it from the host (cron / systemd timer). Copy BACKUP_DIR off the host.
+  # The image is built from deploy/backup/Dockerfile (bash and coreutils installed at build time):
+  # `backend` has no route out, so nothing can be installed when it runs. Run it from a host timer
+  # that alerts on a non-zero exit (docs/RUNBOOKS.md).
   backup:
-    image: postgres:16.10-alpine
+    build:
+      context: deploy/backup
+    image: ngao360-backup:${NGAO_VERSION:-latest}
     profiles: ["ops"]
     networks: [backend]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     environment:
       PGHOST: postgres
       PGPORT: "5432"
-      PGUSER: ngao
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      # The schema owner (not a superuser) can dump every table it owns, RLS included.
+      PGUSER: ngao_owner
+      PGPASSWORD: ${NGAO_OWNER_DB_PASSWORD:?set NGAO_OWNER_DB_PASSWORD}
       PGDATABASE: ngao360
       BACKUP_DIR: /backups
       STORAGE_DRIVER: s3
@@ -336,8 +360,9 @@ services:
       S3_BACKUP_SECRET_ACCESS_KEY: ${S3_BACKUP_SECRET_ACCESS_KEY:-}
     volumes:
       - ./scripts/ops:/ops:ro
-      - ${BACKUP_HOST_DIR:-./backups}:/backups
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash coreutils >/dev/null && bash /ops/backup.sh"]
+      # Outside the repository checkout, so dumps never enter a build context or a commit.
+      - ${BACKUP_HOST_DIR:-/var/lib/ngao360/backups}:/backups
+    entrypoint: ["bash", "/ops/backup.sh"]
     restart: "no"
 
 volumes:

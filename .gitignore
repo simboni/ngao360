@@ -5,10 +5,14 @@ out/
 .turbo/
 coverage/
 *.tsbuildinfo
+# Every env file except the committed examples (production secrets live outside the checkout).
 .env
-.env.local
-.env.*.local
+.env.*
+*.env
 !.env.example
+!*.env.example
+!.env.*.example
+deploy/*.env
 /storage/
 apps/api/storage/
 *.log
@@ -16,4 +20,6 @@ apps/api/storage/
 .env.docker
 next-env.d.ts
 /backups/
+backups/
 /.load/
+dump.rdb

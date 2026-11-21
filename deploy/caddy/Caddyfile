@@ -17,6 +17,15 @@
 	}
 
 	handle /api/* {
+		# Africa's Talking callbacks authenticate by a secret path token: accept them only from the
+		# vendor's published source addresses (AT_WEBHOOK_ALLOWED_IPS, space-separated CIDRs; the
+		# default allows any). `respond` runs before `reverse_proxy` inside this block.
+		@at_webhook_blocked {
+			path /api/webhooks/sms/africastalking/*
+			not remote_ip {$AT_WEBHOOK_ALLOWED_IPS:0.0.0.0/0 ::/0}
+		}
+		respond @at_webhook_blocked 403
+
 		reverse_proxy {
 			dynamic a api 4000 {
 				refresh 10s
@@ -35,12 +44,16 @@
 
 	log {
 		output stdout
-		format json
-		# Never log cookies or authorization headers.
 		format filter {
-			request>headers>Cookie delete
-			request>headers>Authorization delete
-			request>headers>X-Csrf-Token delete
+			wrap json
+			fields {
+				# Never log cookies, authorization headers or the CSRF token.
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers>X-Csrf-Token delete
+				# The SMS callback path carries a secret token (AFRICASTALKING_DLR_TOKEN): redact it.
+				request>uri regexp ^(/api/webhooks/sms/[a-z]+/)[^/?]+ ${1}REDACTED
+			}
 		}
 	}
 }

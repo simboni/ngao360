@@ -5,6 +5,14 @@
 **/coverage
 **/storage
 .env
-.env.local
-.env.docker
+.env.*
+*.env
+!.env.example
+deploy/*.env
+backups
+**/backups
+.load
+**/.load
+dump.rdb
+**/*.dump
 .git
