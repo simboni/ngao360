@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, type OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { sha256Hex, type StoredFile, type StoredFilePurpose, type TenantTx } from '@ngao360/db';
 import { ALLOWED_SOURCE_MIME_TYPES, AUDIT_ACTIONS, ERROR_CODES, JOB_KEYS, MAX_SOURCE_FILE_BYTES } from '@ngao360/shared';
@@ -58,7 +58,7 @@ export interface StoreFileResult {
  * flag potential duplicates for review (never silently discard).
  */
 @Injectable()
-export class StorageService {
+export class StorageService implements OnApplicationBootstrap {
   constructor(
     @Inject(STORAGE_DRIVER) private readonly driver: StorageDriver,
     private readonly audit: AuditService,
@@ -66,6 +66,11 @@ export class StorageService {
     @Optional() private readonly prisma?: PrismaService,
     @Optional() private readonly jobs?: JobScheduler,
   ) {}
+
+  /** With S3 Object Lock configured, refuse to start against a bucket without Object Lock (fail closed). */
+  async onApplicationBootstrap(): Promise<void> {
+    await this.driver.assertObjectLockReady?.();
+  }
 
   get driverKind(): 'LOCAL' | 'S3' {
     return this.driver.kind;

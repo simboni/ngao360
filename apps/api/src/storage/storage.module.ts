@@ -23,6 +23,7 @@ import { STORAGE_DRIVER, type StorageDriver } from './storage.types';
             accessKeyId: v.S3_ACCESS_KEY_ID,
             secretAccessKey: v.S3_SECRET_ACCESS_KEY,
             forcePathStyle: v.S3_FORCE_PATH_STYLE,
+            objectLock: v.S3_OBJECT_LOCK_MODE === 'off' ? null : { mode: v.S3_OBJECT_LOCK_MODE, days: v.S3_OBJECT_LOCK_DAYS },
           });
         }
         return new LocalStorageDriver(v.STORAGE_LOCAL_ROOT, `${v.JWT_ACCESS_SECRET}:storage`);
