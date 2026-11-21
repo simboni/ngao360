@@ -1,7 +1,8 @@
 # NGAO360 runbooks
 
 Procedures for the pilot deployment (`docker-compose.prod.yml`, [OPERATIONS.md](./OPERATIONS.md)). Commands
-assume the stack directory on the host and `C="docker compose -f docker-compose.prod.yml --env-file .env.prod"`.
+assume the stack directory on the host and `C="docker compose -f docker-compose.prod.yml --env-file /etc/ngao360/.env.prod"`
+(the env file lives outside the checkout, mode 600; `.env.prod` is git- and docker-ignored should a copy land in it).
 Every step that changes production is done by two people (one runs, one checks and records). Never paste a
 secret into a ticket, chat or this repository; refer to the vault entry instead.
 
@@ -71,7 +72,8 @@ the vault, update `.env.prod`, then restart the named services (`$C up -d --no-d
 | Secret | Effect of rotating | Procedure |
 | --- | --- | --- |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Every session ends; users sign in again (with MFA). Signed local file URLs (5 min) stop working. | Rotate both, restart `api` and `worker`. Announce outside election day. |
-| `POSTGRES_PASSWORD` (owner `ngao`) | Only migrations use it. | `ALTER ROLE ngao PASSWORD …` (as a superuser), update env, next `migrate` run uses it. |
+| `POSTGRES_PASSWORD` (superuser `ngao`) | Used by no container except `postgres` itself (break-glass administration). | `ALTER ROLE ngao PASSWORD …` (as a superuser), update env. |
+| `NGAO_OWNER_DB_PASSWORD` (schema owner `ngao_owner`, not a superuser) | Only `migrate` and `backup` use it. | `ALTER ROLE ngao_owner PASSWORD …`, update env; the next `migrate` / `backup` run uses it. |
 | `NGAO_APP_DB_PASSWORD` (`ngao_app`) | API and worker reconnect. | `ALTER ROLE ngao_app PASSWORD …`, update env, restart `api` and `worker` immediately (old connections keep working until restart). |
 | `REDIS_PASSWORD` | Queues, rate limits and job schedules pause during the restart; durable jobs resume. | Update env, `$C up -d redis api worker` together. |
 | `S3_APP_SECRET_ACCESS_KEY`, `S3_BACKUP_SECRET_ACCESS_KEY`, `MINIO_ROOT_PASSWORD` | — | Update env, `$C run --rm minio-init` (resets the users to the env values), restart `api` and `worker`. Root: change in MinIO, then env. |

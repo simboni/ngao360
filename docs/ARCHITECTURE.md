@@ -111,9 +111,10 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 ## 4. Multi-tenancy and row-level security
 
 - Every tenant-owned table has `tenant_id`. The only tables without one are `tenants` and the global `permissions` catalogue.
+- `tenants` has its own RLS (migration `20261201000000_privacy_review_fixes`): inside a tenant transaction only the own row is visible (a PLATFORM tenant sees all, through the SECURITY DEFINER `ngao_current_tenant_is_platform()`), only the own row can be updated, and `ngao_app` may update only `display_name`, `timezone`, `locale`, `data_region`, `settings`, `retention_profile` and `updated_at` (never id, slug, type, status or the demo flag). Without a tenant context (sign-in by organisation code, the public portal, background jobs that iterate tenants) rows are readable but not writable.
 - The migration `20261120000100_rls_and_integrity` enables RLS on every table with a `tenant_id` column. It adds a `tenant_isolation` policy, `tenant_id = ngao_current_tenant()`, where `ngao_current_tenant()` reads `current_setting('app.tenant_id', true)`.
 - The API connects as role `ngao_app` (`APP_DATABASE_URL`). That role is not the table owner and has `NOBYPASSRLS`. `withTenant()` runs each unit of work in a transaction that first calls `set_config('app.tenant_id', $1, true)`, which is transaction-local and safe with pooling. With no setting, queries return no rows and inserts fail the policy.
-- Migrations and seed run as the owner role `ngao` (`DATABASE_URL`), which bypasses RLS. Never use it at runtime. In production the API refuses to start without `APP_DATABASE_URL`.
+- Migrations and seed run as the owner role (`DATABASE_URL`), which bypasses RLS. Never use it at runtime. In production the API refuses to start without `APP_DATABASE_URL`. In `docker-compose.prod.yml` the owner is the non-superuser `ngao_owner` (database owner, created by `infra/postgres/init-roles.sh`), given only to the one-shot `migrate` and the `backup` containers; the API and worker receive only the `ngao_app` URL, and the superuser password stays in the `postgres` container.
 - New tenant-owned tables in later migrations must call `SELECT ngao_enable_tenant_rls('<table>');`.
 - Defence in depth: application code still filters by tenant implicitly through RLS, and by geography explicitly through scopes. `apps/api/test/rls.integration.spec.ts` contains cross-tenant tests.
 
@@ -142,6 +143,7 @@ changes). The aim is a predictable base for parallel module work. Upgrade in a d
 
 - `audit_events` is append-only. A trigger rejects UPDATE, DELETE and TRUNCATE, even for the owner role, and the `ngao_app` role also lacks those privileges.
 - Each event stores the actor, action, entity, redacted before and after snapshots, and SHA-256 hashes of each (`canonicalJson`). It also stores the reason, IP, user agent, request id and an `event_hash` over the canonical event content, which provides tamper evidence. `seq` gives a total order.
+- Personal free text (case title and location, referral notes, correspondence names, subject and summary) is never copied into a snapshot: edits record the changed field names (`changedFreeTextFields`), so redaction, erasure and retention can remove the values from the record itself. Contact values are recorded as presence flags only.
 - Use `AuditService.record(entry, tx)` inside the same transaction as the change. Action names are `AUDIT_ACTIONS`. `@Audited()` is a convenience for simple create handlers.
 
 ## 8. Files and evidence integrity
