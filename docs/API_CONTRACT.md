@@ -1351,10 +1351,17 @@ is never served or altered.
 
 ### 36. Field offline PIN and evidence metadata — owner field-pin
 
-No new endpoints. Client: the offline queue key is wrapped with a key derived from a device PIN (PBKDF2-SHA-256 ≥
-600 000 iterations or Argon2id via WASM, random salt per user and device); `/m` asks for the PIN before it opens the queue
-offline; wrong PINs back off and after 10 the local queue is wiped (unsent items lost, the person is told); sign-out
-deletes database and key (unchanged). Server: `POST /field/evidence` (§16.4) and incident / report evidence uploads
+No new endpoints. Client (as built, `apps/web/src/lib/offline/pin.ts`): the offline queue key is wrapped with a key
+derived from a device PIN of 6–12 digits (PBKDF2-SHA-256, 600 000 iterations, random 128-bit salt per user and device;
+AES-GCM wrap bound to the queue database name and the KDF parameters); only the wrapped key and salt are stored. `/m`
+asks for the PIN before it opens the queue, online or offline, on every page load and after 5 minutes of inactivity.
+Each attempt is counted before it is checked; after 3 failures each attempt waits 30 s doubling (cap 30 min); a warning
+shows when 3 attempts are left; after 10 the queue is locked out (no PIN accepted any more). It is **not** wiped
+silently: the screen shows the number of items not uploaded and erases them only when the person types that number. A
+forgotten PIN is reset only online after `POST /auth/reauth` (password, plus the TOTP code when MFA is on), with the same
+count confirmation (items not uploaded cannot be decrypted without the PIN). "Change PIN" checks the current PIN (counted
+like an unlock) and re-wraps the same key. Queues created before the PIN are re-encrypted under a new wrapped key when
+the PIN is first set. Sign-out deletes database and key (unchanged). Server: `POST /field/evidence` (§16.4) and incident / report evidence uploads
 re-encode images and strip EXIF / location metadata server-side (`storage/image-sanitize.ts`) as the PWA already does,
 storing the sanitised bytes as the original.
 

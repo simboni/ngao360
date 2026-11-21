@@ -846,3 +846,15 @@ shows it (409 `NOT_DETECTED`), and a regression (for example a new privileged us
 longer met. Retention periods stated under a privacy-notice version change only with a new version, in either direction
 (stricter than first contracted: keeping data longer than people were told is as much a breach of the notice as deleting it
 earlier). Backups are not taken by the app: an operator records each restore test; 90 days is the freshness window.
+
+## Pilot hardening: field-pin (offline PIN)
+
+Built in `apps/web/src/lib/offline/**` (`pin.ts`, `crypto.ts`, `queue.ts`, `storage.ts`), `components/mobile/**`
+(`pin-gate.tsx`, `mobile-session.tsx`, additive gate and menu items in `mobile-shell.tsx`); contract §36 as built.
+Requests to other owners:
+
+| # | To | Request | Status |
+| --- | --- | --- | --- |
+| FP1 | API (auth / field) + security review | So that a forgotten PIN can upload before discarding (today unsent items are lost: nothing but the PIN can unwrap the queue key), add a server-held key share per user and device: e.g. `PUT /me/offline-key-share` (`{ deviceId }` → server generates 32 random bytes, stores them sealed with tenant_id + RLS, returns them) and `GET /me/offline-key-share?deviceId=` behind a fresh re-auth (audited, never logged), revoked on sign-out / device removal. The client would wrap the queue key a second time under it (`QueueKeyVault` gains `escrowWrap`), so an online reset can unwrap, upload, then re-wrap under the new PIN. Trade-off to decide: the server (or anyone with the user's password and TOTP plus the phone) could then open the queue without the PIN. | Open (design decision) |
+| FP2 | `scripts/smoke/field-smoke.cjs` | `/m` now asks for a PIN. After `signIn(mp, 'agent1@…')`: on the heading "Set a PIN for this phone" fill `getByLabel('New PIN', { exact: true })` and `getByLabel('Repeat the PIN')` with a 6-digit non-sequence PIN (e.g. `583920`) and click "Set PIN"; after every full page load (`mp.goto(...)`), on "Enter your PIN" fill `getByLabel('PIN', { exact: true })` and click "Open". Navigation through links keeps the queue open. | Open |
+| FP3 | docs (`docs/STATUS.md` pipeline table) | Web test count: the field-pin suite adds 16 tests (`offline-pin.test.ts`) and the queue suite 2 (lock). | Open |

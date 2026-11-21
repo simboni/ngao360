@@ -298,18 +298,25 @@ Blueprint 6 (field, registry, agents), 7 (War Room), 11.3 (mobile PWA), 13.4 (of
   `tally.submit` and the tally module is on.
 - The service worker keeps caching the shell and static assets only: never API responses, form
   images or queued records (blueprint 13.4).
-- **Queue design** (to build in `apps/web/src/lib/offline/`): one IndexedDB database per signed-in
-  user and tenant; each record keeps the `LocalQueueEntry` metadata (`packages/shared/src/field/sync.ts`)
-  in clear and the payload (and any photo bytes) encrypted with AES-GCM (WebCrypto, random 96-bit IV
-  per record). The key is a **non-extractable** `CryptoKey` generated on the device and stored in
-  the same IndexedDB database. **What this protects:** other origins and casual inspection of the
-  stored records (dev tools, storage viewers) see only ciphertext. **What it does not protect:**
-  "non-extractable" only blocks JavaScript export; the browser serialises the stored key, raw key
-  material included, into the profile's IndexedDB files beside the ciphertext, so a copy of the
-  browser profile reveals queued payloads. And anyone who opens `/m` on the phone, also offline from
-  the last user's local session, sees queued items and their summaries. **Known gap (priority before
-  a live pilot):** wrap the queue key with a PIN-derived key (PBKDF2 / Argon2) and require the PIN
-  before the queue opens offline (blueprint 11.3 "device PIN").
+- **Queue design** (`apps/web/src/lib/offline/`): one IndexedDB database per signed-in user and tenant; each record
+  keeps the `LocalQueueEntry` metadata (`packages/shared/src/field/sync.ts`) in clear and the payload (and any photo
+  bytes) encrypted with AES-GCM (WebCrypto, random 96-bit IV per record, bound to its entry by associated data).
+- **Device PIN** (`lib/offline/pin.ts`, contract §36): the queue key is generated on the device and stored only
+  **wrapped** under a key derived from the person's PIN (PBKDF2-SHA-256, 600 000 iterations, random 128-bit salt per
+  user and device; the wrap is bound to the database name and the KDF parameters). The unwrapped key exists only in
+  memory, non-extractable, while the queue is open. The PIN (6–12 digits, no repeated digit or plain sequence) is set at
+  the first online sign-in of a field user and is asked for every time `/m` loads, online or offline, and after
+  5 minutes without a touch or key press ("Lock now" in the menu). Each attempt is counted before it is checked;
+  after 3 failures each attempt waits 30 s doubling up to 30 min; the screen warns when 3 are left; after 10 the vault
+  is locked out (no PIN accepted). Nothing is deleted automatically: the person sees how many items were not uploaded
+  and must type that number to erase them. A forgotten PIN is reset only online after `POST /auth/reauth`, again with
+  the count confirmed; without the PIN unsent items cannot be opened, so they are lost (CHANGE_REQUESTS FP1 proposes a
+  server-held key share). Queues created before the PIN are migrated when the PIN is first set (re-encrypted under a
+  new wrapped key, then the old key is deleted; an interrupted migration resumes at the next unlock). A queue without
+  IndexedDB (memory only) has no PIN. **What it protects:** a copy of the profile holds only ciphertext and the wrapped
+  key; someone holding the phone sees nothing without the PIN and has 10 tries. **What it does not:** a short PIN can be
+  brute-forced offline from a copied profile (PBKDF2 only slows each guess; the attempt counter is on the phone), and
+  an unlocked phone in use is open.
   On sign-out the database and key are deleted; confirmed items are deleted after `ACCEPTED`.
 - Idempotency keys are generated when a record is first saved, before any upload, and reused on
   every retry; conflicts are shown to the person (never resolved by overwriting server data).
