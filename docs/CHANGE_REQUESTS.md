@@ -890,3 +890,17 @@ Applied in the integration pass (contract §32–36 updated where the behaviour 
 | FP3 (test counts) | **Applied** (STATUS pipeline table). |
 
 Added in the integration pass: `apps/api/test/pilot-readiness-rehearsal.e2e.spec.ts` (`pnpm test:rehearsal:pilot`, production mode, fake SMTP / Africa's Talking / clamd / captcha, two API instances on Redis, a BullMQ-scheduled scan job) and `scripts/smoke/pilot-smoke.cjs` (`pnpm smoke:pilot`, screenshots `docs/screenshots/pilot-*.png`).
+
+## Go-live gaps: integration status (after the accounts-ui, signin-crypto and tally-erasure agents)
+
+No merge conflicts: the three agents committed to disjoint files on `feat/go-live-gaps`; the one shared fixture line (`field-foundation.integration.spec.ts`, plaintext phone now refused) and the shared docs were additive. No new change requests were filed. Open items they reported are recorded in STATUS (known gaps):
+
+| Item | Status |
+| --- | --- |
+| AR8, AR9, PI8 | **Done** (see above). |
+| Pilot-readiness rehearsal extended (two-person recovery of a privileged account; delay then captcha; agent data encrypted at rest and revealable with audit) | **Applied.** Steps 9–11 of `test/pilot-readiness-rehearsal.e2e.spec.ts`. |
+| Root scripts | **Applied.** `pnpm smoke:golive-gaps` and `pnpm ops:rotate-keys` (forwards to `@ngao360/api`) at the repository root. |
+| Agent national ID / phone duplicate check using the stored lookup hashes | Open (product decision: warn or block; a hard block conflicts with a field fixture that reuses a national ID). |
+| `agent_sensitive_encrypted_check` validation | Operator step after deploy: `pnpm ops:rotate-keys --target agent-data --validate` (RUNBOOKS §3.1). |
+| Sign-in captcha per tenant | Open (deployment-wide `CAPTCHA_PROVIDER` today; owner decision on captcha keys). |
+| FP1 (server-held key share for the offline queue) | Open (design decision, security review). |
