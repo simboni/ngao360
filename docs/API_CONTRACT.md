@@ -1174,11 +1174,25 @@ external channels move onto the outbox (`notification.alert`, `notification_id` 
 
 ### 32. Passkeys, recovery codes and account recovery (`apps/api/src/auth/passkeys`, `apps/api/src/auth/recovery`) — owner auth-recovery, blueprint 15.1, S01
 
-WebAuthn ceremonies use a maintained server library (e.g. `@simplewebauthn/server`) with `WEBAUTHN_RP_ID`,
-`WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS`; `userVerification: 'required'`. Challenges are single-use rows in
-`webauthn_challenges` (SHA-256 only, 5 minutes); spent ones are deleted by `auth.recovery_expiry`. A signature counter
-that goes down is refused by the DB (`PASSKEY_VERIFICATION_FAILED`, audit `AUTH_PASSKEY_FAILED`, security alert to the
-user). A passkey sign-in with user verification counts as an MFA-verified session.
+**Status: implemented** (`PasskeysService`, `RecoveryCodesService`, `AccountRecoveryService`, `AuthRecoveryModule`;
+tests `apps/api/test/auth-passkeys.integration.spec.ts`, `auth-recovery.integration.spec.ts` with a software
+authenticator). Open items are in CHANGE_REQUESTS.md "Pilot hardening: auth-recovery" (AR1–AR10); in particular §32.4 and
+the reset-mfa addition below are **not yet built** (AR5, AR6).
+
+WebAuthn ceremonies use `@simplewebauthn/server` with `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_ORIGINS` (comma
+separated, defaults to `WEB_ORIGIN`); `userVerification: 'required'` in options and `requireUserVerification` on verify;
+attestation `none`. Challenges are single-use rows in `webauthn_challenges` (SHA-256 only, 5 minutes) bound to a purpose
+(`REGISTER`, `AUTHENTICATE`, `REAUTH`) and, except for passwordless sign-in, to the user; a challenge is consumed in its
+own transaction **before** the response is checked, so a failed or replayed response can never be retried with it.
+Spent ones are deleted by `auth.recovery_expiry`. A signature counter that does not increase (when the authenticator
+uses one) is refused by the library and a decrease by the DB (`PASSKEY_VERIFICATION_FAILED`, audit
+`AUTH_PASSKEY_FAILED` with `reason: counter_regression`, security alert to the user). Every ceremony failure answers the
+same 401 `PASSKEY_VERIFICATION_FAILED` and is audited with a reason (`challenge_invalid`, `unknown_credential`,
+`account_unavailable`, `verification_failed`, `counter_regression`). A failed assertion against a known credential
+counts towards the same MFA lockout as TOTP (`MFA_MAX_FAILURES` → `mfaLockedUntil`); a password-locked, MFA-locked,
+suspended or deactivated account is refused like a wrong password. A passkey sign-in with user verification counts as
+an MFA-verified session. At most 10 active passkeys per person (409). With a passkey and no TOTP, a password sign-in that
+needs MFA answers `MFA_REQUIRED` (not `MFA_ENROLMENT_REQUIRED`).
 
 #### 32.1 Passkeys
 
@@ -1190,7 +1204,11 @@ user). A passkey sign-in with user verification counts as an MFA-verified sessio
 | PATCH | `/auth/passkeys/:id` | Authenticated (own) | `PasskeyRename` | `PasskeySummary` | Audit: `AUTH_PASSKEY_RENAMED`. |
 | DELETE | `/auth/passkeys/:id` | Authenticated (own) **(reauth)** | — | `OkResponse` | Revokes (never deletes). Audit: `AUTH_PASSKEY_REVOKED`. |
 | POST | `/auth/passkey/login/options` | Public, rate-limited (IP + account) | `PasskeyLoginOptions` | `PasskeyOptionsResponse` | Same shape whether or not the account exists (no enumeration). |
-| POST | `/auth/passkey/login/verify` | Public, rate-limited | `PasskeyLoginVerify` | `LoginResponse` (`AUTHENTICATED`) | Sets cookies with `mfa = true`. Locked / suspended accounts are refused like a wrong password. Audit: `AUTH_PASSKEY_LOGIN` / `AUTH_PASSKEY_FAILED`. |
+| POST | `/auth/passkey/login/verify` | Public, rate-limited | `PasskeyLoginVerify` | `LoginResponse` (`AUTHENTICATED`) | Sets cookies with `mfa = true`. Locked / suspended accounts are refused like a wrong password. Audit: `AUTH_PASSKEY_LOGIN` / `AUTH_PASSKEY_FAILED`. Options never carry `allowCredentials` (discoverable credentials only); `email` is accepted and ignored. |
+| POST | `/auth/mfa/passkey/options` | Public with a `verify` login challenge, rate-limited | `{ challengeToken }` | `PasskeyOptionsResponse` | Passkey as the **second factor** after the password: `allowCredentials` = the user's active passkeys (the password was already correct). Refused while MFA-locked. |
+| POST | `/auth/mfa/passkey/verify` | same | `{ challengeToken, challengeId, response }` | `MeResponse` | Cookies with `mfa = true`. Audit: `AUTH_PASSKEY_LOGIN` (`step: mfa`), `AUTH_MFA_VERIFIED` (`method: passkey`). The challenge is bound to the token's user. |
+| POST | `/auth/passkeys/reauth/options` | Authenticated | — | `PasskeyOptionsResponse` | Re-authentication with a passkey instead of password + TOTP (`REAUTH` challenge). 409 without a passkey. |
+| POST | `/auth/passkeys/reauth/verify` | Authenticated | `{ challengeId, response }` | `OkResponse` | Sets a new access cookie carrying `rat` (like `POST /auth/reauth`). Audit: `AUTH_REAUTH` (`method: passkey`). |
 
 `POST /admin/users/:id/reset-mfa` (§6.1, `users.reset_mfa`, reauth) additionally revokes the user's passkeys and unused
 recovery codes.
@@ -1200,8 +1218,8 @@ recovery codes.
 | Method | Path | Permission | Request | Response | Notes / Audit |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/auth/recovery-codes` | Authenticated | — | `RecoveryCodesStatus` | Remaining count only. |
-| POST | `/auth/recovery-codes` | Authenticated, MFA-verified session **(reauth)** | — | `RecoveryCodesResponse` (201) | `RECOVERY_CODE_COUNT` codes shown once; argon2id hashes stored; the previous batch's unused codes are revoked. Audit: `AUTH_RECOVERY_CODES_GENERATED` (count only). |
-| POST | `/auth/mfa/recovery` | Public with a `verify` challenge, rate-limited | `RecoveryCodeLogin` | `MeResponse` | Uses one code in place of TOTP (same lockout counter as `/auth/mfa/verify`). Security alert to the user. Audit: `AUTH_RECOVERY_CODE_USED`. |
+| POST | `/auth/recovery-codes` | Authenticated, MFA-verified session **(reauth)** | — | `RecoveryCodesResponse` (201) | `RECOVERY_CODE_COUNT` codes shown once; argon2id hashes stored; the previous batch's unused codes are revoked. 409 when the account has no TOTP factor and no passkey. Audit: `AUTH_RECOVERY_CODES_GENERATED` (count only). |
+| POST | `/auth/mfa/recovery` | Public with a `verify` challenge, rate-limited | `RecoveryCodeLogin` | `MeResponse` | Uses one code in place of TOTP or a passkey (same lockout counter as `/auth/mfa/verify`: a wrong code counts, and a locked account is refused even with a valid code, which stays unused). Spent by a conditional update (two concurrent uses cannot both succeed). Security alert to the user. Audit: `AUTH_RECOVERY_CODE_USED` (remaining count). |
 
 #### 32.3 Assisted account recovery (lost authenticator and codes)
 
@@ -1214,13 +1232,16 @@ most 72 h); approval and completion after expiry are refused by the DB.
 | GET | `/admin/account-recovery` | `users.reset_mfa` | `AccountRecoveryListQuery` | `Paginated<AccountRecoverySummary>` | |
 | GET | `/admin/account-recovery/:id` | `users.reset_mfa` | — | `AccountRecoverySummary` | |
 | POST | `/admin/account-recovery` | `users.reset_mfa` **(reauth)** | `AccountRecoveryCreate` | `AccountRecoverySummary` (201) | Requester = caller ≠ subject (403 `SEPARATION_OF_DUTIES`). Notifies the other holders of `users.reset_mfa` in-app and alerts the subject (`auth.security_alert`). Audit: `ACCOUNT_RECOVERY_REQUESTED`. |
-| POST | `/admin/account-recovery/:id/approve` | `users.reset_mfa` **(reauth)** | `AccountRecoveryDecision` | `AccountRecoverySummary` | Approver ≠ requester ≠ subject (DB check → 403). Generates a single-use token (SHA-256 stored) and enqueues `auth.recovery_link` to the subject's account e-mail. The link is never returned once e-mail delivery is configured; without a channel `devRecoveryPath` is returned to the approver only. Audit: `ACCOUNT_RECOVERY_APPROVED`. |
+| POST | `/admin/account-recovery/:id/approve` | `users.reset_mfa` **(reauth)** | `AccountRecoveryDecision` | `AccountRecoverySummary` | Approver ≠ requester ≠ subject (DB check → 403). Generates a single-use 256-bit token (SHA-256 stored) and enqueues `auth.recovery_link` to the subject's account e-mail (`addressOverride`; token and `recoverPath` only in `secretPayload`). The link is never returned once e-mail delivery is configured (`devRecoveryPath: null`); e-mail configured but no outbox bound → **503**, nothing changes. Without a channel: `devRecoveryPath` (`/recover#tenant=<slug>&token=<token>`) is returned to the approver only, in this response only, and only when `NODE_ENV` is not production; in production without a channel → 409. Expired → 409 `INVALID_TRANSITION`. Audit: `ACCOUNT_RECOVERY_APPROVED` (`delivery`, `messageId`; never the token). |
 | POST | `/admin/account-recovery/:id/reject` | `users.reset_mfa` | `AccountRecoveryDecision` | `AccountRecoverySummary` | Rejecter ≠ subject. Audit: `ACCOUNT_RECOVERY_REJECTED`. |
 | POST | `/admin/account-recovery/:id/cancel` | `users.reset_mfa` | `AccountRecoveryDecision` | `AccountRecoverySummary` | Audit: `ACCOUNT_RECOVERY_CANCELLED`. |
-| POST | `/auth/account-recovery/complete` | Public, rate-limited | `AccountRecoveryComplete` | `OkResponse` | Sets the new password; revokes all sessions, TOTP factors, passkeys and recovery codes; the person enrols MFA at the next sign-in. COMPLETED. Audit: `ACCOUNT_RECOVERY_COMPLETED`. |
+| POST | `/auth/account-recovery/complete` | Public, rate-limited | `AccountRecoveryComplete` | `OkResponse` | Sets the new password; revokes all sessions, TOTP factors, passkeys (`revokedReason: account_recovery`) and unused recovery codes; clears login and MFA locks; `mfaEnabled = false`; the person enrols MFA at the next sign-in when their role needs it. COMPLETED (single use; an unknown, used or expired token → 401 with one generic message). Audit: `USER_MFA_RESET` (counts, request id, approver) and `ACCOUNT_RECOVERY_COMPLETED`. Web: `/recover` reads the token from the URL fragment and removes it from the address bar. |
 
-The `auth.recovery_expiry` job marks overdue PENDING / APPROVED requests EXPIRED (audit `ACCOUNT_RECOVERY_EXPIRED`,
-SYSTEM actor) and deletes spent WebAuthn challenges.
+The `auth.recovery_expiry` job (every 15 minutes, registered by `AuthRecoveryModule`) marks overdue PENDING / APPROVED
+requests EXPIRED (audit `ACCOUNT_RECOVERY_EXPIRED`, SYSTEM actor) and deletes spent WebAuthn challenges (database clock).
+`POST /admin/account-recovery` also refuses a non-ACTIVE subject (409; re-issue the invitation instead) and a second open
+request (409), and notifies in-app only the other holders of `users.reset_mfa` (never the requester or the subject).
+Reject and cancel are refused for the subject (403).
 
 #### 32.4 Invitation delivery (change to §6.1)
 

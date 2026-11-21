@@ -107,12 +107,15 @@ export class AuthService {
       const mfaRequired = await this.isMfaRequired(tx, user.id, user.mfaEnabled);
       if (mfaRequired) {
         const factor = await tx.mfaFactor.findFirst({ where: { userId: user.id, status: 'ACTIVE' } });
-        const purpose = factor ? 'verify' : 'enrol';
+        // An active passkey is also a second factor (API contract §32): the user verifies with it
+        // (POST /auth/mfa/passkey/*) instead of being sent to TOTP enrolment.
+        const passkeys = factor ? 0 : await tx.webauthnCredential.count({ where: { userId: user.id, revokedAt: null } });
+        const purpose = factor || passkeys > 0 ? 'verify' : 'enrol';
         const challengeToken = this.tokens.signMfaChallenge({ sub: user.id, tid: tenant.id, purpose });
         return {
           kind: 'mfa' as const,
           response: {
-            status: factor ? ('MFA_REQUIRED' as const) : ('MFA_ENROLMENT_REQUIRED' as const),
+            status: purpose === 'verify' ? ('MFA_REQUIRED' as const) : ('MFA_ENROLMENT_REQUIRED' as const),
             challengeToken,
           },
         };
@@ -208,42 +211,95 @@ export class AuthService {
     lastUsedStep: bigint | null,
     code: string,
   ): Promise<void> {
+    await this.assertMfaNotLocked(tx, userId);
+    const secret = openSecret(sealed, this.config.values.MFA_ENCRYPTION_KEY);
+    const step = verifyTotp(secret, code, { lastUsedStep: lastUsedStep === null ? null : Number(lastUsedStep) });
+    if (step === null) {
+      await this.recordMfaFailure(tenantId, userId, 'MfaFactor', factorId);
+      throw AppException.unauthenticated('That code is not valid. Check your authenticator app and try again.');
+    }
+    await tx.mfaFactor.update({ where: { id: factorId }, data: { lastUsedStep: BigInt(step) } });
+    await this.clearMfaFailures(tx, userId);
+  }
+
+  /**
+   * Refuse a second-factor attempt while the user's MFA lock is active. Shared by TOTP, passkeys
+   * and recovery codes so every second factor counts against one lockout (API contract §32.2).
+   */
+  async assertMfaNotLocked(tx: TenantTx, userId: string): Promise<void> {
     const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { mfaLockedUntil: true } });
     if (user.mfaLockedUntil && user.mfaLockedUntil > new Date()) {
       throw AppException.unauthenticated('Too many wrong codes. Try again later or contact your administrator.');
     }
-    const secret = openSecret(sealed, this.config.values.MFA_ENCRYPTION_KEY);
-    const step = verifyTotp(secret, code, { lastUsedStep: lastUsedStep === null ? null : Number(lastUsedStep) });
-    if (step === null) {
-      // Counter and audit are written in their own transaction so they survive
-      // the rollback of the caller's transaction.
-      await this.prisma.withTenant(tenantId, async (own) => {
-        const rows = await own.$queryRaw<Array<{ failed_mfa_count: number }>>`
-          UPDATE users SET failed_mfa_count = failed_mfa_count + 1 WHERE id = ${userId}::uuid RETURNING failed_mfa_count`;
-        const failures = rows[0]?.failed_mfa_count ?? 1;
-        const lock = failures >= this.config.values.MFA_MAX_FAILURES;
-        if (lock) {
-          await own.user.update({
-            where: { id: userId },
-            data: { failedMfaCount: 0, mfaLockedUntil: new Date(Date.now() + this.config.values.MFA_LOCK_MINUTES * 60_000) },
-          });
-        }
-        await this.audit.record(
-          {
-            tenantId,
-            actorId: userId,
-            action: lock ? AUDIT_ACTIONS.AUTH_MFA_LOCKED : AUDIT_ACTIONS.AUTH_MFA_FAILED,
-            entityType: 'MfaFactor',
-            entityId: factorId,
-            after: { failures, locked: lock },
-          },
-          own,
-        );
-      });
-      throw AppException.unauthenticated('That code is not valid. Check your authenticator app and try again.');
-    }
-    await tx.mfaFactor.update({ where: { id: factorId }, data: { lastUsedStep: BigInt(step) } });
+  }
+
+  /**
+   * Count one failed second-factor attempt and lock after MFA_MAX_FAILURES. The counter and the
+   * audit are written in their own transaction so they survive the rollback of the caller's
+   * transaction. Returns true when this failure locked the account.
+   */
+  async recordMfaFailure(tenantId: string, userId: string, entityType: string, entityId: string | null): Promise<boolean> {
+    return this.prisma.withTenant(tenantId, async (own) => {
+      const rows = await own.$queryRaw<Array<{ failed_mfa_count: number }>>`
+        UPDATE users SET failed_mfa_count = failed_mfa_count + 1 WHERE id = ${userId}::uuid RETURNING failed_mfa_count`;
+      const failures = rows[0]?.failed_mfa_count ?? 1;
+      const lock = failures >= this.config.values.MFA_MAX_FAILURES;
+      if (lock) {
+        await own.user.update({
+          where: { id: userId },
+          data: { failedMfaCount: 0, mfaLockedUntil: new Date(Date.now() + this.config.values.MFA_LOCK_MINUTES * 60_000) },
+        });
+      }
+      await this.audit.record(
+        {
+          tenantId,
+          actorId: userId,
+          action: lock ? AUDIT_ACTIONS.AUTH_MFA_LOCKED : AUDIT_ACTIONS.AUTH_MFA_FAILED,
+          entityType,
+          entityId,
+          after: { failures, locked: lock },
+        },
+        own,
+      );
+      return lock;
+    });
+  }
+
+  /** Reset the second-factor failure counter after a successful second factor. */
+  async clearMfaFailures(tx: TenantTx, userId: string): Promise<void> {
     await tx.user.update({ where: { id: userId }, data: { failedMfaCount: 0, mfaLockedUntil: null } });
+  }
+
+  /**
+   * Subject of a login challenge at the MFA step ('verify' purpose only: the password was correct
+   * and the user has a second factor). Used by passkey and recovery-code verification.
+   */
+  verifyChallengeSubject(challengeToken: string): { tenantId: string; userId: string } {
+    const c = this.decodeChallenge(challengeToken);
+    if (c.purpose !== 'verify') throw AppException.unauthenticated('Your sign-in step has expired. Please sign in again.');
+    return { tenantId: c.tid, userId: c.sub };
+  }
+
+  /** Create a session (and its login audit) for a sign-in completed by another factor module. */
+  issueSession(tx: TenantTx, tenantId: string, userId: string, mfaVerified: boolean, meta: SessionMeta): Promise<IssuedTokens> {
+    return this.createSession(tx, tenantId, userId, mfaVerified, meta);
+  }
+
+  /** Mark the session re-authenticated now and return an access token carrying `rat`. */
+  async markReauthenticated(tx: TenantTx, auth: AuthContext, method: string): Promise<string> {
+    const now = new Date();
+    await tx.session.update({ where: { id: auth.sessionId }, data: { reauthAt: now } });
+    await this.audit.record(
+      { tenantId: auth.tenantId, actorId: auth.userId, action: AUDIT_ACTIONS.AUTH_REAUTH, entityType: 'Session', entityId: auth.sessionId, after: { method } },
+      tx,
+    );
+    return this.tokens.signAccess({
+      sub: auth.userId,
+      tid: auth.tenantId,
+      sid: auth.sessionId,
+      mfa: auth.mfaVerified,
+      rat: Math.floor(now.getTime() / 1000),
+    });
   }
 
   async hasActiveFactor(who: { tenantId: string; userId: string }): Promise<boolean> {
