@@ -12,6 +12,15 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, ApiRequestError } from './api-client';
 import { clearOfflineDataForSignOut } from './offline/device';
+import { releasePushForSignOut } from '../components/account/push-model';
+
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 interface AuthState {
   me: MeResponse | null;
@@ -59,6 +68,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Before the session ends: this browser stops receiving this person's push notifications
+    // (a shared field or office device must not show them to the next person).
+    await releasePushForSignOut({
+      storage: browserStorage(),
+      revoke: (id) => api.delete(`/me/push/subscriptions/${id}`, { noRefresh: true }),
+      getSubscription: async () => {
+        if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
+        const reg = await navigator.serviceWorker.getRegistration();
+        return reg?.pushManager ? reg.pushManager.getSubscription() : null;
+      },
+    }).catch(() => undefined);
     try {
       await api.post('/auth/logout', undefined, { noRefresh: true });
     } finally {

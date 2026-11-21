@@ -112,3 +112,36 @@ export function safeNotificationPath(link: unknown, origin: string): string {
     return DEFAULT_NOTIFICATION_PATH;
   }
 }
+
+/**
+ * Sign-out on a (possibly shared) device: this browser must stop receiving the signed-out person's
+ * notifications. While still signed in, revoke the server row this browser registered; then
+ * unsubscribe the browser itself (the push service drops the endpoint, so even a row the server
+ * still holds gets 410 and is revoked as expired); then forget the stored id. Each step is
+ * attempted whatever happened to the others, and nothing here blocks the sign-out.
+ */
+export async function releasePushForSignOut(deps: {
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null | undefined;
+  revoke: (subscriptionId: string) => Promise<unknown>;
+  getSubscription: () => Promise<{ unsubscribe(): Promise<boolean> } | null | undefined>;
+}): Promise<{ revoked: boolean; unsubscribed: boolean }> {
+  let revoked = false;
+  let unsubscribed = false;
+  const id = readStoredSubscriptionId(deps.storage);
+  if (id) {
+    try {
+      await deps.revoke(id);
+      revoked = true;
+    } catch {
+      /* offline or session already gone: the browser unsubscribe below still stops delivery */
+    }
+  }
+  try {
+    const sub = await deps.getSubscription();
+    if (sub) unsubscribed = await sub.unsubscribe();
+  } catch {
+    /* no service worker or push manager in this browser: nothing is subscribed */
+  }
+  writeStoredSubscriptionId(deps.storage, null);
+  return { revoked, unsubscribed };
+}
