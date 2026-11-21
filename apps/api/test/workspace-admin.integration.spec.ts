@@ -339,7 +339,7 @@ d('workspace administration (integration)', () => {
     const admin = await as('adminA');
     const got = await admin.get('/workspace/security');
     expect(got.status).toBe(200);
-    expect(got.body).toMatchObject({ policy: { mfaPolicy: 'PRIVILEGED_ROLES', sessionMaxHours: null }, invitationDelivery: 'SHOWN_ONCE', policyEnforcedAtSignIn: false });
+    expect(got.body).toMatchObject({ policy: { mfaPolicy: 'PRIVILEGED_ROLES', sessionMaxHours: null }, invitationDelivery: 'SHOWN_ONCE', policyEnforcedAtSignIn: true });
     expect(got.body.usersWithoutMfa).toBeGreaterThanOrEqual(1);
     expect(got.body.mfaRequiredRoleKeys.length).toBeGreaterThanOrEqual(1);
 
@@ -350,8 +350,33 @@ d('workspace administration (integration)', () => {
     expect(ok.status).toBe(200);
     expect(ok.body.policy).toEqual({ mfaPolicy: 'ALL_USERS', sessionMaxHours: 12, idleTimeoutMinutes: 30 });
     expect(ok.body.updatedBy.id).toBe(h.users.adminA!.id);
-    const audit = await h.owner.auditEvent.findFirstOrThrow({ where: { tenantId: h.a.id, entityType: 'WorkspaceSecurityPolicy' } });
+    const audit = await h.owner.auditEvent.findFirstOrThrow({ where: { tenantId: h.a.id, action: AUDIT_ACTIONS.WORKSPACE_SECURITY_POLICY_UPDATED, entityType: 'WorkspaceSecurityPolicy' } });
     expect(audit.after).toMatchObject({ mfaPolicy: 'ALL_USERS', sessionMaxHours: 12 });
+  });
+
+  it('sign-in applies the tenant policy: MFA for everyone, idle timeout and maximum session length (WA1)', async () => {
+    // Tenant a now has ALL_USERS / 12 h / 30 min (previous test). viewerA holds no MFA-requiring permission.
+    const login = await wsApi(h.app).post('/auth/login', { tenantSlug: h.a.slug, email: 'viewera@ws-it.example.org', password: PASSWORD });
+    expect(login.status).toBe(200);
+    expect(login.body.status).toBe('MFA_ENROLMENT_REQUIRED');
+    // Tenant b keeps the default policy: the same kind of user signs straight in.
+    await h.mkUser('viewerB', h.b, ['workspace.view']);
+    const inB = await wsApi(h.app).post('/auth/login', { tenantSlug: h.b.slug, email: 'viewerb@ws-it.example.org', password: PASSWORD });
+    expect(inB.body.status).toBe('AUTHENTICATED');
+
+    // Idle for longer than 30 minutes: the next request is refused; an active session is touched.
+    const token = await h.token('viewerA');
+    const sid = (JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as { sid: string }).sid;
+    await h.owner.session.update({ where: { id: sid }, data: { lastUsedAt: new Date(Date.now() - 31 * 60_000) } });
+    expect((await wsApi(h.app, token).get('/workspace/profile')).status).toBe(401);
+    const fresh = await h.token('viewerA');
+    const freshSid = (JSON.parse(Buffer.from(fresh.split('.')[1]!, 'base64url').toString('utf8')) as { sid: string }).sid;
+    await h.owner.session.update({ where: { id: freshSid }, data: { lastUsedAt: new Date(Date.now() - 5 * 60_000) } });
+    expect((await wsApi(h.app, fresh).get('/workspace/profile')).status).toBe(200);
+    expect((await h.owner.session.findUniqueOrThrow({ where: { id: freshSid } })).lastUsedAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+    // Older than the 12-hour maximum: refused even when recently used.
+    await h.owner.session.update({ where: { id: freshSid }, data: { createdAt: new Date(Date.now() - 13 * 3_600_000) } });
+    expect((await wsApi(h.app, fresh).get('/workspace/profile')).status).toBe(401);
   });
 
   it('backup: a recorded restore test completes the step only when recent and successful', async () => {

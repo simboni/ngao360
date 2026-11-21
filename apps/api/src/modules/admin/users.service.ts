@@ -49,7 +49,7 @@ export class UsersService {
     invitation: { token: string; tokenHash: string; expiresAt: Date },
   ): Promise<NonNullable<UserDetail['invitation']>> {
     if (!this.outbox || !this.messageProviders?.isDeliveryConfigured('EMAIL')) return toInvitation(invitation);
-    const tenant = await tx.tenant.findUnique({ where: { id: auth.tenantId }, select: { name: true } });
+    const tenant = await tx.tenant.findUnique({ where: { id: auth.tenantId }, select: { name: true, slug: true } });
     const queued = await this.outbox.enqueueInTx(tx, {
       tenantId: auth.tenantId,
       channel: 'EMAIL',
@@ -58,6 +58,7 @@ export class UsersService {
       addressOverride: user.email,
       payload: {
         organisationName: tenant?.name ?? null,
+        tenantSlug: tenant?.slug ?? null,
         expiresAt: new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Nairobi', dateStyle: 'medium', timeStyle: 'short' }).format(invitation.expiresAt),
       },
       secretPayload: { token: invitation.token },
@@ -222,6 +223,13 @@ export class UsersService {
       const before = await this.load(tx, id);
       const now = new Date();
       const factors = await tx.mfaFactor.updateMany({ where: { userId: id, status: { not: 'REVOKED' } }, data: { status: 'REVOKED', revokedAt: now } });
+      // Contract §32.1: an MFA reset also removes every other second factor, so a lost or stolen
+      // passkey or recovery-code sheet stops working with it (rows kept, revoked).
+      const passkeys = await tx.webauthnCredential.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: now, revokedReason: 'admin_reset', revokedById: auth.userId },
+      });
+      const recoveryCodes = await tx.recoveryCode.updateMany({ where: { userId: id, usedAt: null, revokedAt: null }, data: { revokedAt: now } });
       await tx.user.update({ where: { id }, data: { mfaEnabled: false } });
       const sessionsRevoked = await this.revokeSessions(tx, id, 'mfa reset');
       await this.audit.record(
@@ -231,7 +239,7 @@ export class UsersService {
           entityType: 'User',
           entityId: id,
           before: { mfaEnabled: before.mfaEnabled },
-          after: { mfaEnabled: false, factorsRevoked: factors.count, sessionsRevoked },
+          after: { mfaEnabled: false, factorsRevoked: factors.count, passkeysRevoked: passkeys.count, recoveryCodesRevoked: recoveryCodes.count, sessionsRevoked },
           reason: dto.reason,
         },
         tx,

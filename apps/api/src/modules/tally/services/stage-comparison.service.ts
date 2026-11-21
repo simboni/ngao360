@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
+import { AUDIT_ACTIONS } from '@ngao360/shared';
 import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -8,9 +9,9 @@ import { ResultsService } from './results.service';
 import { TallyWorkflowService } from './tally-workflow.service';
 
 /** Audit action marking a finished comparison (read by the tally.comparison_retry job). */
-export const STAGE_COMPARISON_COMPLETED = 'tally.stage_comparison.completed';
+export const STAGE_COMPARISON_COMPLETED = AUDIT_ACTIONS.STAGE_COMPARISON_COMPLETED;
 /** Audit action for a failed retry attempt (the job's backoff counts these). */
-export const STAGE_COMPARISON_FAILED = 'tally.stage_comparison.failed';
+export const STAGE_COMPARISON_FAILED = AUDIT_ACTIONS.STAGE_COMPARISON_FAILED;
 
 /**
  * Compares a verified collation/declaration form (e.g. 37B, 37C) with the

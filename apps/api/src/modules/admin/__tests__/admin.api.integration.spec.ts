@@ -294,6 +294,10 @@ d('Admin API (integration)', () => {
 
   it('resets MFA: revokes factors and sessions, audited with reason', async () => {
     await owner.mfaFactor.create({ data: { tenantId, userId: users.verifier, status: 'ACTIVE', secretEncrypted: 'synthetic', verifiedAt: new Date() } });
+    const passkey = await owner.webauthnCredential.create({
+      data: { tenantId, userId: users.verifier, credentialId: `synthetic-${Date.now()}`, publicKey: Buffer.from('synthetic-key'), deviceLabel: 'Synthetic key' },
+    });
+    await owner.recoveryCode.create({ data: { tenantId, userId: users.verifier, batchId: passkey.id, codeHash: 'synthetic-hash' } });
     const res = await http('owner').post(`/admin/users/${users.verifier}/reset-mfa`).send({ reason: 'Lost synthetic device' });
     expect(res.status).toBe(200);
     expect(res.body.mfaEnabled).toBe(false);
@@ -301,6 +305,12 @@ d('Admin API (integration)', () => {
     expect(factors.every((f) => f.status === 'REVOKED')).toBe(true);
     const ev = await owner.auditEvent.findFirstOrThrow({ where: { tenantId, action: 'user.mfa_reset', entityId: users.verifier } });
     expect(ev.reason).toBe('Lost synthetic device');
+    // Contract §32.1 (AR5): passkeys and unused recovery codes stop working with the reset.
+    const revoked = await owner.webauthnCredential.findUniqueOrThrow({ where: { id: passkey.id } });
+    expect(revoked).toMatchObject({ revokedReason: 'admin_reset', revokedById: users.owner });
+    expect(revoked.revokedAt).not.toBeNull();
+    expect(await owner.recoveryCode.count({ where: { userId: users.verifier, usedAt: null, revokedAt: null } })).toBe(0);
+    expect(ev.after).toMatchObject({ passkeysRevoked: 1, recoveryCodesRevoked: 1 });
     await mkPersona('verifier', tenantId, roles.verifier!, undefined, { userId: users.verifier });
     expect((await http('owner').post(`/admin/users/${users.owner}/reset-mfa`).send({ reason: 'self' })).status).toBe(403);
   });

@@ -33,10 +33,11 @@ import { loadMfaPosture } from './mfa-posture';
 import { backupIsCurrent, lockTenant, readWorkspaceSettings, retentionChangeNeedsNewNotice, writeSettingsSection } from './workspace-settings';
 
 /**
- * Sign-in does not read the tenant policy yet (docs/CHANGE_REQUESTS.md WA1, owner auth). The S30
- * screen says so instead of implying the policy is enforced.
+ * Sign-in applies the tenant policy (WA1): MFA for all users at login and on every request, the
+ * maximum session length when a session is created, refreshed or used, and the idle timeout
+ * against the session's last use (`AuthService`, `PermissionService.loadAuthContext`).
  */
-export const SIGN_IN_ENFORCES_TENANT_POLICY = false;
+export const SIGN_IN_ENFORCES_TENANT_POLICY = true;
 
 const CHANNEL_OF: Partial<Record<IntegrationKind, MessageChannel>> = { email: 'EMAIL', sms: 'SMS', push: 'PUSH' };
 
@@ -356,7 +357,7 @@ export class WorkspaceSettingsService {
       await this.audit.record(
         {
           tenantId: auth.tenantId,
-          action: AUDIT_ACTIONS.WORKSPACE_PROFILE_UPDATED,
+          action: AUDIT_ACTIONS.WORKSPACE_SECURITY_POLICY_UPDATED,
           entityType: 'WorkspaceSecurityPolicy',
           entityId: auth.tenantId,
           before: { mfaPolicy: before.mfaPolicy, sessionMaxHours: before.sessionMaxHours, idleTimeoutMinutes: before.idleTimeoutMinutes },
@@ -414,7 +415,7 @@ export class WorkspaceSettingsService {
       await this.audit.record(
         {
           tenantId: auth.tenantId,
-          action: AUDIT_ACTIONS.WORKSPACE_SETUP_ITEM_UPDATED,
+          action: AUDIT_ACTIONS.WORKSPACE_BACKUP_VERIFIED,
           entityType: 'BackupVerification',
           entityId: 'backup.verified',
           before: before ? { testedOn: before.testedOn, outcome: before.outcome, backupReference: before.backupReference } : null,

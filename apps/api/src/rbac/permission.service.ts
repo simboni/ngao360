@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { TenantTx } from '@ngao360/db';
 import {
   MFA_REQUIRING_PERMISSIONS,
@@ -7,12 +7,20 @@ import {
 } from '@ngao360/shared';
 import type { AccessClaims, AuthContext } from '../auth/auth.types';
 import { AppException } from '../common/http/app-exception';
+import { AppConfig } from '../config/app-config';
+import { effectiveSignInPolicy, readSecurityPolicy } from '../modules/workspace/workspace-settings';
 import { PrismaService } from '../prisma/prisma.service';
 import { type PermissionScope, scopeFromGrants } from './scope';
 
 @Injectable()
 export class PermissionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly config?: AppConfig,
+  ) {}
+
+  /** Sessions are touched at most this often (idle-timeout bookkeeping). */
+  private static readonly TOUCH_INTERVAL_MS = 60_000;
 
   /**
    * Build the AuthContext for verified access-token claims: checks the session
@@ -24,9 +32,24 @@ export class PermissionService {
       const now = new Date();
       const session = await tx.session.findFirst({
         where: { id: claims.sid, userId: claims.sub, revokedAt: null, expiresAt: { gt: now } },
-        select: { id: true, reauthAt: true },
+        select: { id: true, reauthAt: true, createdAt: true, lastUsedAt: true },
       });
       if (!session) throw AppException.unauthenticated('Session expired. Please sign in again.');
+      // Tenant security policy (S30, contract §33.3), applied to live sessions too: a maximum session
+      // length and an idle timeout set after sign-in end existing sessions at their next request.
+      const policy = effectiveSignInPolicy(
+        await readSecurityPolicy(tx, claims.tid),
+        this.config?.values.JWT_REFRESH_TTL_SECONDS ?? Number.POSITIVE_INFINITY,
+      );
+      if (now.getTime() - session.createdAt.getTime() > policy.refreshTtlSeconds * 1000) {
+        throw AppException.unauthenticated('Session expired. Please sign in again.');
+      }
+      if (policy.idleTimeoutSeconds !== null && now.getTime() - session.lastUsedAt.getTime() > policy.idleTimeoutSeconds * 1000) {
+        throw AppException.unauthenticated('Signed out after a period of inactivity. Please sign in again.');
+      }
+      if (now.getTime() - session.lastUsedAt.getTime() > PermissionService.TOUCH_INTERVAL_MS) {
+        await tx.session.update({ where: { id: session.id }, data: { lastUsedAt: now } });
+      }
       const user = await tx.user.findUnique({
         where: { id: claims.sub },
         select: { id: true, email: true, displayName: true, status: true, mfaEnabled: true },
@@ -36,7 +59,7 @@ export class PermissionService {
       const { grants, roles, roleRequiresMfa } = await this.loadGrants(tx, user.id, now);
       const permissions = new Set<PermissionKey>(grants.map((g) => g.permission));
       const mfaRequired =
-        user.mfaEnabled || roleRequiresMfa || [...permissions].some((p) => MFA_REQUIRING_PERMISSIONS.has(p));
+        user.mfaEnabled || policy.mfaForEveryone || roleRequiresMfa || [...permissions].some((p) => MFA_REQUIRING_PERMISSIONS.has(p));
       const rat = claims.rat ?? (session.reauthAt ? Math.floor(session.reauthAt.getTime() / 1000) : null);
 
       return {

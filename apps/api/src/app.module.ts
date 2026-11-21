@@ -20,6 +20,7 @@ import { OfficeModule } from './modules/office/office.module';
 import { TallyModule } from './modules/tally/tally.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { PlatformModule } from './platform/platform.module';
+import { RATE_LIMIT_STORE, type RateLimitStore, RateLimitThrottlerStorage } from './platform/ratelimit';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RbacGuard } from './rbac/rbac.guard';
@@ -31,11 +32,14 @@ import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
 @Module({
   imports: [
     ConfigModule,
+    // Global per-IP throttle counted in the shared rate-limit store (Redis in production), so the
+    // limit holds across API instances (PI1). Store down -> 503, never unlimited.
     ThrottlerModule.forRootAsync({
-      inject: [AppConfig],
-      useFactory: (config: AppConfig) => [
-        { ttl: config.values.RATE_LIMIT_TTL_SECONDS * 1000, limit: config.values.RATE_LIMIT_MAX },
-      ],
+      inject: [AppConfig, RATE_LIMIT_STORE],
+      useFactory: (config: AppConfig, store: RateLimitStore) => ({
+        throttlers: [{ ttl: config.values.RATE_LIMIT_TTL_SECONDS * 1000, limit: config.values.RATE_LIMIT_MAX }],
+        storage: new RateLimitThrottlerStorage(store),
+      }),
     }),
     PrismaModule,
     AuditModule,

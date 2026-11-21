@@ -29,6 +29,7 @@ import { PermissionService } from '../rbac/permission.service';
 import type { AuthContext, MfaChallengeClaims } from './auth.types';
 import { TokenService } from './token.service';
 import { tenantDataLabel } from '../common/provenance/data-label';
+import { effectiveSignInPolicy, readSecurityPolicy } from '../modules/workspace/workspace-settings';
 
 const INVALID_CREDENTIALS = 'Organisation, email or password is incorrect';
 // Precomputed hash used to equalise timing when the user does not exist.
@@ -104,7 +105,7 @@ export class AuthService {
 
       await tx.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
 
-      const mfaRequired = await this.isMfaRequired(tx, user.id, user.mfaEnabled);
+      const mfaRequired = await this.isMfaRequired(tx, tenant.id, user.id, user.mfaEnabled);
       if (mfaRequired) {
         const factor = await tx.mfaFactor.findFirst({ where: { userId: user.id, status: 'ACTIVE' } });
         // An active passkey is also a second factor (API contract §32): the user verifies with it
@@ -131,10 +132,17 @@ export class AuthService {
     return { response: { status: 'AUTHENTICATED', me }, tokens: outcome.tokens };
   }
 
-  private async isMfaRequired(tx: TenantTx, userId: string, mfaEnabled: boolean): Promise<boolean> {
+  private async isMfaRequired(tx: TenantTx, tenantId: string, userId: string, mfaEnabled: boolean): Promise<boolean> {
     if (mfaEnabled) return true;
+    // Tenant security policy (S30, contract §33.3): "MFA for all users" makes everyone enrol.
+    if ((await this.signInPolicy(tx, tenantId)).mfaForEveryone) return true;
     const { grants, roleRequiresMfa } = await this.permissions.loadGrants(tx, userId);
     return roleRequiresMfa || grants.some((g) => MFA_REQUIRING_PERMISSIONS.has(g.permission));
+  }
+
+  /** The tenant's sign-in policy, which can only tighten the server limits. */
+  private async signInPolicy(tx: TenantTx, tenantId: string) {
+    return effectiveSignInPolicy(await readSecurityPolicy(tx, tenantId), this.config.values.JWT_REFRESH_TTL_SECONDS);
   }
 
   /** Create a session and issue tokens; records the login audit event. */
@@ -146,6 +154,7 @@ export class AuthService {
     meta: SessionMeta,
   ): Promise<IssuedTokens> {
     const now = new Date();
+    const { refreshTtlSeconds } = await this.signInPolicy(tx, tenantId);
     const session = await tx.session.create({
       data: {
         tenantId,
@@ -154,7 +163,7 @@ export class AuthService {
         mfaVerifiedAt: mfaVerified ? now : null,
         userAgent: meta.userAgent,
         ipAddress: meta.ip,
-        expiresAt: new Date(now.getTime() + this.config.values.JWT_REFRESH_TTL_SECONDS * 1000),
+        expiresAt: new Date(now.getTime() + refreshTtlSeconds * 1000),
       },
     });
     const refresh = this.tokens.signRefresh({ sub: userId, tid: tenantId, sid: session.id });
@@ -481,6 +490,12 @@ export class AuthService {
       }
       const user = await tx.user.findUnique({ where: { id: claims.sub }, select: { status: true } });
       if (!user || user.status !== 'ACTIVE') throw AppException.unauthenticated('Account is not active');
+      // A policy tightened after sign-in applies to existing sessions too: maximum length and idle time.
+      const policy = await this.signInPolicy(tx, claims.tid);
+      const now = Date.now();
+      const tooOld = now - session.createdAt.getTime() > policy.refreshTtlSeconds * 1000;
+      const idle = policy.idleTimeoutSeconds !== null && now - session.lastUsedAt.getTime() > policy.idleTimeoutSeconds * 1000;
+      if (tooOld || idle) throw AppException.unauthenticated('Session expired. Please sign in again.');
 
       const next = this.tokens.signRefresh({ sub: claims.sub, tid: claims.tid, sid: session.id });
       await tx.session.update({
@@ -571,7 +586,10 @@ export class AuthService {
         grants,
         modules: effectiveModules(moduleRows),
         mfaRequired:
-          user.mfaEnabled || roleRequiresMfa || permissions.some((p) => MFA_REQUIRING_PERMISSIONS.has(p)),
+          user.mfaEnabled ||
+          (await this.signInPolicy(tx, tenant.id)).mfaForEveryone ||
+          roleRequiresMfa ||
+          permissions.some((p) => MFA_REQUIRING_PERMISSIONS.has(p)),
         mfaVerified,
       };
     });

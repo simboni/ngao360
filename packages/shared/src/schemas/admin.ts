@@ -472,5 +472,10 @@ export const AUDIT_ACTIONS = {
   WORKSPACE_SETUP_ITEM_UPDATED: 'workspace.setup_item.updated',
   WORKSPACE_INTEGRATION_UPDATED: 'workspace.integration.updated',
   WORKSPACE_RETENTION_UPDATED: 'workspace.retention.updated',
+  WORKSPACE_SECURITY_POLICY_UPDATED: 'workspace.security_policy.updated',
+  WORKSPACE_BACKUP_VERIFIED: 'workspace.backup.verified',
+  // Tally cross-stage comparison (read by the tally.comparison_retry job).
+  STAGE_COMPARISON_COMPLETED: 'tally.stage_comparison.completed',
+  STAGE_COMPARISON_FAILED: 'tally.stage_comparison.failed',
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

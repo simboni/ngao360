@@ -18,6 +18,9 @@ import { StorageService } from '../src/storage/storage.service';
 import { APP_URL, type CampaignFixture, createCampaignFixture, describeDb, syntheticPdf } from './campaign-fixtures';
 import { type FakeClamd, startFakeClamd } from './platform-fakes';
 
+// The office.retention run walks every tenant in the shared test database: allow it time under parallel load.
+jest.setTimeout(60_000);
+
 describeDb('platform files and jobs (scanning, quarantine, metadata, durable jobs)', () => {
   let f: CampaignFixture;
   let clamd: FakeClamd;
