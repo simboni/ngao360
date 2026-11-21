@@ -27,7 +27,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { runRotation, type RotationKeys } from '../src/cli/key-rotation/rotation';
+import { ROTATION_EXIT_CODES, rotationVerdict, runRotation, type RotationKeys } from '../src/cli/key-rotation/rotation';
 import { AppConfig } from '../src/config/app-config';
 import { loadConfig } from '../src/config/config.schema';
 import { JobRunsRetentionService } from '../src/platform/jobs/handlers/job-runs-retention.service';
@@ -171,7 +171,10 @@ d('key rotation (integration)', () => {
     expect(new SealKeyring(OLD.mfa).tryOpen(before.secretEncrypted)).not.toBeNull();
 
     const run = await runRotation(owner, { target: 'mfa', keys: KEYS, tenantId });
-    expect(run.complete).toBe(true);
+    // A run limited to one tenant never says the previous key can be retired.
+    expect(run).toMatchObject({ complete: false, tenantComplete: true, tenantId });
+    expect(rotationVerdict(run)).toBe('tenant-complete');
+    expect(ROTATION_EXIT_CODES[rotationVerdict(run)]).not.toBe(0);
     expect(run.steps['mfa_factors.secret']).toMatchObject({ rewritten: 1, current: 0 });
     const after = await owner.mfaFactor.findUniqueOrThrow({ where: { id: factorId } });
     expect(new SealKeyring(NEW.mfa).open(after.secretEncrypted)).toBe('JBSWY3DPEHPK3PXP');
@@ -183,7 +186,7 @@ d('key rotation (integration)', () => {
 
   it('messaging: re-seals and re-hashes guarded rows; the guards still refuse anything else', async () => {
     const run = await runRotation(owner, { target: 'messaging', keys: KEYS, tenantId });
-    expect(run.complete).toBe(true);
+    expect(run).toMatchObject({ complete: false, tenantComplete: true });
     expect(run.steps['message_outbox.address']).toMatchObject({ rewritten: 1, unreadable: 0 });
     expect(run.steps['push_subscriptions.endpoint']).toMatchObject({ rewritten: 1, unreadable: 0 });
     expect(run.steps['contact_verifications.address_hash']).toMatchObject({ rewritten: 1, unreadable: 0 });
@@ -236,7 +239,10 @@ d('key rotation (integration)', () => {
     await expect(runRotation(owner, { target: 'agent-data', keys: { ...KEYS, AGENT_DATA_KEY: k32(77) }, tenantId, checkpointPath })).rejects.toThrow(/another target or key/);
 
     const rest = await runRotation(owner, { target: 'agent-data', keys: KEYS, tenantId, batchSize: 1, checkpointPath });
-    expect(rest.complete).toBe(true);
+    expect(rest).toMatchObject({ complete: false, tenantComplete: true });
+    // --validate is refused for a staged run (other tenants may still hold plaintext).
+    const staged = await runRotation(owner, { target: 'agent-data', keys: KEYS, tenantId, validate: true });
+    expect(staged).toMatchObject({ validated: false, complete: false });
     expect(rest.steps['agent_sensitive.personal_data']).toMatchObject({ done: true, rewritten: 3, unreadable: 0 });
     const cipher = new AgentDataCipher(NEW.agent);
     for (const [i, id] of agentIds.entries()) {
@@ -254,7 +260,8 @@ d('key rotation (integration)', () => {
   it('never rewrites a value no configured key opens, and reports the run as not complete', async () => {
     const before = await owner.agentSensitive.findUniqueOrThrow({ where: { agentId: badAgentId } });
     const r = await runRotation(owner, { target: 'agent-data', keys: KEYS, tenantId: badTenantId });
-    expect(r.complete).toBe(false);
+    expect(r).toMatchObject({ complete: false, tenantComplete: false });
+    expect(rotationVerdict(r)).toBe('incomplete');
     expect(r.steps['agent_sensitive.personal_data']).toMatchObject({ unreadable: 1, rewritten: 0 });
     expect(await owner.agentSensitive.findUniqueOrThrow({ where: { agentId: badAgentId } })).toEqual(before);
   });

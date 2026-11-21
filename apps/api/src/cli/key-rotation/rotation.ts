@@ -76,8 +76,36 @@ export interface RotationResult {
   dryRun: boolean;
   keyId: string;
   steps: Record<string, StepCounts & { done: boolean }>;
+  /**
+   * Every row of the target, in every tenant, is under the new key: the only signal that the previous
+   * key can be retired. Always false for a run limited to one tenant (`tenantId`), whose other tenants
+   * were not scanned.
+   */
   complete: boolean;
+  /** The organisation a staged run was limited to, if any. */
+  tenantId: string | null;
+  /** For a run limited to one tenant: every row of that tenant is under the new key (not a retire signal). */
+  tenantComplete: boolean;
   validated: boolean;
+}
+
+export type RotationVerdict = 'complete' | 'dry-run-complete' | 'tenant-complete' | 'incomplete' | 'stopped';
+
+/** Exit codes of the command-line tool, per verdict (0 is the only "previous key can be retired"). */
+export const ROTATION_EXIT_CODES: Record<RotationVerdict, number> = {
+  complete: 0,
+  'dry-run-complete': 0,
+  incomplete: 2,
+  stopped: 3,
+  'tenant-complete': 4,
+};
+
+/** What a run means for retiring the previous key. Only an unscoped, non-dry run can say `complete`. */
+export function rotationVerdict(r: RotationResult): RotationVerdict {
+  if (Object.values(r.steps).some((s) => !s.done)) return 'stopped';
+  if (r.tenantId) return r.tenantComplete ? 'tenant-complete' : 'incomplete';
+  if (!r.complete) return 'incomplete';
+  return r.dryRun ? 'dry-run-complete' : 'complete';
 }
 
 interface Checkpoint {
@@ -386,14 +414,18 @@ export async function runRotation(db: Db, opts: RotationOptions): Promise<Rotati
 
   // Rows changed by the application during the run may still be under the old key: a clean
   // verification pass (--reset-checkpoint) reports complete before the old key is retired.
-  const complete = steps.every((s) => cp.steps[s.name]!.done) && steps.every((s) => cp.steps[s.name]!.counts.unreadable === 0 && cp.steps[s.name]!.counts.raced === 0);
+  const scopeComplete = steps.every((s) => cp.steps[s.name]!.done) && steps.every((s) => cp.steps[s.name]!.counts.unreadable === 0 && cp.steps[s.name]!.counts.raced === 0);
+  // A run limited to one tenant never scanned the others: it can never report the whole target complete
+  // (retiring the previous key after it would lock every other tenant out of its data).
+  const complete = scopeComplete && !tenantId;
+  const tenantComplete = scopeComplete && !!tenantId;
   let validated = false;
-  if (opts.validate && opts.target === 'agent-data' && complete && !opts.dryRun && !tenantId) {
+  if (opts.validate && opts.target === 'agent-data' && complete && !opts.dryRun) {
     await db.$executeRawUnsafe('ALTER TABLE "agent_sensitive" VALIDATE CONSTRAINT "agent_sensitive_encrypted_check"');
     validated = true;
     log('agent_sensitive: every row is encrypted; CHECK constraint validated');
   }
   const out: RotationResult['steps'] = {};
   for (const s of steps) out[s.name] = { ...cp.steps[s.name]!.counts, done: cp.steps[s.name]!.done };
-  return { target: opts.target, dryRun: !!opts.dryRun, keyId: kid, steps: out, complete, validated };
+  return { target: opts.target, dryRun: !!opts.dryRun, keyId: kid, steps: out, complete, tenantId: tenantId ?? null, tenantComplete, validated };
 }
