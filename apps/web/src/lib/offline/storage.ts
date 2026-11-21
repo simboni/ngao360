@@ -16,6 +16,10 @@ export interface QueueStorage {
   getMeta<T>(key: string): Promise<T | undefined>;
   putMeta(key: string, value: unknown): Promise<void>;
   deleteMeta(key: string): Promise<void>;
+  /** Names of every meta value (for re-encrypting sealed values under a new key). */
+  metaKeys(): Promise<string[]>;
+  /** Empty every record and meta value, keeping the database (PIN reset, erase after lock-out). */
+  clear(): Promise<void>;
   /** Delete every record and the key (sign-out). */
   destroy(): Promise<void>;
 }
@@ -52,6 +56,13 @@ export class MemoryQueueStorage implements QueueStorage {
   }
   async deleteMeta(key: string): Promise<void> {
     this.meta.delete(key);
+  }
+  async metaKeys(): Promise<string[]> {
+    return [...this.meta.keys()];
+  }
+  async clear(): Promise<void> {
+    this.entries.clear();
+    this.meta.clear();
   }
   async destroy(): Promise<void> {
     this.entries.clear();
@@ -131,6 +142,20 @@ export class IndexedDbQueueStorage implements QueueStorage {
   }
   async deleteMeta(key: string): Promise<void> {
     await req(this.store(META, 'readwrite').delete(key));
+  }
+  async metaKeys(): Promise<string[]> {
+    const keys = await req(this.store(META, 'readonly').getAllKeys());
+    return keys.map((k) => String(k));
+  }
+  clear(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction([ENTRIES, META], 'readwrite');
+      tx.objectStore(ENTRIES).clear();
+      tx.objectStore(META).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Could not empty the offline queue'));
+      tx.onabort = () => reject(tx.error ?? new Error('Could not empty the offline queue'));
+    });
   }
   async destroy(): Promise<void> {
     this.db.close();

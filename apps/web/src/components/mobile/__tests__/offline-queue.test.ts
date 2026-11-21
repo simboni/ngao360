@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import type { SyncItem, SyncItemResult, SyncResponse } from '@ngao360/shared';
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, backoffDelayMs } from '@/lib/offline/backoff';
+import { generateQueueKey } from '@/lib/offline/crypto';
 import { classifyError, countEntries, OfflineQueue, QueueValidationError, type QueueTransport } from '@/lib/offline/queue';
 import { MemoryQueueStorage } from '@/lib/offline/storage';
 
@@ -124,13 +125,15 @@ describe('offline queue', () => {
   let transport: FakeTransport;
   let online: boolean;
   let queue: OfflineQueue;
+  let key: CryptoKey;
 
   beforeEach(async () => {
     storage = new MemoryQueueStorage();
+    key = await generateQueueKey();
     clock = new Clock();
     transport = new FakeTransport();
     online = false;
-    queue = await OfflineQueue.open({ storage, deviceId: DEVICE, now: clock.now, random: () => 1, isOnline: () => online });
+    queue = await OfflineQueue.open({ storage, key, deviceId: DEVICE, now: clock.now, random: () => 1, isOnline: () => online });
   });
 
   it('generates the idempotency key and offline metadata when the record is first saved', async () => {
@@ -158,8 +161,8 @@ describe('offline queue', () => {
     assert.ok(!asText.includes('voters waited'), 'description must not be stored in clear');
     assert.ok(!asText.includes('039001000101'), 'station code must not be stored in clear');
     assert.ok(raw?.sealed && raw.sealed.iv.byteLength === 12);
-    const key = await storage.getMeta<CryptoKey>('queueKey');
-    assert.equal(key?.extractable, false, 'queue key is non-extractable');
+    assert.equal(key.extractable, false, 'queue key is non-extractable');
+    assert.equal(await storage.getMeta('queueKey'), undefined, 'the queue never stores its key (the vault stores it wrapped)');
   });
 
   it('replays with the same key and identical payload after a lost response, and confirms once', async () => {
@@ -416,7 +419,7 @@ describe('offline queue', () => {
     const e = await queue.enqueue(checkInInput());
     const raw = await storage.get(e.idempotencyKey);
     await storage.put({ ...raw!, state: 'UPLOADING' });
-    const reopened = await OfflineQueue.open({ storage, deviceId: DEVICE, now: clock.now, random: () => 1 });
+    const reopened = await OfflineQueue.open({ storage, key, deviceId: DEVICE, now: clock.now, random: () => 1 });
     const [view] = await reopened.list();
     assert.equal(view?.state, 'SAVED_LOCALLY');
   });
@@ -427,7 +430,7 @@ describe('offline queue', () => {
     await queue.sync(transport);
     assert.equal((await queue.counts()).sent, 1);
     clock.advance(25 * 60 * 60_000);
-    const reopened = await OfflineQueue.open({ storage, deviceId: DEVICE, now: clock.now });
+    const reopened = await OfflineQueue.open({ storage, key, deviceId: DEVICE, now: clock.now });
     assert.equal((await reopened.counts()).sent, 0);
   });
 
@@ -438,6 +441,32 @@ describe('offline queue', () => {
     assert.equal(storage.destroyed, true);
     assert.equal((await storage.getAll()).length, 0);
     assert.equal(await storage.getMeta('queueKey'), undefined);
+  });
+
+  it('a locked queue refuses to read, save or upload until it is opened again', async () => {
+    const e = await queue.enqueue(checkInInput());
+    await queue.lock();
+    assert.equal(queue.locked, true);
+    await assert.rejects(() => queue.list(), { name: 'QueueLockedError' });
+    await assert.rejects(() => queue.readPayload(e.idempotencyKey), { name: 'QueueLockedError' });
+    await assert.rejects(() => queue.enqueue(checkInInput()), { name: 'QueueLockedError' });
+    await assert.rejects(() => queue.getSecret('x'), { name: 'QueueLockedError' });
+    online = true;
+    await assert.rejects(() => queue.sync(transport), { name: 'QueueLockedError' });
+    assert.equal(transport.calls.length, 0);
+    assert.equal((await queue.counts()).pending, 1, 'counts come from clear metadata and stay visible');
+    const reopened = await OfflineQueue.open({ storage, key, deviceId: DEVICE, now: clock.now });
+    assert.equal((await reopened.list()).length, 1);
+  });
+
+  it('locking waits for an upload that is already running', async () => {
+    await queue.enqueue(checkInInput());
+    online = true;
+    const run = queue.sync(transport);
+    await queue.lock();
+    const summary = await run;
+    assert.equal(summary.accepted, 1);
+    assert.equal((await queue.counts()).sent, 1);
   });
 
   it('encrypted cache values round-trip', async () => {

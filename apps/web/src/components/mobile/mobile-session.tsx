@@ -7,12 +7,19 @@
  *   user and tenant) and keeps a small encrypted snapshot of who they are and
  *   what the screens may offer, so the app still opens and saves items when
  *   the phone starts without a connection (/auth/me unreachable).
+ * - The queue key is wrapped under the person's device PIN (`lib/offline/pin.ts`,
+ *   contract §36): `pin` is the vault state while the queue is closed (set a
+ *   PIN, protect an older queue, enter the PIN, or locked out), and null once
+ *   it is open. The open queue locks itself after `PIN_INACTIVITY_LOCK_MS`
+ *   without a touch or key press, and on "Lock now".
  * - Uploads in the foreground: after each save when online, when the
  *   connection returns, when the app comes back to the screen, on a timer for
  *   items whose backoff has elapsed, and when the service worker relays a
  *   Background Sync event (only while a tab of the app is open; there is no
  *   upload with every tab closed).
  * - Sign-out warns about unsent items, then deletes the queue and its key.
+ * - Nothing uploads while the queue is locked (the key is needed to read the
+ *   items); the counts stay visible from the clear metadata.
  *
  * Permissions here are UI hints only; the API checks every request.
  */
@@ -20,11 +27,12 @@ import type { MeResponse, PermissionKey, TenantModuleKey } from '@ngao360/shared
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { getDeviceId, forgetSession, lastSession, rememberSession } from '@/lib/offline/device';
-import { type EnqueueInput, OfflineQueue, type SyncRunSummary } from '@/lib/offline/queue';
+import { PIN_INACTIVITY_LOCK_MS, QueueKeyVault, type VaultStatus } from '@/lib/offline/pin';
+import { countEntries, type EnqueueInput, OfflineQueue, QueueLockedError, type SyncRunSummary } from '@/lib/offline/queue';
 import { IndexedDbQueueStorage, indexedDbAvailable, MemoryQueueStorage, queueDatabaseName, type QueueStorage } from '@/lib/offline/storage';
 import { apiQueueTransport } from '@/lib/offline/transport';
 import type { QueueCounts, QueueEntryView } from '@/lib/offline/types';
-import { isCryptoAvailable } from '@/lib/offline/crypto';
+import { generateQueueKey, isCryptoAvailable } from '@/lib/offline/crypto';
 
 const EMPTY_COUNTS: QueueCounts = { pending: 0, retrying: 0, sent: 0, failed: 0, conflict: 0 };
 const SNAPSHOT = 'session';
@@ -63,6 +71,17 @@ export interface MobileSessionState {
   refresh: () => Promise<void>;
   /** Deletes the queue and key and signs out. Call only after warning about unsent items. */
   signOut: () => Promise<void>;
+  /** Vault state while the queue is closed by the PIN; null when open (or no persistent queue). */
+  pin: VaultStatus | null;
+  /** True when the queue is PIN-protected (persistent storage) and can be locked. */
+  pinProtected: boolean;
+  createPin: (pin: string) => Promise<void>;
+  unlock: (pin: string) => Promise<void>;
+  lockNow: () => Promise<void>;
+  changePin: (current: string, next: string) => Promise<void>;
+  /** Erase every item on this phone after the person confirmed `confirmedUnsent`; with `newPin`, start again under it. */
+  eraseQueue: (confirmedUnsent: number, newPin?: string) => Promise<void>;
+  refreshPin: () => Promise<void>;
 }
 
 const Ctx = createContext<MobileSessionState | null>(null);
@@ -110,6 +129,13 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
   const [offlineMode, setOfflineMode] = useState(false);
   const [ready, setReady] = useState(false);
   const openedFor = useRef<string | null>(null);
+  const [pin, setPin] = useState<VaultStatus | null>(null);
+  const pinRef = useRef<VaultStatus | null>(null);
+  pinRef.current = pin;
+  const vaultRef = useRef<QueueKeyVault | null>(null);
+  const storageRef = useRef<QueueStorage | null>(null);
+  const authMeRef = useRef<MeResponse | null>(auth.me);
+  const lastActivity = useRef(Date.now());
 
   /* Connection state */
   useEffect(() => {
@@ -123,8 +149,41 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  /** Open the queue with an unwrapped key and load (or save) the identity snapshot. */
+  const openWith = useCallback(
+    async (storage: QueueStorage, key: CryptoKey, name: string) => {
+      const q = await OfflineQueue.open({ storage, key, deviceId: getDeviceId(), lock: lockFor(name) });
+      const me = authMeRef.current;
+      if (me) {
+        await q.putSecret(SNAPSHOT, snapshotOf(me));
+        setOfflineMode(false);
+      } else {
+        const snap = await q.getSecret<SessionSnapshot>(SNAPSHOT);
+        setSnapshot(snap);
+        setOfflineMode(Boolean(snap));
+      }
+      lastActivity.current = Date.now();
+      setPin(null);
+      setQueue(q);
+    },
+    [],
+  );
+
+  /** Re-read the vault state of a closed queue (and its counts, from clear metadata). */
+  const refreshPin = useCallback(async () => {
+    const vault = vaultRef.current;
+    const storage = storageRef.current;
+    if (!vault || !storage) return;
+    const status = await vault.status();
+    setCounts(countEntries(await storage.getAll()));
+    setEntries([]);
+    // A queue without a key is set up only after an online sign-in.
+    setPin(status.state === 'NEW' && !authMeRef.current ? null : status);
+  }, []);
+
   /* Open the queue for the signed-in person, or for the last person on this phone while offline. */
   useEffect(() => {
+    authMeRef.current = auth.me;
     if (auth.loading) return;
     let cancelled = false;
     // Without /auth/me (offline, or the server unreachable) fall back to the last field user on this phone.
@@ -138,7 +197,9 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
     if (openedFor.current === name) {
       if (auth.me && queue) {
         setOfflineMode(false);
-        void queue.putSecret(SNAPSHOT, snapshotOf(auth.me));
+        void queue.putSecret(SNAPSHOT, snapshotOf(auth.me)).catch(() => undefined);
+      } else if (auth.me && !queue) {
+        void refreshPin();
       }
       return;
     }
@@ -146,18 +207,18 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         if (!isCryptoAvailable()) throw new Error('This browser cannot encrypt saved items. Use an up-to-date Chrome or Firefox.');
-        const q = await OfflineQueue.open({ storage: await openStorage(name), deviceId: getDeviceId(), lock: lockFor(name) });
+        const storage = await openStorage(name);
         if (cancelled) return;
-        if (auth.me) {
-          rememberSession(identity);
-          await q.putSecret(SNAPSHOT, snapshotOf(auth.me));
-          setOfflineMode(false);
-        } else {
-          const snap = await q.getSecret<SessionSnapshot>(SNAPSHOT);
-          setSnapshot(snap);
-          setOfflineMode(Boolean(snap));
+        storageRef.current = storage;
+        if (auth.me) rememberSession(identity);
+        if (!storage.persistent) {
+          // Items live only in this page's memory: an in-memory key, no PIN.
+          vaultRef.current = null;
+          await openWith(storage, await generateQueueKey(), name);
+          return;
         }
-        setQueue(q);
+        vaultRef.current = new QueueKeyVault({ storage, binding: name, lock: lockFor(`${name}:pin`) });
+        await refreshPin();
       } catch (err) {
         setQueueError(err instanceof Error ? err.message : 'The offline queue could not be opened');
       } finally {
@@ -171,8 +232,72 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.loading, auth.me]);
 
+  const withVault = useCallback(
+    async (fn: (vault: QueueKeyVault, storage: QueueStorage) => Promise<CryptoKey | null>) => {
+      const vault = vaultRef.current;
+      const storage = storageRef.current;
+      const name = openedFor.current;
+      if (!vault || !storage || !name) throw new Error('The offline queue is not ready');
+      try {
+        const key = await fn(vault, storage);
+        if (key) await openWith(storage, key, name);
+        else await refreshPin();
+      } catch (err) {
+        await refreshPin();
+        throw err;
+      }
+    },
+    [openWith, refreshPin],
+  );
+
+  const createPin = useCallback((pin: string) => withVault((v) => (pinRef.current?.state === 'LEGACY' ? v.migrate(pin) : v.create(pin))), [withVault]);
+  const unlock = useCallback((pin: string) => withVault((v) => v.unlock(pin)), [withVault]);
+  const eraseQueue = useCallback((confirmedUnsent: number, newPin?: string) => withVault((v) => v.erase(confirmedUnsent, newPin)), [withVault]);
+
+  const lockNow = useCallback(async () => {
+    const q = queue;
+    if (!q || !vaultRef.current) return;
+    setQueue(null);
+    setSnapshot(null);
+    await q.lock();
+    await refreshPin();
+  }, [queue, refreshPin]);
+
+  const changePin = useCallback(
+    async (current: string, next: string) => {
+      const vault = vaultRef.current;
+      if (!vault) throw new Error('This queue has no PIN');
+      await vault.changePin(current, next);
+      lastActivity.current = Date.now();
+    },
+    [],
+  );
+
+  /* Inactivity lock (only for a PIN-protected queue). */
+  useEffect(() => {
+    if (!queue || !vaultRef.current) return;
+    const touch = () => {
+      lastActivity.current = Date.now();
+    };
+    const check = () => {
+      if (Date.now() - lastActivity.current >= PIN_INACTIVITY_LOCK_MS) void lockNow();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    const events = ['pointerdown', 'keydown', 'touchstart', 'scroll'] as const;
+    for (const e of events) window.addEventListener(e, touch, { passive: true });
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = window.setInterval(check, 5_000);
+    return () => {
+      for (const e of events) window.removeEventListener(e, touch);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(timer);
+    };
+  }, [queue, lockNow]);
+
   const refresh = useCallback(async () => {
-    if (!queue) return;
+    if (!queue || queue.locked) return;
     const list = await queue.list();
     setEntries(list);
     setCounts(await queue.counts());
@@ -186,12 +311,15 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
 
   const syncNow = useCallback(
     async (force = false) => {
-      if (!queue || !navigator.onLine) return;
+      if (!queue || queue.locked || !navigator.onLine) return;
       setSyncing(true);
       try {
         const run = await queue.sync(apiQueueTransport, { force });
         setLastRun(run);
         setLastSyncAt(new Date().toISOString());
+      } catch (err) {
+        // Locked while starting: the next unlock uploads.
+        if (!(err instanceof QueueLockedError)) throw err;
       } finally {
         setSyncing(false);
       }
@@ -241,9 +369,13 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
-      await queue?.destroy();
+      if (queue) await queue.destroy();
+      else await storageRef.current?.destroy();
     } finally {
       openedFor.current = null;
+      vaultRef.current = null;
+      storageRef.current = null;
+      setPin(null);
       setQueue(null);
       forgetSession();
       await auth.logout();
@@ -272,8 +404,16 @@ export function MobileSessionProvider({ children }: { children: ReactNode }) {
       syncNow,
       refresh,
       signOut,
+      pin,
+      pinProtected: Boolean(queue && vaultRef.current),
+      createPin,
+      unlock,
+      lockNow,
+      changePin,
+      eraseQueue,
+      refreshPin,
     };
-  }, [auth.me, auth.loading, snapshot, queue, queueError, counts, entries, online, syncing, lastRun, lastSyncAt, offlineMode, ready, enqueue, syncNow, refresh, signOut]);
+  }, [auth.me, auth.loading, snapshot, queue, queueError, counts, entries, online, syncing, lastRun, lastSyncAt, offlineMode, ready, enqueue, syncNow, refresh, signOut, pin, createPin, unlock, lockNow, changePin, eraseQueue, refreshPin]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

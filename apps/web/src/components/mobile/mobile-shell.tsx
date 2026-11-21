@@ -5,9 +5,10 @@
  * connection and queue state, content, and a thumb-sized bottom navigation.
  * Works when the phone starts offline (identity from the encrypted snapshot
  * in the person's queue). Sign-out warns about unsent items before the queue
- * is deleted.
+ * is deleted. While the queue is closed by the device PIN (contract §36) the
+ * PIN screens replace the app (`pin-gate.tsx`).
  */
-import { CloudOff, Inbox, LogOut, Menu, ShieldOff, UserRound } from 'lucide-react';
+import { CloudOff, Inbox, KeyRound, Lock, LogOut, Menu, ShieldOff, UserRound } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
@@ -16,9 +17,11 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { HistoricalDemoBanner } from '@/components/ui/historical-demo-banner';
 import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/cn';
+import { PIN_INACTIVITY_LOCK_MS } from '@/lib/offline/pin';
 import { unsentCount } from '@/lib/offline/queue';
 import { MobileSessionProvider, useMobileSession } from './mobile-session';
 import { BigButton, Notice, Sheet } from './mobile-ui';
+import { ChangePinSheet, PinGate } from './pin-gate';
 
 export function MobileShell({ children }: { children: ReactNode }) {
   return (
@@ -35,6 +38,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmOut, setConfirmOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [changePin, setChangePin] = useState(false);
 
   if (!s.ready || (auth.loading && !s.offlineMode)) {
     return (
@@ -43,6 +47,11 @@ function ShellFrame({ children }: { children: ReactNode }) {
         <span className="sr-only">Loading…</span>
       </div>
     );
+  }
+
+  // The device PIN closes the queue: set it (first online sign-in of a field user), protect an older queue, or enter it.
+  if (s.pin && (s.pin.state !== 'NEW' || (s.moduleEnabled('field') && MOBILE_PERMISSIONS.some((p) => s.can(p))))) {
+    return <PinGate status={s.pin} />;
   }
 
   if (!auth.me && !s.offlineMode) {
@@ -184,6 +193,29 @@ function ShellFrame({ children }: { children: ReactNode }) {
           <Link href="/m/submissions" onClick={() => setMenuOpen(false)} className="flex min-h-[52px] items-center gap-2 rounded-xl border border-line px-4 font-semibold text-ink">
             My submissions
           </Link>
+          {s.pinProtected ? (
+            <>
+              <BigButton
+                tone="secondary"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void s.lockNow();
+                }}
+              >
+                <Lock className="h-5 w-5" aria-hidden /> Lock now
+              </BigButton>
+              <BigButton
+                tone="secondary"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setChangePin(true);
+                }}
+              >
+                <KeyRound className="h-5 w-5" aria-hidden /> Change PIN
+              </BigButton>
+              <p className="text-meta text-slate">The app locks itself after {PIN_INACTIVITY_LOCK_MS / 60_000} minutes without use.</p>
+            </>
+          ) : null}
           <BigButton
             tone="secondary"
             onClick={() => {
@@ -199,6 +231,8 @@ function ShellFrame({ children }: { children: ReactNode }) {
           {s.offlineMode ? <p className="text-meta text-slate">Sign-out needs a connection.</p> : null}
         </div>
       </Sheet>
+
+      <ChangePinSheet open={changePin} onClose={() => setChangePin(false)} />
 
       <Sheet open={confirmOut} title="Items have not been uploaded" onClose={() => setConfirmOut(false)}>
         <div className="flex flex-col gap-3">

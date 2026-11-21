@@ -13,6 +13,9 @@
  * - Payloads, photo bytes and conflict server state are encrypted at rest
  *   (`crypto.ts`); a confirmed item keeps only a receipt (reference and time)
  *   and its payload is deleted at once.
+ * - The queue key comes from `QueueKeyVault` (`pin.ts`), unwrapped with the
+ *   person's PIN. `lock()` drops it from memory; a locked queue refuses every
+ *   operation that needs it (`QueueLockedError`) until it is opened again.
  */
 import {
   SYNC_MAX_ITEMS,
@@ -23,7 +26,7 @@ import {
   type SyncResponse,
 } from '@ngao360/shared';
 import { nextAttemptAt } from './backoff';
-import { generateQueueKey, openBytes, openJson, sealBytes, sealJson } from './crypto';
+import { AAD, openBytes, openJson, sealBytes, sealJson } from './crypto';
 import type { QueueStorage } from './storage';
 import type { QueueCounts, QueueEntryView, QueueKind, SealedBody, StoredAttachment, StoredEntry } from './types';
 import { uuidv4 } from './uuid';
@@ -96,6 +99,8 @@ export interface SyncRunSummary {
 
 export interface OfflineQueueOptions {
   storage: QueueStorage;
+  /** The unwrapped queue key (`QueueKeyVault`), or a fresh in-memory key for a non-persistent queue. */
+  key: CryptoKey;
   deviceId: string;
   now?: () => Date;
   random?: () => number;
@@ -124,17 +129,17 @@ export class QueueValidationError extends Error {
   }
 }
 
-const KEY_META = 'queueKey';
+/** The queue was locked (inactivity, "Lock now"): the PIN is needed again. */
+export class QueueLockedError extends Error {
+  constructor() {
+    super('The queue is locked. Enter your PIN to open it.');
+    this.name = 'QueueLockedError';
+  }
+}
 
-function bodyAad(key: string): string {
-  return `entry:${key}`;
-}
-function attachmentAad(key: string, id: string): string {
-  return `attachment:${key}:${id}`;
-}
-function serverAad(key: string): string {
-  return `server:${key}`;
-}
+const bodyAad = AAD.body;
+const attachmentAad = AAD.attachment;
+const serverAad = AAD.server;
 
 export class OfflineQueue {
   private running: Promise<SyncRunSummary> | null = null;
@@ -142,30 +147,46 @@ export class OfflineQueue {
   private readonly now: () => Date;
   private readonly random: () => number;
   private readonly isOnline: () => boolean;
-  private readonly lock: <T>(fn: () => Promise<T>) => Promise<T>;
+  private readonly mutex: <T>(fn: () => Promise<T>) => Promise<T>;
 
   private constructor(
     private readonly storage: QueueStorage,
-    private readonly key: CryptoKey,
+    private secretKey: CryptoKey | null,
     readonly deviceId: string,
     opts: OfflineQueueOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
     this.random = opts.random ?? Math.random;
     this.isOnline = opts.isOnline ?? (() => (typeof navigator === 'undefined' ? true : navigator.onLine));
-    this.lock = opts.lock ?? ((fn) => fn());
+    this.mutex = opts.lock ?? ((fn) => fn());
   }
 
-  /** Open (or create) the queue and its key; items left UPLOADING by a crash go back to waiting. */
+  /** Open the queue with its (unwrapped) key; items left UPLOADING by a crash go back to waiting. */
   static async open(opts: OfflineQueueOptions): Promise<OfflineQueue> {
-    let key = await opts.storage.getMeta<CryptoKey>(KEY_META);
-    if (!key) {
-      key = await generateQueueKey();
-      await opts.storage.putMeta(KEY_META, key);
-    }
-    const q = new OfflineQueue(opts.storage, key, opts.deviceId, opts);
+    const q = new OfflineQueue(opts.storage, opts.key, opts.deviceId, opts);
     await q.recover();
     return q;
+  }
+
+  private get key(): CryptoKey {
+    if (!this.secretKey) throw new QueueLockedError();
+    return this.secretKey;
+  }
+
+  get locked(): boolean {
+    return this.secretKey === null;
+  }
+
+  /**
+   * Forget the key. An upload already running finishes first (it holds the
+   * items it is sending); afterwards nothing can be read or saved until the
+   * queue is opened again with the PIN.
+   */
+  async lock(): Promise<void> {
+    const running = this.running;
+    if (running) await running.catch(() => undefined);
+    this.secretKey = null;
+    this.emit();
   }
 
   get persistent(): boolean {
@@ -267,6 +288,7 @@ export class OfflineQueue {
   /* -------------------------------- Reading -------------------------------- */
 
   async list(): Promise<QueueEntryView[]> {
+    const key = this.key;
     const all = await this.storage.getAll();
     all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
     const out: QueueEntryView[] = [];
@@ -274,7 +296,7 @@ export class OfflineQueue {
       let summary: string | null = null;
       if (e.sealed) {
         try {
-          summary = (await openJson<SealedBody>(this.key, e.sealed, bodyAad(e.idempotencyKey))).summary;
+          summary = (await openJson<SealedBody>(key, e.sealed, bodyAad(e.idempotencyKey))).summary;
         } catch {
           summary = null;
         }
@@ -304,13 +326,14 @@ export class OfflineQueue {
 
   /** Small encrypted values beside the queue (cached FieldMe, template versions). */
   async putSecret(name: string, value: unknown): Promise<void> {
-    await this.storage.putMeta(`secret:${name}`, await sealJson(this.key, value, `meta:${name}`));
+    await this.storage.putMeta(`secret:${name}`, await sealJson(this.key, value, AAD.meta(name)));
   }
   async getSecret<T>(name: string): Promise<T | null> {
+    const key = this.key;
     const sealed = await this.storage.getMeta<Parameters<typeof openJson>[1]>(`secret:${name}`);
     if (!sealed) return null;
     try {
-      return await openJson<T>(this.key, sealed, `meta:${name}`);
+      return await openJson<T>(key, sealed, AAD.meta(name));
     } catch {
       return null;
     }
@@ -406,7 +429,8 @@ export class OfflineQueue {
   /** Upload what is due. Single-flight: a second call while one runs returns the same run. */
   sync(transport: QueueTransport, opts: { force?: boolean } = {}): Promise<SyncRunSummary> {
     if (!this.running) {
-      this.running = this.lock(() => this.syncOnce(transport, opts)).finally(() => {
+      if (this.locked) return Promise.reject(new QueueLockedError());
+      this.running = this.mutex(() => this.syncOnce(transport, opts)).finally(() => {
         this.running = null;
         this.emit();
       });
