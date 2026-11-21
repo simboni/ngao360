@@ -4,6 +4,7 @@ import { AppConfig } from '../config/app-config';
 import { OcrQueueService } from './ocr-queue.service';
 import { NotificationQueueProcessor } from './notification.processor';
 import { OcrProcessor } from './ocr.processor';
+import { runsWorkers } from './process-role';
 import { ALL_QUEUES } from './queue.constants';
 
 function queuesEnabled(): boolean {
@@ -45,7 +46,8 @@ export class QueueModule {
         }),
         BullModule.registerQueue(...ALL_QUEUES.map((name) => ({ name }))),
       ],
-      providers: [OcrQueueService, OcrProcessor, NotificationQueueProcessor],
+      // PROCESS_ROLE=api registers the queues (producers) but no processors: a worker process consumes them.
+      providers: [OcrQueueService, ...(runsWorkers() ? [OcrProcessor, NotificationQueueProcessor] : [])],
       exports: [OcrQueueService, BullModule],
     };
   }

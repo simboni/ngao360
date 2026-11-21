@@ -18,6 +18,7 @@
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, type OnApplicationShutdown, Optional } from '@nestjs/common';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import { AppConfig } from '../../config/app-config';
+import { runsWorkers } from '../../queue/process-role';
 import { PLATFORM_JOBS_QUEUE } from '../../queue/queue.constants';
 import { type JobCounts, JobRunRecorder } from './job-run-recorder';
 
@@ -132,12 +133,17 @@ export class JobScheduler implements OnApplicationBootstrap, OnApplicationShutdo
     await this.queue?.close();
   }
 
-  /** Queue and worker are created on the first scheduled definition (none => no Redis connection). */
+  /**
+   * Queue and worker are created on the first scheduled definition (none => no Redis connection).
+   * With PROCESS_ROLE=api only the queue is created.
+   */
   private ensureWorker(): Queue | null {
     if (!this.enabled) return null;
     if (this.queue) return this.queue;
     const connection = this.connection();
     this.queue = new Queue(this.queueName, { connection, prefix: 'ngao360' });
+    // PROCESS_ROLE=api only produces (schedules and kicks); the worker process runs the handlers.
+    if (!runsWorkers()) return this.queue;
     this.worker = new Worker(
       this.queueName,
       async (job) => {

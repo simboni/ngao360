@@ -25,6 +25,8 @@ export const ConfigSchema = z.object({
   APP_DATABASE_URL: z.string().optional(),
   REDIS_URL: z.string().default('redis://127.0.0.1:6379'),
   QUEUES_ENABLED: bool.default(true),
+  /** all (default) | api (HTTP only, no BullMQ workers) | worker (dist/worker.js, no HTTP). See queue/process-role.ts. */
+  PROCESS_ROLE: z.enum(['all', 'api', 'worker']).default('all'),
 
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
@@ -45,6 +47,16 @@ export const ConfigSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: bool.default(true),
+  /**
+   * S3 Object Lock for stored originals: every object written by the S3 driver gets a retention
+   * period in this mode (COMPLIANCE: nobody, root included, can shorten it or delete the version).
+   * The bucket must have Object Lock enabled at creation. 'off' writes without retention
+   * (development / MinIO without lock).
+   */
+  S3_OBJECT_LOCK_MODE: z.enum(['off', 'COMPLIANCE', 'GOVERNANCE']).default('off'),
+  /** Escape hatch for a production deployment on storage without Object Lock (documented exception). */
+  S3_OBJECT_LOCK_ALLOW_OFF: bool.default(false),
+  S3_OBJECT_LOCK_DAYS: z.coerce.number().int().positive().max(36500).default(2555),
   SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().default(300),
 
   RATE_LIMIT_TTL_SECONDS: z.coerce.number().int().positive().default(60),
@@ -151,6 +163,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfigValue
   if (parsed.data.NODE_ENV === 'production') {
     if (!parsed.data.APP_DATABASE_URL) throw new Error('APP_DATABASE_URL is required in production (RLS role)');
     if (!parsed.data.COOKIE_SECURE) throw new Error('COOKIE_SECURE must be true in production');
+    if (parsed.data.STORAGE_DRIVER === 's3' && parsed.data.S3_OBJECT_LOCK_MODE === 'off' && !parsed.data.S3_OBJECT_LOCK_ALLOW_OFF) {
+      throw new Error('S3_OBJECT_LOCK_MODE must be COMPLIANCE (or GOVERNANCE) in production with STORAGE_DRIVER=s3; set S3_OBJECT_LOCK_ALLOW_OFF=true only for a documented exception');
+    }
     if (!parsed.data.MESSAGING_ENCRYPTION_KEY || !parsed.data.MESSAGING_HASH_KEY) {
       throw new Error('MESSAGING_ENCRYPTION_KEY and MESSAGING_HASH_KEY are required in production');
     }

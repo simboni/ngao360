@@ -10,6 +10,7 @@ import { RegistryImportProcessor } from './registry-import.processor';
 import { RegistryController } from './registry.controller';
 import { RegistryService } from './registry.service';
 import { TallyCentresService } from './tally-centres.service';
+import { runsWorkers } from '../../queue/process-role';
 
 /** Same switch as QueueModule: the worker only exists when BullMQ is registered. */
 function queuesEnabled(): boolean {
@@ -33,7 +34,7 @@ function queuesEnabled(): boolean {
     TallyCentresService,
     ContestsService,
     FormTemplatesService,
-    ...(queuesEnabled() ? [RegistryImportProcessor] : []),
+    ...(queuesEnabled() && runsWorkers() ? [RegistryImportProcessor] : []),
   ],
   exports: [ElectionCyclesService, GeographyService, RegistryService, PollingStationsService, ContestsService, FormTemplatesService],
 })
