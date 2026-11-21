@@ -83,33 +83,90 @@ SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD from the provider
 
 ## 5. First deployment (production or staging)
 
-On a Linux host with Docker Engine and the compose plugin, in Kenya or with a copy held in Kenya
-(docs/RESEARCH.md, data protection), with ports 80/443 open and 22 limited to administrators:
+A Linux server (Ubuntu 24.04 LTS assumed) with at least 4 vCPU, 8 GB RAM and 80 GB disk free for
+staging or a county pilot; production on its own server (docs/OPERATIONS.md for election-night sizing),
+in Kenya or with a copy of the data held in Kenya (docs/RESEARCH.md, data protection). Run as an
+administrator with `sudo`.
 
-1. Clone the repository at the release tag into `/srv/ngao360`.
-2. `install -m 600 deploy/env.prod.example /etc/ngao360/.env.prod` and fill every value.
-   The domain lines are already set for production:
-   ```
-   NGAO_DOMAIN=app.ngao360.co.ke
-   NGAO_REDIRECT_DOMAINS=ngao360.co.ke, www.ngao360.co.ke
-   NGAO_WEBAUTHN_RP_ID=ngao360.co.ke
-   ```
-   For staging use `NGAO_DOMAIN=staging.ngao360.co.ke`, `NGAO_REDIRECT_DOMAINS=` (empty) and
-   `NGAO_WEBAUTHN_RP_ID=staging.ngao360.co.ke`, with its own secrets.
-3. Generate secrets as the comments in the env file say (`openssl rand -base64 48` / `32`) and store a
-   copy in the secrets vault (docs/RUNBOOKS.md, key custody).
-4. Start the stack, run migrations and create the first organisation, following
-   `docs/RUNBOOKS.md` → Deploy. The first owner then completes **Workspace setup** (`/setup`) and the
-   **Onboarding checklist** (`/onboarding`).
-5. Check: `https://app.ngao360.co.ke/api/health` answers, `https://ngao360.co.ke/anything` redirects
-   to `https://app.ngao360.co.ke/anything`, Settings → Integrations shows every provider configured,
-   a test invitation arrives in an inbox (not spam), and a passkey can be registered and used.
-6. Run the restore drill on the host (`docs/OPERATIONS.md`) and record it in the onboarding checklist.
+**1. Prepare the server** (once)
+
+```bash
+sudo apt-get update && sudo apt-get install -y ca-certificates curl git openssl ufw
+curl -fsSL https://get.docker.com | sudo sh          # Docker Engine and the compose plugin
+sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw allow 443/udp
+sudo ufw --force enable
+```
+
+Point DNS at the server first (§2): `app` (or `staging`) must resolve to it before step 4, or Caddy
+cannot obtain a certificate.
+
+**2. Get the code**
+
+```bash
+sudo git clone https://github.com/simboni/ngao360.git /srv/ngao360
+cd /srv/ngao360 && sudo git checkout <release tag or main>
+```
+
+(If the repository is made private later, use a read-only deploy key on the server.)
+
+**3. Create the env file with fresh secrets** (generated on the server, never printed)
+
+```bash
+sudo deploy/generate-secrets.sh /etc/ngao360/.env.prod            # production
+sudo deploy/generate-secrets.sh /etc/ngao360/.env.prod staging    # or: staging.ngao360.co.ke
+```
+
+Then open the file (`sudo nano /etc/ngao360/.env.prod`) and add the provider accounts you have (SMTP,
+Africa's Talking, captcha, VAPID) with their `*_PROVIDER` lines. Without SMTP, invitation links are shown
+once on screen instead of e-mailed. Copy the file into the secrets vault (docs/RUNBOOKS.md, key custody):
+losing `AGENT_DATA_KEY` or `MFA_ENCRYPTION_KEY` makes encrypted data unreadable.
+
+**4. Build and start**
+
+```bash
+cd /srv/ngao360
+C="sudo docker compose -f docker-compose.prod.yml --env-file /etc/ngao360/.env.prod"
+$C build                 # first build takes several minutes
+$C up -d                 # runs migrations first; API, worker and web start once they succeed
+$C ps                    # every service healthy, migrate and minio-init exited 0
+```
+
+**5. Create the first account** (the platform operator; once per install)
+
+```bash
+$C run --rm migrate node dist/cli/bootstrap-operator.js --email you@ngao360.co.ke --name "Your Name"
+```
+
+It prints a single-use link (shown only then; run it again before it is used to get a fresh one). Open it,
+set your password, then sign in with organisation code `platform` and enrol an authenticator app or a
+passkey. The command refuses once an active operator exists: invite everyone else from the app.
+
+**6. Create the first organisation**
+
+Signed in as the operator, open **Workspace setup** (`/setup`) to create the organisation (for example the
+Bungoma Governor's office) and invite its first administrators. They complete the **Onboarding
+checklist** (`/onboarding`).
+
+**7. Check**
+
+- `https://app.ngao360.co.ke/api/health` reports database, storage and redis `up`;
+- `https://ngao360.co.ke/anything` redirects to `https://app.ngao360.co.ke/anything` (production);
+- Settings → Integrations shows the providers you configured and no missing variables;
+- a test invitation arrives in an inbox, not spam (once SMTP is set);
+- a passkey can be registered and used;
+- run the restore drill on the server (docs/OPERATIONS.md) and record it in the onboarding checklist;
+- schedule the nightly backup (`$C --profile ops run --rm backup` from a systemd timer or cron) and copy
+  backups off the server.
+
+Updates after the first deployment follow docs/RUNBOOKS.md → Deploy.
 
 ## 6. Status of this configuration
 
 - The compose file, Caddyfile and env template carry the domain settings above; the passkey-domain
   start-up check has unit tests.
+- `deploy/generate-secrets.sh` was run on a scratch file (secrets filled, existing values kept, mode 600).
+- `dist/cli/bootstrap-operator.js` has integration tests against Postgres and was run against the
+  development database (refused, as designed, because an active operator exists there).
 - **Not yet tried on a real host:** no Docker image has been built and the stack has not been started
   (no Docker daemon in the build environment), and the Caddyfile has not been loaded by a Caddy
   binary. The first staging deployment is the test of this guide.
