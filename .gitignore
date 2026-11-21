@@ -15,3 +15,4 @@ apps/api/storage/
 .DS_Store
 .env.docker
 next-env.d.ts
+/backups/
