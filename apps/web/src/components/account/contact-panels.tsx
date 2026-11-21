@@ -14,7 +14,7 @@ import {
 } from '@ngao360/shared';
 import { BadgeCheck, Mail, MessageSquare, Send, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
-import { Chip, Field, Notice, TextInput } from '@/components/admin/primitives';
+import { Chip, Notice, TextInput } from '@/components/admin/primitives';
 import { describeError, useApiQuery } from '@/components/admin/use-api';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -90,7 +90,7 @@ export function ContactRow({ contact, onChanged }: { contact: ContactStatus; onC
           <div className="min-w-0">
             <p className="font-medium text-ink">{CONTACT_CHANNEL_LABELS[contact.channel]}</p>
             <p className="text-body text-ink">{contact.addressMasked ?? 'Not on your account'}</p>
-            <p className="text-meta text-slate">{deliverabilityText(contact)}</p>
+            {state !== 'MISSING' ? <p className="text-meta text-slate">{deliverabilityText(contact)}</p> : null}
           </div>
           {state === 'VERIFIED' ? (
             <Chip tone="info" title={`Verified ${formatDateTime(contact.verifiedAt)}`}>
@@ -115,24 +115,30 @@ export function ContactRow({ contact, onChanged }: { contact: ContactStatus; onC
         </Notice>
       ) : null}
       {codeSent && state === 'UNVERIFIED' ? (
-        <form onSubmit={confirm} className="mt-3 flex flex-wrap items-end gap-2">
-          <div className="w-48">
-            <Field label="Code" htmlFor={codeId} hint="6 digits">
-              <TextInput
-                id={codeId}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="\d{6}"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(sanitizeCode(e.target.value))}
-                required
-              />
-            </Field>
+        <form onSubmit={confirm} className="mt-3">
+          <label className="ngao-label" htmlFor={codeId}>
+            Code from the message
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <TextInput
+              id={codeId}
+              className="w-40"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="\d{6}"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(sanitizeCode(e.target.value))}
+              aria-describedby={`${codeId}-hint`}
+              required
+            />
+            <Button type="submit" loading={busy === 'confirm'} disabled={!isCompleteCode(code)}>
+              <ShieldCheck className="h-4 w-4" aria-hidden /> Confirm
+            </Button>
           </div>
-          <Button type="submit" size="md" className="mb-4" loading={busy === 'confirm'} disabled={!isCompleteCode(code)}>
-            <ShieldCheck className="h-4 w-4" aria-hidden /> Confirm
-          </Button>
+          <p id={`${codeId}-hint`} className="mt-1 text-meta text-slate">
+            6 digits. Five wrong tries cancel the code; then ask for a new one.
+          </p>
         </form>
       ) : null}
     </li>

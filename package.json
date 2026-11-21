@@ -30,6 +30,7 @@
     "smoke:field": "node scripts/smoke/field-smoke.cjs",
     "smoke:campaign": "node scripts/smoke/campaign-smoke.cjs",
     "smoke:pilot": "node scripts/smoke/pilot-smoke.cjs",
+    "smoke:golive": "node scripts/smoke/golive-smoke.cjs",
     "demo:2022-bungoma": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:2022-bungoma",
     "demo:import-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:import-34a",
     "demo:redact-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:redact-34a",

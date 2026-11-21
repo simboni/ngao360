@@ -197,12 +197,16 @@ export function RecoveryDetail({
 
           {isOpenRecovery(r.status) ? (
             <section aria-label="Decisions" className="mb-6 flex flex-wrap items-start gap-3 rounded-lg border border-line p-3">
-              <RuleButton rule={rules.approve} variant="primary" onClick={() => setPending('approve')}>
-                <CheckCircle2 className="h-4 w-4" aria-hidden /> Approve
-              </RuleButton>
-              <RuleButton rule={rules.reject} onClick={() => setPending('reject')}>
-                <XCircle className="h-4 w-4" aria-hidden /> Reject
-              </RuleButton>
+              {r.status === 'PENDING' ? (
+                <>
+                  <RuleButton rule={rules.approve} variant="primary" onClick={() => setPending('approve')}>
+                    <CheckCircle2 className="h-4 w-4" aria-hidden /> Approve
+                  </RuleButton>
+                  <RuleButton rule={rules.reject} onClick={() => setPending('reject')}>
+                    <XCircle className="h-4 w-4" aria-hidden /> Reject
+                  </RuleButton>
+                </>
+              ) : null}
               <RuleButton rule={rules.cancel} onClick={() => setPending('cancel')}>
                 <Ban className="h-4 w-4" aria-hidden /> Cancel request
               </RuleButton>
