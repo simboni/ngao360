@@ -249,6 +249,9 @@ export class PasskeysService {
         },
         tx,
       );
+      // A registered passkey is a second factor (contract §32.1): from now on a password alone
+      // never completes sign-in or re-authentication for this account.
+      await tx.user.update({ where: { id: auth.userId }, data: { mfaEnabled: true } });
       await this.alerts.alert(tx, { tenantId: auth.tenantId, userId: auth.userId, event: 'passkey_registered', entityId: created.id, actorId: auth.userId });
       return created;
     });
@@ -308,6 +311,10 @@ export class PasskeysService {
         },
         tx,
       );
+      // The second-factor flag follows the factors: cleared only when no TOTP or passkey is left.
+      if (!(await this.auth.hasAnySecondFactor(tx, auth.userId))) {
+        await tx.user.update({ where: { id: auth.userId }, data: { mfaEnabled: false } });
+      }
       await this.alerts.alert(tx, { tenantId: auth.tenantId, userId: auth.userId, event: 'passkey_revoked', entityId: id, actorId: auth.userId });
       return { ok: true as const };
     });
@@ -418,6 +425,7 @@ export class PasskeysService {
     onSuccess: (tx: TenantTx, credential: CredentialRow) => Promise<T>,
   ): Promise<{ credential: CredentialRow; tokens: T }> {
     let credential: CredentialRow | null = null;
+    let reserved: number | undefined;
     try {
       const hash = await this.consumeChallenge(tenantId, challengeId, purpose, expectedUserId);
       const credentialId = typeof response.id === 'string' ? response.id : '';
@@ -435,12 +443,15 @@ export class PasskeysService {
       if (!found.cred) throw new PasskeyFailure('unknown_credential');
       credential = found.cred;
       const now = new Date();
-      if (
-        !found.user ||
-        found.user.status !== 'ACTIVE' ||
-        (found.user.lockedUntil && found.user.lockedUntil > now) ||
-        (found.user.mfaLockedUntil && found.user.mfaLockedUntil > now)
-      ) {
+      // The password lock (lockedUntil) does not apply: a passkey is phishing-resistant and does
+      // not use the password, so wrong passwords sent by someone else never lock it out.
+      if (!found.user || found.user.status !== 'ACTIVE' || (found.user.mfaLockedUntil && found.user.mfaLockedUntil > now)) {
+        throw new PasskeyFailure('account_unavailable', credential);
+      }
+      // Reserve the attempt atomically against the shared MFA lockout before verifying it.
+      try {
+        reserved = await this.auth.reserveMfaAttempt(tenantId, credential.userId);
+      } catch {
         throw new PasskeyFailure('account_unavailable', credential);
       }
 
@@ -498,7 +509,7 @@ export class PasskeysService {
     } catch (e) {
       if (!(e instanceof PasskeyFailure)) throw e;
       const cred = e.credential ?? credential;
-      await this.recordFailure(tenantId, cred?.userId ?? expectedUserId, cred, e.reason, step);
+      await this.recordFailure(tenantId, cred?.userId ?? expectedUserId, cred, e.reason, step, reserved);
       throw failed();
     }
   }
@@ -513,6 +524,7 @@ export class PasskeysService {
     credential: CredentialRow | null,
     reason: FailureReason,
     step: 'login' | 'mfa' | 'reauth' | 'register',
+    reserved?: number,
   ): Promise<void> {
     await this.prisma.withTenant(tenantId, async (tx) => {
       await this.audit.record(
@@ -536,7 +548,7 @@ export class PasskeysService {
       }
     });
     if (userId && step !== 'register' && (reason === 'verification_failed' || reason === 'counter_regression')) {
-      await this.auth.recordMfaFailure(tenantId, userId, 'WebauthnCredential', credential?.id ?? null);
+      await this.auth.recordMfaFailure(tenantId, userId, 'WebauthnCredential', credential?.id ?? null, reserved);
     }
   }
 }

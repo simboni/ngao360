@@ -30,10 +30,13 @@ import type { AuthContext, MfaChallengeClaims } from './auth.types';
 import { TokenService } from './token.service';
 import { tenantDataLabel } from '../common/provenance/data-label';
 import { effectiveSignInPolicy, readSecurityPolicy } from '../modules/workspace/workspace-settings';
+import { SecurityAlertsService } from './recovery/security-alerts.service';
 
 const INVALID_CREDENTIALS = 'Organisation, email or password is incorrect';
 // Precomputed hash used to equalise timing when the user does not exist.
 const DUMMY_HASH_PROMISE = argon2.hash('ngao360-timing-equaliser', { type: argon2.argon2id });
+/** A device (client IP) that completed a sign-in to the account this recently is "recognised". */
+const KNOWN_DEVICE_DAYS = 30;
 
 export interface IssuedTokens {
   access: string;
@@ -53,6 +56,7 @@ export class AuthService {
     private readonly permissions: PermissionService,
     private readonly audit: AuditService,
     private readonly config: AppConfig,
+    private readonly alerts: SecurityAlertsService,
   ) {}
 
   hashPassword(password: string): Promise<string> {
@@ -81,27 +85,47 @@ export class AuthService {
         );
         return { kind: 'fail' as const, message: INVALID_CREDENTIALS };
       }
-      if (user.lockedUntil && user.lockedUntil > new Date()) {
-        return { kind: 'fail' as const, message: 'Too many failed attempts. Try again later or contact your administrator.' };
-      }
+      // Always run the password hash (also for a locked or inactive account) so neither the answer
+      // nor its timing tells an outsider whether the account exists, is locked or is suspended.
       const valid = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
-      if (!valid) {
+      const now = new Date();
+      // Password lockout is per account but does not apply to a recognised device (an IP that
+      // completed a sign-in in the last KNOWN_DEVICE_DAYS days): an outsider cannot lock the real
+      // person out by sending wrong passwords. Passkey sign-in ignores this lock altogether.
+      const locked = !!user.lockedUntil && user.lockedUntil > now && !(await this.isRecognisedDevice(tx, user.id, meta.ip));
+      if (!valid || locked) {
         const failures = user.failedLoginCount + 1;
-        const lock = failures >= this.config.values.LOGIN_MAX_FAILURES;
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            failedLoginCount: lock ? 0 : failures,
-            lockedUntil: lock ? new Date(Date.now() + this.config.values.LOGIN_LOCK_MINUTES * 60_000) : null,
-          },
-        });
+        const lock = !valid && failures >= this.config.values.LOGIN_MAX_FAILURES;
+        if (!valid) {
+          await tx.user.update({
+            where: { id: user.id },
+            data: lock
+              ? { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + this.config.values.LOGIN_LOCK_MINUTES * 60_000) }
+              : { failedLoginCount: failures },
+          });
+        }
         await this.audit.record(
-          { tenantId: tenant.id, actorId: user.id, action: AUDIT_ACTIONS.AUTH_LOGIN_FAILED, entityType: 'User', entityId: user.id, after: { reason: 'bad_password', locked: lock } },
+          {
+            tenantId: tenant.id,
+            actorId: user.id,
+            action: AUDIT_ACTIONS.AUTH_LOGIN_FAILED,
+            entityType: 'User',
+            entityId: user.id,
+            after: { reason: valid ? 'locked' : 'bad_password', locked: lock || locked },
+          },
+          tx,
+        );
+        // The account holder is told about the lock (never the person at the sign-in form).
+        if (lock) await this.alerts.alert(tx, { tenantId: tenant.id, userId: user.id, event: 'sign_in_locked', entityId: `${user.id}:${now.getTime()}` });
+        return { kind: 'fail' as const, message: INVALID_CREDENTIALS };
+      }
+      if (user.status !== 'ACTIVE') {
+        await this.audit.record(
+          { tenantId: tenant.id, actorId: user.id, action: AUDIT_ACTIONS.AUTH_LOGIN_FAILED, entityType: 'User', entityId: user.id, after: { reason: 'inactive' } },
           tx,
         );
         return { kind: 'fail' as const, message: INVALID_CREDENTIALS };
       }
-      if (user.status !== 'ACTIVE') return { kind: 'fail' as const, message: 'Account is not active' };
 
       await tx.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
 
@@ -130,6 +154,13 @@ export class AuthService {
     if (outcome.kind === 'mfa') return { response: outcome.response };
     const me = await this.meForUser(tenant.id, outcome.userId, false);
     return { response: { status: 'AUTHENTICATED', me }, tokens: outcome.tokens };
+  }
+
+  /** True when this client IP completed a sign-in to the account recently (see KNOWN_DEVICE_DAYS). */
+  private async isRecognisedDevice(tx: TenantTx, userId: string, ip: string | null): Promise<boolean> {
+    if (!ip) return false;
+    const since = new Date(Date.now() - KNOWN_DEVICE_DAYS * 86_400_000);
+    return (await tx.session.count({ where: { userId, ipAddress: ip, createdAt: { gt: since } } })) > 0;
   }
 
   private async isMfaRequired(tx: TenantTx, tenantId: string, userId: string, mfaEnabled: boolean): Promise<boolean> {
@@ -220,11 +251,11 @@ export class AuthService {
     lastUsedStep: bigint | null,
     code: string,
   ): Promise<void> {
-    await this.assertMfaNotLocked(tx, userId);
+    const reserved = await this.reserveMfaAttempt(tenantId, userId);
     const secret = openSecret(sealed, this.config.values.MFA_ENCRYPTION_KEY);
     const step = verifyTotp(secret, code, { lastUsedStep: lastUsedStep === null ? null : Number(lastUsedStep) });
     if (step === null) {
-      await this.recordMfaFailure(tenantId, userId, 'MfaFactor', factorId);
+      await this.recordMfaFailure(tenantId, userId, 'MfaFactor', factorId, reserved);
       throw AppException.unauthenticated('That code is not valid. Check your authenticator app and try again.');
     }
     await tx.mfaFactor.update({ where: { id: factorId }, data: { lastUsedStep: BigInt(step) } });
@@ -243,15 +274,56 @@ export class AuthService {
   }
 
   /**
+   * Reserve one second-factor attempt before checking it, atomically: the failure counter is
+   * incremented (in its own, committed transaction, under the row lock of the UPDATE) only while
+   * the MFA lock is not active, and the attempt is refused once MFA_MAX_FAILURES attempts are
+   * already in flight or failed. Concurrent requests therefore cannot all pass a "not locked"
+   * check before any failure is counted. A success clears the counter (clearMfaFailures); a
+   * failure passes the reserved count to recordMfaFailure. Returns the reserved count.
+   */
+  async reserveMfaAttempt(tenantId: string, userId: string): Promise<number> {
+    const max = this.config.values.MFA_MAX_FAILURES;
+    const reserved = await this.prisma.withTenant(tenantId, async (own) => {
+      const rows = await own.$queryRaw<Array<{ failed_mfa_count: number }>>`
+        UPDATE users SET failed_mfa_count = failed_mfa_count + 1
+         WHERE id = ${userId}::uuid AND (mfa_locked_until IS NULL OR mfa_locked_until <= now())
+        RETURNING failed_mfa_count`;
+      const n = rows[0]?.failed_mfa_count ?? null;
+      if (n !== null && n > max) {
+        // More attempts in flight than allowed: lock now (the excess is never checked).
+        await own.user.update({
+          where: { id: userId },
+          data: { failedMfaCount: 0, mfaLockedUntil: new Date(Date.now() + this.config.values.MFA_LOCK_MINUTES * 60_000) },
+        });
+        await this.audit.record(
+          { tenantId, actorId: userId, action: AUDIT_ACTIONS.AUTH_MFA_LOCKED, entityType: 'User', entityId: userId, after: { failures: n, locked: true, concurrent: true } },
+          own,
+        );
+      }
+      return n;
+    });
+    if (reserved === null || reserved > max) {
+      throw AppException.unauthenticated('Too many wrong codes. Try again later or contact your administrator.');
+    }
+    return reserved;
+  }
+
+  /**
    * Count one failed second-factor attempt and lock after MFA_MAX_FAILURES. The counter and the
    * audit are written in their own transaction so they survive the rollback of the caller's
-   * transaction. Returns true when this failure locked the account.
+   * transaction. With `reserved` (from reserveMfaAttempt) the attempt is already counted.
+   * Returns true when this failure locked the account.
    */
-  async recordMfaFailure(tenantId: string, userId: string, entityType: string, entityId: string | null): Promise<boolean> {
+  async recordMfaFailure(tenantId: string, userId: string, entityType: string, entityId: string | null, reserved?: number): Promise<boolean> {
     return this.prisma.withTenant(tenantId, async (own) => {
-      const rows = await own.$queryRaw<Array<{ failed_mfa_count: number }>>`
-        UPDATE users SET failed_mfa_count = failed_mfa_count + 1 WHERE id = ${userId}::uuid RETURNING failed_mfa_count`;
-      const failures = rows[0]?.failed_mfa_count ?? 1;
+      let failures: number;
+      if (reserved !== undefined) {
+        failures = reserved;
+      } else {
+        const rows = await own.$queryRaw<Array<{ failed_mfa_count: number }>>`
+          UPDATE users SET failed_mfa_count = failed_mfa_count + 1 WHERE id = ${userId}::uuid RETURNING failed_mfa_count`;
+        failures = rows[0]?.failed_mfa_count ?? 1;
+      }
       const lock = failures >= this.config.values.MFA_MAX_FAILURES;
       if (lock) {
         await own.user.update({
@@ -311,10 +383,14 @@ export class AuthService {
     });
   }
 
+  /** True when the user has any active second factor: a TOTP authenticator or a passkey. */
   async hasActiveFactor(who: { tenantId: string; userId: string }): Promise<boolean> {
-    return this.prisma.withTenant(who.tenantId, async (tx) =>
-      (await tx.mfaFactor.count({ where: { userId: who.userId, status: 'ACTIVE' } })) > 0,
-    );
+    return this.prisma.withTenant(who.tenantId, (tx) => this.hasAnySecondFactor(tx, who.userId));
+  }
+
+  async hasAnySecondFactor(tx: TenantTx, userId: string): Promise<boolean> {
+    if ((await tx.mfaFactor.count({ where: { userId, status: 'ACTIVE' } })) > 0) return true;
+    return (await tx.webauthnCredential.count({ where: { userId, revokedAt: null } })) > 0;
   }
 
   /** Start TOTP enrolment, either from a login challenge or an authenticated session. */
@@ -384,9 +460,8 @@ export class AuthService {
       const factor = await tx.mfaFactor.findFirst({ where: { id: factorId, userId: who.userId, status: 'PENDING' } });
       if (!factor) throw AppException.notFound('Enrolment not found or already completed');
       if (completeLogin) {
-        // Login-time enrolment is only for users with no authenticator yet.
-        const active = await tx.mfaFactor.count({ where: { userId: who.userId, status: 'ACTIVE' } });
-        if (active > 0) throw AppException.unauthenticated('Enter the code from your existing authenticator app to sign in.');
+        // Login-time enrolment is only for users with no second factor yet (TOTP or passkey).
+        if (await this.hasAnySecondFactor(tx, who.userId)) throw AppException.unauthenticated('Enter the code from your existing authenticator app to sign in.');
       }
       await this.checkTotp(tx, who.tenantId, who.userId, factor.id, factor.secretEncrypted, null, code);
       const now = new Date();
@@ -400,6 +475,7 @@ export class AuthService {
         { tenantId: who.tenantId, actorId: who.userId, action: AUDIT_ACTIONS.AUTH_MFA_ENROLLED, entityType: 'MfaFactor', entityId: factor.id, after: { type: 'TOTP' } },
         tx,
       );
+      await this.alerts.alert(tx, { tenantId: who.tenantId, userId: who.userId, event: 'totp_enrolled', entityId: factor.id, actorId: who.userId });
       return completeLogin ? this.createSession(tx, who.tenantId, who.userId, true, meta) : undefined;
     });
     const me = await this.meForUser(who.tenantId, who.userId, true);
@@ -526,30 +602,81 @@ export class AuthService {
     });
   }
 
-  /** Re-authenticate for high-risk actions; returns a new access token carrying `rat`. */
+  /**
+   * Re-authenticate for high-risk actions; returns a new access token carrying `rat`.
+   * - The password is checked first. A wrong password counts towards the same failure counter as
+   *   sign-in (in its own transaction, audited AUTH_REAUTH_FAILED); after LOGIN_MAX_FAILURES the
+   *   password lock is set, this session is revoked and the account holder is alerted, so a
+   *   stolen session cannot be used to guess the password.
+   * - A user with a TOTP authenticator also gives a current code. A user whose only second factor
+   *   is a passkey must re-authenticate with it (POST /auth/passkeys/reauth/*): password alone is
+   *   never enough when a second factor exists.
+   */
   async reauth(auth: AuthContext, password: string, code?: string): Promise<string> {
-    return this.prisma.withTenant(auth.tenantId, async (tx) => {
+    const result = await this.prisma.withTenant(auth.tenantId, async (tx) => {
       const user = await tx.user.findUniqueOrThrow({ where: { id: auth.userId } });
       const ok = user.passwordHash ? await argon2.verify(user.passwordHash, password).catch(() => false) : false;
-      if (!ok) throw AppException.unauthenticated('Password is incorrect');
-      if (user.mfaEnabled) {
-        const factor = await tx.mfaFactor.findFirst({ where: { userId: user.id, status: 'ACTIVE' } });
-        if (!factor || !code) throw new AppException(ERROR_CODES.MFA_REQUIRED, HttpStatus.UNAUTHORIZED, 'Enter your authenticator code');
+      if (!ok) return { kind: 'bad_password' as const };
+      const factor = await tx.mfaFactor.findFirst({ where: { userId: user.id, status: 'ACTIVE' } });
+      if (factor) {
+        if (!code) throw new AppException(ERROR_CODES.MFA_REQUIRED, HttpStatus.UNAUTHORIZED, 'Enter your authenticator code');
         await this.checkTotp(tx, auth.tenantId, user.id, factor.id, factor.secretEncrypted, factor.lastUsedStep, code);
+      } else if ((await tx.webauthnCredential.count({ where: { userId: user.id, revokedAt: null } })) > 0) {
+        throw new AppException(ERROR_CODES.MFA_REQUIRED, HttpStatus.UNAUTHORIZED, 'Confirm with your passkey to continue');
+      } else if (user.mfaEnabled) {
+        throw new AppException(ERROR_CODES.MFA_REQUIRED, HttpStatus.UNAUTHORIZED, 'Enter your authenticator code');
       }
+      if (user.failedLoginCount > 0) await tx.user.update({ where: { id: user.id }, data: { failedLoginCount: 0 } });
       const now = new Date();
       await tx.session.update({ where: { id: auth.sessionId }, data: { reauthAt: now } });
       await this.audit.record(
         { tenantId: auth.tenantId, actorId: auth.userId, action: AUDIT_ACTIONS.AUTH_REAUTH, entityType: 'Session', entityId: auth.sessionId },
         tx,
       );
-      return this.tokens.signAccess({
-        sub: auth.userId,
-        tid: auth.tenantId,
-        sid: auth.sessionId,
-        mfa: auth.mfaVerified,
-        rat: Math.floor(now.getTime() / 1000),
-      });
+      return {
+        kind: 'ok' as const,
+        access: this.tokens.signAccess({
+          sub: auth.userId,
+          tid: auth.tenantId,
+          sid: auth.sessionId,
+          mfa: auth.mfaVerified,
+          rat: Math.floor(now.getTime() / 1000),
+        }),
+      };
+    });
+    if (result.kind === 'ok') return result.access;
+    const revoked = await this.recordReauthFailure(auth);
+    throw AppException.unauthenticated(revoked ? 'Too many wrong passwords. You have been signed out.' : 'Password is incorrect');
+  }
+
+  /** Count a wrong re-authentication password; returns true when the session was revoked. */
+  private async recordReauthFailure(auth: AuthContext): Promise<boolean> {
+    return this.prisma.withTenant(auth.tenantId, async (own) => {
+      const rows = await own.$queryRaw<Array<{ failed_login_count: number }>>`
+        UPDATE users SET failed_login_count = failed_login_count + 1 WHERE id = ${auth.userId}::uuid RETURNING failed_login_count`;
+      const failures = rows[0]?.failed_login_count ?? 1;
+      const lock = failures >= this.config.values.LOGIN_MAX_FAILURES;
+      const now = new Date();
+      if (lock) {
+        await own.user.update({
+          where: { id: auth.userId },
+          data: { failedLoginCount: 0, lockedUntil: new Date(now.getTime() + this.config.values.LOGIN_LOCK_MINUTES * 60_000) },
+        });
+        await own.session.updateMany({ where: { id: auth.sessionId, revokedAt: null }, data: { revokedAt: now, revokedReason: 'reauth_failures' } });
+        await this.alerts.alert(own, { tenantId: auth.tenantId, userId: auth.userId, event: 'reauth_locked', entityId: `${auth.sessionId}:${now.getTime()}` });
+      }
+      await this.audit.record(
+        {
+          tenantId: auth.tenantId,
+          actorId: auth.userId,
+          action: AUDIT_ACTIONS.AUTH_REAUTH_FAILED,
+          entityType: 'Session',
+          entityId: auth.sessionId,
+          after: { failures, sessionRevoked: lock },
+        },
+        own,
+      );
+      return lock;
     });
   }
 

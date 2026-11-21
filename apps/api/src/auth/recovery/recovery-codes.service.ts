@@ -109,8 +109,9 @@ export class RecoveryCodesService {
     const who = this.auth.verifyChallengeSubject(dto.challengeToken);
     const presented = normaliseRecoveryCode(dto.code);
 
+    // Reserve the attempt atomically against the shared MFA lockout before checking the code.
+    const reserved = await this.auth.reserveMfaAttempt(who.tenantId, who.userId);
     const candidates = await this.prisma.withTenant(who.tenantId, async (tx) => {
-      await this.auth.assertMfaNotLocked(tx, who.userId);
       const user = await tx.user.findUnique({ where: { id: who.userId }, select: { status: true, lockedUntil: true } });
       if (!user || user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > new Date())) {
         throw AppException.unauthenticated('Your sign-in step has expired. Please sign in again.');
@@ -128,7 +129,7 @@ export class RecoveryCodesService {
       if (ok && !matchId) matchId = c.id;
     }
     if (!matchId) {
-      await this.auth.recordMfaFailure(who.tenantId, who.userId, 'RecoveryCode', null);
+      await this.auth.recordMfaFailure(who.tenantId, who.userId, 'RecoveryCode', null, reserved);
       throw AppException.unauthenticated(INVALID_CODE);
     }
 

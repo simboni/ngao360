@@ -86,8 +86,11 @@ function isPublicAuthWrite(req: Request): boolean {
 export function authIdentities(req: Request): Array<[string, string]> {
   const b = (req.body ?? {}) as Record<string, unknown>;
   const out: Array<[string, string]> = [];
+  // Sign-in attempts are limited per organisation + e-mail + client IP, not per account alone, so
+  // an outsider cannot use up the real person's allowance (the database lockout, which a
+  // recognised device bypasses, caps guessing across IPs).
   const account = loginAccountKey(req);
-  if (account) out.push(['login', account]);
+  if (account) out.push(['login', hashKey(account, req.ip ?? 'unknown')]);
   if (typeof b.challengeToken === 'string' && b.challengeToken.length > 0) out.push(['challenge', hashKey('challenge', b.challengeToken)]);
   if (typeof b.token === 'string' && b.token.length > 0) out.push(['token', hashKey('token', b.token)]);
   return out;
@@ -96,7 +99,7 @@ export function authIdentities(req: Request): Array<[string, string]> {
 /**
  * Shared-store limits (global APP_GUARD, registered by PlatformModule):
  *   - every POST under /auth/ (except logout): AUTH_RATE_LIMIT_MAX per minute per client IP;
- *   - and AUTH_RATE_LIMIT_MAX per 15 minutes per identity in the body: organisation + e-mail,
+ *   - and AUTH_RATE_LIMIT_MAX per 15 minutes per identity in the body: organisation + e-mail (+ IP),
  *     sign-in challenge token, or one-time token (all hashed);
  *   - any handler tagged @AccountRateLimit(...): its own bucket.
  * These apply on top of the in-process throttler and the database lockouts (password / TOTP).

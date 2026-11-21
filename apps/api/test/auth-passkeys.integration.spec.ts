@@ -253,12 +253,13 @@ d('passkeys (integration)', () => {
     const refused = await api(h.app).post('/auth/passkey/login/verify', { tenantSlug: h.slug, challengeId: o.challengeId, response: authn.assert(o.options) });
     expect(refused.status).toBe(401);
 
-    // Password lockout and suspension are honoured too.
+    // The password lockout does not block a passkey (wrong passwords sent by someone else must not
+    // lock the real person out); suspension is honoured.
     await h.mkUser('hank', ['tally.view']);
     const hank = await register('hank');
     await h.owner.user.update({ where: { id: h.users.hank }, data: { lockedUntil: new Date(Date.now() + 600_000) } });
     const o2 = await loginOptions();
-    expect((await api(h.app).post('/auth/passkey/login/verify', { tenantSlug: h.slug, challengeId: o2.challengeId, response: hank.authn.assert(o2.options) })).status).toBe(401);
+    expect((await api(h.app).post('/auth/passkey/login/verify', { tenantSlug: h.slug, challengeId: o2.challengeId, response: hank.authn.assert(o2.options) })).status).toBe(200);
     await h.owner.user.update({ where: { id: h.users.hank }, data: { lockedUntil: null, status: 'SUSPENDED' } });
     const o3 = await loginOptions();
     expect((await api(h.app).post('/auth/passkey/login/verify', { tenantSlug: h.slug, challengeId: o3.challengeId, response: hank.authn.assert(o3.options) })).status).toBe(401);

@@ -292,27 +292,43 @@ d('Admin API (integration)', () => {
     expect(invitedActive.status).toBe(409);
   });
 
-  it('resets MFA: revokes factors and sessions, audited with reason', async () => {
-    await owner.mfaFactor.create({ data: { tenantId, userId: users.verifier, status: 'ACTIVE', secretEncrypted: 'synthetic', verifiedAt: new Date() } });
+  it('resets MFA: revokes factors and sessions, audited with reason, and alerts the account holder', async () => {
+    const subject = users.viewer!;
+    await owner.mfaFactor.create({ data: { tenantId, userId: subject, status: 'ACTIVE', secretEncrypted: 'synthetic', verifiedAt: new Date() } });
     const passkey = await owner.webauthnCredential.create({
-      data: { tenantId, userId: users.verifier, credentialId: `synthetic-${Date.now()}`, publicKey: Buffer.from('synthetic-key'), deviceLabel: 'Synthetic key' },
+      data: { tenantId, userId: subject, credentialId: `synthetic-${Date.now()}`, publicKey: Buffer.from('synthetic-key'), deviceLabel: 'Synthetic key' },
     });
-    await owner.recoveryCode.create({ data: { tenantId, userId: users.verifier, batchId: passkey.id, codeHash: 'synthetic-hash' } });
-    const res = await http('owner').post(`/admin/users/${users.verifier}/reset-mfa`).send({ reason: 'Lost synthetic device' });
+    await owner.recoveryCode.create({ data: { tenantId, userId: subject, batchId: passkey.id, codeHash: 'synthetic-hash' } });
+    const res = await http('owner').post(`/admin/users/${subject}/reset-mfa`).send({ reason: 'Lost synthetic device' });
     expect(res.status).toBe(200);
     expect(res.body.mfaEnabled).toBe(false);
-    const factors = await owner.mfaFactor.findMany({ where: { userId: users.verifier } });
+    const factors = await owner.mfaFactor.findMany({ where: { userId: subject } });
     expect(factors.every((f) => f.status === 'REVOKED')).toBe(true);
-    const ev = await owner.auditEvent.findFirstOrThrow({ where: { tenantId, action: 'user.mfa_reset', entityId: users.verifier } });
+    const ev = await owner.auditEvent.findFirstOrThrow({ where: { tenantId, action: 'user.mfa_reset', entityId: subject } });
     expect(ev.reason).toBe('Lost synthetic device');
     // Contract §32.1 (AR5): passkeys and unused recovery codes stop working with the reset.
     const revoked = await owner.webauthnCredential.findUniqueOrThrow({ where: { id: passkey.id } });
     expect(revoked).toMatchObject({ revokedReason: 'admin_reset', revokedById: users.owner });
     expect(revoked.revokedAt).not.toBeNull();
-    expect(await owner.recoveryCode.count({ where: { userId: users.verifier, usedAt: null, revokedAt: null } })).toBe(0);
+    expect(await owner.recoveryCode.count({ where: { userId: subject, usedAt: null, revokedAt: null } })).toBe(0);
     expect(ev.after).toMatchObject({ passkeysRevoked: 1, recoveryCodesRevoked: 1 });
-    await mkPersona('verifier', tenantId, roles.verifier!, undefined, { userId: users.verifier });
+    // The account holder is told, in the same transaction (security alert in the outbox).
+    const alerts = await owner.messageOutbox.findMany({ where: { tenantId, recipientUserId: subject, templateKey: 'auth.security_alert' } });
+    expect(alerts.some((m) => (m.payload as { event?: string }).event === 'mfa_reset')).toBe(true);
+    await mkPersona('viewer', tenantId, roles.viewer!, undefined, { userId: subject });
     expect((await http('owner').post(`/admin/users/${users.owner}/reset-mfa`).send({ reason: 'self' })).status).toBe(403);
+  });
+
+  it('refuses a one-administrator MFA reset of a privileged account (two-person account recovery instead)', async () => {
+    await owner.mfaFactor.create({ data: { tenantId, userId: users.verifier, status: 'ACTIVE', secretEncrypted: 'synthetic', verifiedAt: new Date() } });
+    const res = await http('owner').post(`/admin/users/${users.verifier}/reset-mfa`).send({ reason: 'Lost synthetic device' });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('SEPARATION_OF_DUTIES');
+    expect(res.body.details).toMatchObject({ reason: 'PRIVILEGED_TARGET_USE_ACCOUNT_RECOVERY' });
+    expect(await owner.mfaFactor.count({ where: { userId: users.verifier, status: 'ACTIVE' } })).toBe(1);
+    // Another administrator cannot reset the owner either.
+    const owner2 = await http('admin2').post(`/admin/users/${users.owner}/reset-mfa`).send({ reason: 'Takeover attempt' });
+    expect(owner2.status).toBe(403);
   });
 
   /* ---------------------------------- Roles -------------------------------- */
@@ -426,7 +442,7 @@ d('Admin API (integration)', () => {
     const seqs = byAction.body.items.map((e: { seq: string }) => BigInt(e.seq));
     expect([...seqs].sort((a, b) => (a < b ? 1 : -1))).toEqual(seqs);
 
-    const byEntity = await http('admin2').get(`/admin/audit-events?entityType=User&entityId=${users.verifier}&actorId=${users.owner}`);
+    const byEntity = await http('admin2').get(`/admin/audit-events?entityType=User&entityId=${users.viewer}&actorId=${users.owner}`);
     expect(byEntity.body.items.map((e: { action: string }) => e.action)).toContain('user.mfa_reset');
     expect(byEntity.body.items[0].actor).toEqual({ id: users.owner, displayName: 'Synthetic owner' });
 

@@ -12,7 +12,11 @@ export type SecurityAlertEvent =
   | 'recovery_codes_generated'
   | 'recovery_code_used'
   | 'account_recovery_requested'
-  | 'account_recovery_completed';
+  | 'account_recovery_completed'
+  | 'mfa_reset'
+  | 'totp_enrolled'
+  | 'sign_in_locked'
+  | 'reauth_locked';
 
 /**
  * Thin adapter over the message outbox (owner platform-infra, API contract §31) for the

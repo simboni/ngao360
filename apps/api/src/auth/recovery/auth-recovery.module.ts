@@ -7,7 +7,6 @@ import { PasskeysService } from '../passkeys/passkeys.service';
 import { AccountRecoveryService } from './account-recovery.service';
 import { AccountRecoveryAdminController, RecoveryCodesController } from './recovery.controller';
 import { RecoveryCodesService } from './recovery-codes.service';
-import { SecurityAlertsService } from './security-alerts.service';
 
 /** Interval of the `auth.recovery_expiry` job. */
 export const RECOVERY_EXPIRY_INTERVAL_MS = 15 * 60_000;
@@ -20,7 +19,7 @@ export const RECOVERY_EXPIRY_INTERVAL_MS = 15 * 60_000;
 @Module({
   imports: [AuthModule],
   controllers: [PasskeysController, RecoveryCodesController, AccountRecoveryAdminController],
-  providers: [SecurityAlertsService, PasskeysService, RecoveryCodesService, AccountRecoveryService],
+  providers: [PasskeysService, RecoveryCodesService, AccountRecoveryService],
   exports: [PasskeysService, RecoveryCodesService, AccountRecoveryService],
 })
 export class AuthRecoveryModule implements OnModuleInit {

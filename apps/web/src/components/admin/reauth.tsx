@@ -5,14 +5,15 @@
  * for the password (and the authenticator code when MFA is on), call
  * POST /auth/reauth, then retry the action once.
  */
-import type { OkResponse, ReauthRequest } from '@ngao360/shared';
-import { ShieldCheck } from 'lucide-react';
+import type { OkResponse, PasskeyOptionsResponse, ReauthRequest } from '@ngao360/shared';
+import { Fingerprint, ShieldCheck } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { api, ApiRequestError } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-context';
 import { Dialog, Field, Notice, TextInput } from './primitives';
 import { describeError } from './use-api';
+import { describeWebauthnError, passkeysSupported, signWithPasskey } from '@/components/auth/webauthn';
 
 type Runner = <T>(action: () => Promise<T>) => Promise<T>;
 
@@ -65,13 +66,38 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
     setBusy(true);
     setError(null);
     try {
-      const body: ReauthRequest = { password, ...(me?.user.mfaEnabled ? { code } : {}) };
+      const body: ReauthRequest = { password, ...(me?.user.mfaEnabled && code ? { code } : {}) };
       await api.post<OkResponse>('/auth/reauth', body);
       setOpen(false);
       pending.current?.resolve();
       pending.current = null;
     } catch (err) {
-      setError(err instanceof ApiRequestError && err.status === 401 ? 'That password or code was not accepted.' : describeError(err));
+      // MFA_REQUIRED carries the step still needed (a code, or a passkey for passkey-only accounts).
+      setError(
+        err instanceof ApiRequestError && err.code === 'MFA_REQUIRED'
+          ? err.message
+          : err instanceof ApiRequestError && err.status === 401
+            ? 'That password or code was not accepted.'
+            : describeError(err),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Passkey re-authentication (contract §32.1): the only way for an account whose second factor is a passkey.
+  const confirmWithPasskey = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const opts = await api.post<PasskeyOptionsResponse>('/auth/passkeys/reauth/options');
+      const response = await signWithPasskey(opts);
+      await api.post<OkResponse>('/auth/passkeys/reauth/verify', { challengeId: opts.challengeId, response });
+      setOpen(false);
+      pending.current?.resolve();
+      pending.current = null;
+    } catch (err) {
+      setError(describeWebauthnError(err) ?? (err instanceof ApiRequestError && err.status === 401 ? 'The passkey was not accepted.' : describeError(err)));
     } finally {
       setBusy(false);
     }
@@ -87,13 +113,22 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
         title="Confirm it's you"
         description="This is a high-risk action. Re-enter your password to continue; the action is recorded in the audit log."
       >
+        {passkeysSupported() ? (
+          <>
+            <Button type="button" variant="secondary" className="mb-4 w-full" onClick={() => void confirmWithPasskey()} loading={busy}>
+              <Fingerprint className="h-4 w-4" aria-hidden />
+              Confirm with a passkey
+            </Button>
+            <p className="mb-3 text-center text-meta text-slate">or use your password</p>
+          </>
+        ) : null}
         <form onSubmit={submit}>
           <Field label="Password" htmlFor="reauth-password" required>
             <TextInput id="reauth-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </Field>
           {me?.user.mfaEnabled ? (
-            <Field label="Authenticator code" htmlFor="reauth-code" hint="6-digit code from your authenticator app" required>
-              <TextInput id="reauth-code" inputMode="numeric" pattern="\d{6}" maxLength={6} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required />
+            <Field label="Authenticator code" htmlFor="reauth-code" hint="6-digit code from your authenticator app (leave empty if you only use a passkey)">
+              <TextInput id="reauth-code" inputMode="numeric" pattern="\d{6}" maxLength={6} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
             </Field>
           ) : null}
           {error ? <Notice tone="danger" className="mb-4">{error}</Notice> : null}

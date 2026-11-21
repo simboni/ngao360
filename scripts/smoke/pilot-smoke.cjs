@@ -109,7 +109,7 @@ async function settle(page) {
     await op.locator('#reauth-password').waitFor({ timeout: 10000 });
     await op.fill('#reauth-password', PASSWORD);
     await op.fill('#reauth-code', totpAt(DEMO_TOTP_SECRET, currentTotpStep() + 1));
-    await op.getByRole('button', { name: 'Confirm' }).click();
+    await op.getByRole('button', { name: 'Confirm', exact: true }).click();
     await op.getByText(/was created/).waitFor({ timeout: 20000 });
     const created = await op.locator('main').innerText();
     check(created.includes(code), 'organisation created; the summary names its code');

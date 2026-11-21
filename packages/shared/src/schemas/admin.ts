@@ -241,6 +241,7 @@ export const AUDIT_ACTIONS = {
   AUTH_MFA_VERIFIED: 'auth.mfa.verified',
   AUTH_MFA_FAILED: 'auth.mfa.failed',
   AUTH_REAUTH: 'auth.reauth',
+  AUTH_REAUTH_FAILED: 'auth.reauth.failed',
   USER_CREATED: 'user.created',
   USER_INVITATION_ISSUED: 'user.invitation_issued',
   USER_UPDATED: 'user.updated',

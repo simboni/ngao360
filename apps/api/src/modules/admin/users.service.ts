@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma, type TenantTx } from '@ngao360/db';
-import { AUDIT_ACTIONS, type CreateUser, type OkResponse, type Paginated, type ResetMfa, type UpdateUser, type UserDetail, type UserStatusChange, type UserSummary } from '@ngao360/shared';
+import { AUDIT_ACTIONS, MFA_REQUIRING_PERMISSIONS, type CreateUser, type OkResponse, type Paginated, type ResetMfa, type UpdateUser, type UserDetail, type UserStatusChange, type UserSummary } from '@ngao360/shared';
 import type { UserSession } from '@ngao360/shared';
 import { AuditService } from '../../audit/audit.service';
 import { AuthService } from '../../auth/auth.service';
@@ -9,6 +9,8 @@ import { AppException } from '../../common/http/app-exception';
 import { MessageProviderRegistry } from '../../platform/messaging/message-provider.registry';
 import { MESSAGE_OUTBOX, type MessageOutboxPort } from '../../platform/messaging/outbox.types';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionService } from '../../rbac/permission.service';
+import { SecurityAlertsService } from '../../auth/recovery/security-alerts.service';
 import { assertAssignmentAllowed } from './access-policy';
 import { activeAssignmentWhere, ASSIGNMENT_INCLUDE, paginate, toAssignment, toUserDetail, toUserSummary, userInclude, userSnapshot } from './admin.mappers';
 import type { UserQueryDto } from './admin.dto';
@@ -32,6 +34,8 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly authService: AuthService,
+    private readonly permissionService: PermissionService,
+    private readonly alerts: SecurityAlertsService,
     @Optional() @Inject(MESSAGE_OUTBOX) private readonly outbox?: MessageOutboxPort,
     @Optional() private readonly messageProviders?: MessageProviderRegistry,
   ) {}
@@ -221,6 +225,23 @@ export class UsersService {
     if (id === auth.userId) throw AppException.separationOfDuties('You cannot reset your own MFA. Ask another administrator.');
     return this.prisma.tenantTx(async (tx) => {
       const before = await this.load(tx, id);
+      // One administrator may only reset an ordinary account. Removing the factors of a
+      // privileged account (any MFA-requiring permission or role) lets whoever knows its password
+      // enrol a new authenticator, so that goes through assisted account recovery with a second
+      // administrator (contract §32.3); and nobody resets someone who holds access they do not.
+      const target = await this.permissionService.loadGrants(tx, id);
+      const targetPerms = new Set(target.grants.map((g) => g.permission));
+      if (target.roleRequiresMfa || [...targetPerms].some((p) => MFA_REQUIRING_PERMISSIONS.has(p))) {
+        throw AppException.separationOfDuties(
+          'This person holds privileged access. Use account recovery, which needs a second administrator to approve.',
+          { reason: 'PRIVILEGED_TARGET_USE_ACCOUNT_RECOVERY' },
+        );
+      }
+      if ([...targetPerms].some((p) => !auth.permissions.has(p))) {
+        throw AppException.separationOfDuties('You cannot reset the sign-in factors of someone who holds access you do not hold.', {
+          reason: 'TARGET_HOLDS_MORE_ACCESS',
+        });
+      }
       const now = new Date();
       const factors = await tx.mfaFactor.updateMany({ where: { userId: id, status: { not: 'REVOKED' } }, data: { status: 'REVOKED', revokedAt: now } });
       // Contract §32.1: an MFA reset also removes every other second factor, so a lost or stolen
@@ -244,6 +265,8 @@ export class UsersService {
         },
         tx,
       );
+      // The account holder is always told, in the same transaction as the reset.
+      await this.alerts.alert(tx, { tenantId: auth.tenantId, userId: id, event: 'mfa_reset', entityId: `${id}:${now.getTime()}`, actorId: auth.userId });
       return toUserDetail(await this.load(tx, id));
     });
   }

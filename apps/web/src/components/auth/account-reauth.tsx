@@ -76,11 +76,18 @@ export function AccountReauthProvider({ children }: { children: ReactNode }) {
     setBusy(true);
     setError(null);
     try {
-      const body: ReauthRequest = { password, ...(me?.user.mfaEnabled ? { code } : {}) };
+      const body: ReauthRequest = { password, ...(me?.user.mfaEnabled && code ? { code } : {}) };
       await api.post<OkResponse>('/auth/reauth', body);
       finish();
     } catch (err) {
-      setError(err instanceof ApiRequestError && err.status === 401 ? 'That password or code was not accepted.' : describeError(err));
+      // MFA_REQUIRED carries the step still needed (a code, or a passkey for passkey-only accounts).
+      setError(
+        err instanceof ApiRequestError && err.code === 'MFA_REQUIRED'
+          ? err.message
+          : err instanceof ApiRequestError && err.status === 401
+            ? 'That password or code was not accepted.'
+            : describeError(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -119,8 +126,8 @@ export function AccountReauthProvider({ children }: { children: ReactNode }) {
             <TextInput id="account-reauth-password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </Field>
           {me?.user.mfaEnabled ? (
-            <Field label="Authenticator code" htmlFor="account-reauth-code" hint="6-digit code from your authenticator app" required>
-              <TextInput id="account-reauth-code" inputMode="numeric" pattern="\d{6}" maxLength={6} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required />
+            <Field label="Authenticator code" htmlFor="account-reauth-code" hint="6-digit code from your authenticator app (leave empty if you only use a passkey)">
+              <TextInput id="account-reauth-code" inputMode="numeric" pattern="\d{6}" maxLength={6} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
             </Field>
           ) : null}
           {error ? <Notice tone="danger" className="mb-4">{error}</Notice> : null}

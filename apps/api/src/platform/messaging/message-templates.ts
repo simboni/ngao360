@@ -42,6 +42,10 @@ const SECURITY_EVENTS: Record<string, string> = {
   recovery_code_used: 'A recovery code was used to sign in to your account',
   account_recovery_requested: 'An administrator started recovery of your account',
   account_recovery_completed: 'Your account was recovered and a new password was set',
+  mfa_reset: 'An administrator removed the sign-in factors (authenticator, passkeys and recovery codes) from your account',
+  totp_enrolled: 'An authenticator app was added to your account',
+  sign_in_locked: 'Password sign-in to your account was paused after repeated wrong passwords from an unrecognised device',
+  reauth_locked: 'A session on your account was signed out after repeated wrong passwords',
 };
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' || typeof v === 'number' ? String(v) : fallback);
