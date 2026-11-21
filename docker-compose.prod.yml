@@ -87,6 +87,12 @@ x-api-env: &api-env
   CAPTCHA_SITE_KEY: ${CAPTCHA_SITE_KEY:-}
   CAPTCHA_SECRET: ${CAPTCHA_SECRET:-}
   CAPTCHA_TIMEOUT_MS: ${CAPTCHA_TIMEOUT_MS:-5000}
+  # Read-path caches (docs/OPERATIONS.md); set MAX_STALE to 5 for election night (RUNBOOKS §4).
+  TALLY_AGGREGATE_CACHE_SECONDS: ${TALLY_AGGREGATE_CACHE_SECONDS:-30}
+  TALLY_AGGREGATE_MAX_STALE_SECONDS: ${TALLY_AGGREGATE_MAX_STALE_SECONDS:-0}
+  FIELD_WARROOM_CACHE_SECONDS: ${FIELD_WARROOM_CACHE_SECONDS:-15}
+  # Raise for election day when many agents share carrier NAT addresses (RUNBOOKS §4).
+  RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
 
 networks:
   # No route out: databases, cache, object store and scanner.
