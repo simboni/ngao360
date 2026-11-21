@@ -43,7 +43,9 @@ export const submissionSummaryInclude = {
     },
   },
   submitter: userRef,
-  _count: { select: { duplicates: true } },
+  // First duplicate only (indexed lookup by duplicate_of_id). A relation _count here made Prisma GROUP BY the
+  // whole result_submissions table on every list page (load test: verification queue p50 ~1 s).
+  duplicates: { select: { id: true }, take: 1 },
   discrepancyLinks: {
     where: { case: { status: { in: OPEN_CASE_STATUSES } } },
     select: { caseId: true },
@@ -87,7 +89,7 @@ export function toSubmissionSummary(s: SubmissionSummaryRow): SubmissionSummary 
     status: s.status,
     sourceType: s.sourceType,
     isCanonical: s.isCanonical,
-    duplicateFlag: s.duplicateFlag || s._count.duplicates > 0,
+    duplicateFlag: s.duplicateFlag || s.duplicates.length > 0,
     submitter: s.submitter,
     submittedAt: iso(s.submittedAt),
     createdAt: iso(s.createdAt),
