@@ -57,11 +57,22 @@ async function nextCode(who) {
 }
 
 async function signIn(page, tenant, email) {
-  await page.goto(`${WEB}/login`);
-  await page.fill('#tenant', tenant);
-  await page.fill('#email', email);
-  await page.fill('#password', PASSWORD);
-  await page.click('button[type=submit]');
+  // All smokes sign in from 127.0.0.1, which shares one per-IP limit on /auth/* writes
+  // (AUTH_RATE_LIMIT_MAX per minute). This run signs in six people and re-authenticates twice,
+  // so a later sign-in can be answered 429: wait out the one-minute window once and retry.
+  for (let tries = 0; ; tries++) {
+    await page.goto(`${WEB}/login`);
+    await page.fill('#tenant', tenant);
+    await page.fill('#email', email);
+    await page.fill('#password', PASSWORD);
+    const answer = page.waitForResponse((r) => r.url().endsWith('/api/auth/login') && r.request().method() === 'POST', { timeout: 30000 });
+    await page.click('button[type=submit]');
+    const status = (await answer).status();
+    if (status !== 429) break;
+    if (tries >= 1) throw new Error(`sign-in for ${email} still rate-limited after waiting`);
+    console.log('  ..  shared per-IP sign-in limit reached; waiting a minute');
+    await page.waitForTimeout(61_000);
+  }
   const mfa = await Promise.race([
     page.waitForSelector('#code', { timeout: 20000 }).then(() => true),
     page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20000 }).then(() => false),

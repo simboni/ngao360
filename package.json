@@ -31,11 +31,13 @@
     "smoke:campaign": "node scripts/smoke/campaign-smoke.cjs",
     "smoke:pilot": "node scripts/smoke/pilot-smoke.cjs",
     "smoke:golive": "node scripts/smoke/golive-smoke.cjs",
+    "smoke:golive-gaps": "node scripts/smoke/golive-gaps-smoke.cjs",
     "demo:2022-bungoma": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:2022-bungoma",
     "demo:import-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:import-34a",
     "demo:redact-34a": "turbo run build --filter=@ngao360/api --output-logs=errors-only && pnpm --filter @ngao360/api run demo:redact-34a",
     "test:demo-2022": "pnpm --filter @ngao360/api run test:demo-2022",
-    "fixtures:demo-2022": "node scripts/fixtures/generate-demo-2022-fixtures.mjs"
+    "fixtures:demo-2022": "node scripts/fixtures/generate-demo-2022-fixtures.mjs",
+    "ops:rotate-keys": "pnpm --filter @ngao360/api run ops:rotate-keys"
   },
   "devDependencies": {
     "prettier": "3.6.2",
