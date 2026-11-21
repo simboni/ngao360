@@ -50,7 +50,9 @@ x-api-env: &api-env
   JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
   MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?set MFA_ENCRYPTION_KEY}
   COOKIE_SECURE: "true"
-  WEBAUTHN_RP_ID: ${NGAO_DOMAIN}
+  # Passkeys are bound to this domain. Use the registrable domain (ngao360.co.ke) so passkeys keep
+  # working if the app later moves between subdomains; staging uses its own host name.
+  WEBAUTHN_RP_ID: ${NGAO_WEBAUTHN_RP_ID:-${NGAO_DOMAIN}}
   STORAGE_DRIVER: s3
   S3_ENDPOINT: http://minio:9000
   S3_REGION: ${S3_REGION:-us-east-1}
@@ -325,6 +327,8 @@ services:
       - "443:443/udp"
     environment:
       NGAO_DOMAIN: ${NGAO_DOMAIN}
+      # Comma-separated extra host names that redirect permanently to NGAO_DOMAIN (apex, www).
+      NGAO_REDIRECT_DOMAINS: ${NGAO_REDIRECT_DOMAINS:-http://redirect.invalid}
       # Space-separated CIDRs allowed to call the SMS delivery-report webhook (vendor's addresses).
       AT_WEBHOOK_ALLOWED_IPS: ${AT_WEBHOOK_ALLOWED_IPS:-0.0.0.0/0 ::/0}
     volumes:

@@ -1,4 +1,12 @@
 # NGAO360 production reverse proxy (docker-compose.prod.yml). Set NGAO_DOMAIN for automatic TLS.
+
+# Extra host names (NGAO_REDIRECT_DOMAINS, comma-separated, e.g. "ngao360.co.ke, www.ngao360.co.ke")
+# redirect permanently to NGAO_DOMAIN with the path kept. When the variable is empty the block binds a
+# placeholder plain-HTTP name that no client ever sends, so no certificate is requested for it.
+{$NGAO_REDIRECT_DOMAINS:http://redirect.invalid} {
+	redir https://{$NGAO_DOMAIN}{uri} permanent
+}
+
 # API replicas are discovered by DNS (`dynamic a`), so `--scale api=N` needs no change here.
 {$NGAO_DOMAIN} {
 	encode zstd gzip

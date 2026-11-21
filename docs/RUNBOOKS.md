@@ -13,6 +13,8 @@ reviewed migration, not ad-hoc SQL as the owner role.
 
 ## 1. Deploy
 
+Domain plan, DNS and e-mail records for ngao360.co.ke, and the first-deployment checklist: `docs/DEPLOYMENT.md`.
+
 **Before** (T-1 day for a release):
 
 1. Release tag built and reviewed: CI green (`pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm test`,
