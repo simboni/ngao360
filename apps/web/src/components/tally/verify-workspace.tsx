@@ -26,6 +26,7 @@ import { blockingFailures, type CaptureRow, type Draft, liveValidation, parseCel
 import { describeError, isAccessError } from './errors';
 import { Notice } from './notice';
 import { SourceViewer } from './source-viewer';
+import { StageComparisonPanel } from './stage-comparison-panel';
 import { SubmissionMeta } from './submission-meta';
 import { SubmissionRail } from './submission-rail';
 import { tallyApi } from './tally-api';
@@ -401,6 +402,8 @@ function VerifyLayout({
               {!canVerify ? <p className="text-meta text-slate">Decision buttons are disabled: {blockReason}</p> : null}
             </CardBody>
           </Card>
+
+          <StageComparisonPanel detail={detail} />
 
           {detail.verifications.length > 0 || actions.has('EXCLUDE') || actions.has('DESIGNATE_CANONICAL') ? (
             <Card>

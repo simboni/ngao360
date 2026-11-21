@@ -59,6 +59,15 @@ function q(obj: object): Query {
   return out;
 }
 
+/** POST /tally/submissions/:id/stage-comparison response. */
+export interface StageComparisonResult {
+  submissionId: string;
+  /** Figures that differ from the verified station aggregate. */
+  differences: number;
+  /** The case this run opened, or null (no difference, or a case is already open). */
+  caseId: string | null;
+}
+
 export const tallyApi = {
   /* ------------------------------ Reference -------------------------------- */
   electionCycles: () => api.get<Paginated<ElectionCycle>>('/reference/election-cycles', { query: { pageSize: 100 } }),
@@ -86,6 +95,8 @@ export const tallyApi = {
   submissions: (query: Partial<SubmissionQuery>) =>
     api.get<Paginated<SubmissionSummary>>('/tally/submissions', { query: q(query) }),
   submission: (id: string) => api.get<SubmissionDetail>(`/tally/submissions/${id}`),
+  /** "Re-run comparison" (blueprint 8.6): compare a verified 37B/37C… with the verified station aggregate again. */
+  rerunStageComparison: (id: string) => api.post<StageComparisonResult>(`/tally/submissions/${id}/stage-comparison`, {}),
   createSubmission: (file: File, metadata: CreateSubmission) => {
     const form = new FormData();
     form.set('file', file);
