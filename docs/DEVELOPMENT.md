@@ -222,9 +222,10 @@ CLEAN is required), and a tenant that selects a captcha provider is refused. Sel
 stops the API at start-up with the missing variable names (never values). `MESSAGING_ENCRYPTION_KEY` and
 `MESSAGING_HASH_KEY` are required in production and whenever a non-log provider is selected; `AGENT_DATA_KEY` is
 required in production. Key rotation: set the new key, keep the old one in `<NAME>_PREVIOUS`, run
-`pnpm ops:rotate-keys --target <mfa|messaging|agent-data> --dry-run`, then without `--dry-run` until it exits 0, then
-remove `<NAME>_PREVIOUS` (RUNBOOKS §3.1). Sign-in protection (`SIGNIN_*`, contract §37) delays password sign-in after
-repeated failures and, when `CAPTCHA_PROVIDER` is set, asks for a captcha; recognised devices and passkeys skip both. Never put vendor
+`pnpm ops:rotate-keys --target <mfa|messaging|agent-data> --dry-run`, then without `--dry-run` and without `--tenant` until it exits 0
+(a `--tenant` run ends with exit 4, never 0), then remove `<NAME>_PREVIOUS` (RUNBOOKS §3.1). Sign-in protection (`SIGNIN_*`, contract §37) delays password sign-in after
+repeated failures and, when `CAPTCHA_PROVIDER` is set, asks for a captcha; recognised devices (a browser holding the signed `ngao_kd` mark from an earlier sign-in to
+the account, never a client address) and passkeys skip both. Never put vendor
 credentials in the database or in `tenant_integration_settings` (a DB check refuses secret-looking keys). Tests use
 in-process fakes only (fake SMTP / HTTP servers, a fake clamd speaking INSTREAM with the EICAR test string); the
 build environment cannot reach the vendors.

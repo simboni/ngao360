@@ -110,8 +110,9 @@ identifier only); the checkpoint file holds row ids and counts, no data or keys.
    --checkpoint /rotation/<target>.json` (the checkpoint survives the container in `./rotation`). Batches of 200 (`--batch-size`), one transaction each; each row is rewritten only if
    unchanged since it was read. Interrupted? Run the same command again: it resumes from the checkpoint. A checkpoint
    from another key or target is refused (`--reset-checkpoint` starts over; harmless, rows already under the new key
-   are skipped). `--tenant <id>` limits a run to one organisation.
-5. **Verify.** Run once more with `--reset-checkpoint`: it must print `Complete` (exit 0: every row current, nothing
+   are skipped). `--tenant <id>` limits a run to one organisation (staging only: it ends with `Tenant <id> complete`
+   and exit 4, never `Complete`; the previous key may be retired only after a run without `--tenant`).
+5. **Verify.** Run once more with `--reset-checkpoint` and without `--tenant`: it must print `Complete` (exit 0: every row in every tenant current, nothing
    unreadable, nothing changed during the run). Exit 2 means some rows still need the previous key: re-run, then
    investigate; do not retire the old key. For `agent-data`, add `--validate` once (it validates the database
    constraint that refuses plaintext; only without `--tenant`).
@@ -123,6 +124,31 @@ Rows that are not re-keyed, by design: contact verifications for an address the 
 stored; they are superseded on next use and never matched again), and campaign identifier fingerprints (step 1).
 The first deployment of column encryption seals existing agent rows automatically at API start-up; step 5 with
 `--target agent-data --validate` confirms it and validates the constraint.
+
+### 3.2 First encrypted deployment: plaintext left behind
+
+Sealing rewrites agent personal data in place. PostgreSQL keeps the old (clear) row versions in the table files until
+they are vacuumed and overwritten, and every backup, WAL archive or point-in-time base backup taken **before** the
+release holds national ID numbers, phone and M-Pesa numbers and next-of-kin details in clear. Do this once, right after
+the first release with `AGENT_DATA_KEY` (and after any restore from a pre-encryption backup):
+
+1. **Confirm sealing.** `$C run --rm migrate node dist/cli/key-rotation.js --target agent-data --reset-checkpoint
+   --validate` (no `--tenant`) must print `Complete` and `CHECK constraint validated`.
+2. **Rewrite the table.** In a quiet window, as the schema owner: `VACUUM (FULL, VERBOSE) agent_sensitive;` then
+   `CHECKPOINT;`. `VACUUM FULL` writes a new copy of the table and its indexes and drops the old files (the table is
+   small; it is locked for seconds). A plain `VACUUM` only marks the old versions reusable.
+3. **Record the clean-from date.** Take a backup now (`$C --profile ops run --rm backup`) and drill it (section 6).
+   Record in the processing register (DPIA / ROPA) the date of that backup: every backup and WAL segment from that
+   date on is free of agent plaintext; every earlier one is not.
+4. **Expire the earlier backups.** Keep pre-encryption backups and WAL archives only as long as the recovery need
+   requires (at most the normal retention), in the restricted backup store, then delete them
+   (`BACKUP_RETENTION_DAYS`, WAL archive expiry, and any off-site copies). Note the deletion in the register.
+5. **Restore from a pre-encryption backup (only while one still exists).** The API seals the restored rows again at
+   start-up; then re-apply every agent erasure recorded after the backup's date (`field.agent.sensitive_erased` audit
+   events: erase those agents again), repeat steps 1–3, and record it.
+
+Erasure (`POST /field/agents/:id/sensitive/erase`, the retention job) removes the sealed values from the live table;
+copies in backups expire with them (section 6 keeps backups for the retention period only).
 
 ## 4. Election-day operations
 

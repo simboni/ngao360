@@ -904,3 +904,14 @@ No merge conflicts: the three agents committed to disjoint files on `feat/go-liv
 | `agent_sensitive_encrypted_check` validation | Operator step after deploy: `pnpm ops:rotate-keys --target agent-data --validate` (RUNBOOKS §3.1). |
 | Sign-in captcha per tenant | Open (deployment-wide `CAPTCHA_PROVIDER` today; owner decision on captcha keys). |
 | FP1 (server-held key share for the offline queue) | Open (design decision, security review). |
+
+## Go-live review fixes
+
+| Finding | Outcome |
+| --- | --- |
+| A `--tenant` key-rotation run reported "previous key can be removed" | **Fixed.** Staged runs end "Tenant … complete" with exit 4; only an unscoped run can exit 0 (RUNBOOKS §3.1). |
+| Recognised device was any sign-in from the same IP (shared NAT skipped captcha, delay, lockout) | **Fixed.** Signed, httpOnly `ngao_kd` browser mark set at a completed sign-in; the address plays no part (contract §37.1). |
+| Web push survived sign-out on shared devices | **Fixed.** Sign-out revokes the row, unsubscribes the browser and clears the stored id (contract §31.2). |
+| Supervisor queue listed records whose only un-actioned verification was a superseded round | **Fixed.** Queue and `SUPERVISOR_ACTION` use the latest round, as the endpoint does. |
+| Arithmetic decisions from before the fingerprint accepted nothing | **Fixed.** A legacy resolution accepts the record while its values are unchanged since (no data migration). |
+| Agent plaintext from before encryption remains in dead tuples, backups and WAL | **Documented.** RUNBOOKS §3.2 (first encrypted deployment); operator step on the target host. |

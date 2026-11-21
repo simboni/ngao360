@@ -1165,6 +1165,12 @@ external channels move onto the outbox (`notification.alert`, `notification_id` 
 | POST | `/me/push/subscriptions` | Authenticated | `PushSubscribe` | `PushSubscriptionSummary` (201) | Endpoint and keys sealed; same endpoint → existing row. Audit: `PUSH_SUBSCRIBED`. |
 | DELETE | `/me/push/subscriptions/:id` | Authenticated (own) | — | `OkResponse` | Revokes (`revoked_reason: user`); rows are never deleted. A 404 / 410 from the push service revokes with `expired`. Audit: `PUSH_UNSUBSCRIBED`. |
 
+*Sign-out.* Before `POST /auth/logout` the web app revokes this browser's subscription
+(`DELETE /me/push/subscriptions/:id`, the id it stored at subscribe time), unsubscribes the browser from the push
+service and forgets the stored id, so a shared device stops showing the signed-out person's notifications. Each step
+runs whatever the others did; if the server call fails (offline), the browser unsubscribe alone stops delivery and the
+server row is revoked as `expired` on the next send.
+
 #### 31.3 Provider callbacks (public, no session)
 
 | Method | Path | Permission | Request | Response | Notes / Audit |
@@ -1413,11 +1419,18 @@ count reaches `SIGNIN_ACCOUNT_FAILURES_BEFORE_CHALLENGE` (3) or the address coun
 
 The ordinary failure answer stays 401 `UNAUTHENTICATED` "Organisation, email or password is incorrect" for every kind
 of failure; when the next attempt will need a captcha it carries the same `details.captcha`. The challenge depends only
-on the counters for what was submitted, never on whether the account exists. A **recognised device** (an address that
-completed a sign-in to the account in the last 30 days) skips both the delay and the captcha, as it skips the database
-lockout; **passkey sign-in** (`/auth/passkey/login/*`) is not affected. Store unavailable → 503 `RATE_LIMITED` (never
+on the counters for what was submitted, never on whether the account exists. A **recognised device** (a browser holding
+the signed, httpOnly `ngao_kd` mark that a completed sign-in to the account set in the last 30 days, see below) skips
+both the delay and the captcha, as it skips the database lockout. The client address plays no part: a shared address
+(carrier NAT, office Wi-Fi) without the mark is treated as any other device; **passkey sign-in** (`/auth/passkey/login/*`) is not affected. Store unavailable → 503 `RATE_LIMITED` (never
 unlimited). Keys are SHA-256 hashes; no e-mail address or IP is stored in clear. The web sign-in page renders the
 provider's widget only after the API asked for it and says that sign-in is slowed down while it waits.
+
+*Known-device mark.* Every completed sign-in (`/auth/login` with tokens, `/auth/mfa/verify`, `/auth/mfa/enrol/confirm`
+during sign-in, `/auth/passkey/login/verify`, `/auth/mfa/passkey/verify`) sets cookie `ngao_kd` (httpOnly, `Secure`
+per `COOKIE_SECURE`, SameSite strict, path `/api/auth`, 30 days): `<exp>.<HMAC-SHA256(tenant|user|exp)>` entries joined
+by `~`, at most 8 accounts per browser, keyed by a key derived from `JWT_REFRESH_SECRET`. It names no account and is
+not a credential: it only relaxes the brakes for the password check, which still has to succeed.
 
 **37.2 Agent personal data at rest.** `agent_sensitive.national_id_number`, `phone`, `mpesa_number`,
 `next_of_kin_name`, `next_of_kin_phone` and `next_of_kin_relationship` hold AES-256-GCM ciphertext

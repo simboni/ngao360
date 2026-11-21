@@ -482,8 +482,14 @@ token). The answers are the same for an existing and an unknown account, and the
 for what was submitted. This sits on top of the per-IP and per-account rate limits (`AccountRateLimitGuard`) and the
 database lockouts (password, TOTP).
 
+*Recognised device.* A browser that completed a sign-in to the account in the last 30 days holds a signed, httpOnly
+`ngao_kd` mark for it (HMAC over tenant, user and expiry under a key derived from the refresh secret; path
+`/api/auth`, SameSite strict; up to 8 accounts per browser). Only that mark makes a device "recognised"; the client
+address plays no part, so someone behind the same carrier NAT, office or polling-centre Wi-Fi gets the captcha, the
+delay and the lockout like anyone else.
+
 *Trade-off (documented, accepted):* someone who knows a person's organisation code and e-mail can make that person
-solve a captcha, and wait at most `SIGNIN_DELAY_MAX_MS` per attempt, from a device the account has not signed in from
+solve a captcha, and wait at most `SIGNIN_DELAY_MAX_MS` per attempt, in a browser that has not signed in to the account
 in the last 30 days, until the failure window ends. They cannot stop the person signing in: the captcha can always be
 solved, the delay is capped, and a recognised device and passkey sign-in skip both (as they skip the database
 lockout). Without a captcha provider the delay alone slows guessing; the per-account rate limit and the database
@@ -494,13 +500,18 @@ with AES-256-GCM under a key derived (HKDF) from `AGENT_DATA_KEY`; the associate
 and column, so a ciphertext moved elsewhere does not open. Keyed lookup hashes (a second derived key) support duplicate
 checks without decrypting. The database refuses plaintext in new writes (CHECK); legacy rows are sealed by the start-up
 data migration (tenants found through a SECURITY DEFINER function that returns ids only). Decryption happens only in
-the audited reveal and in the edit path, never in lists, exports or logs.
+the audited reveal and in the edit path, never in lists, exports or logs. Sealing rewrites rows in place, so the clear
+versions survive in dead tuples until `VACUUM FULL`, and in every backup and WAL archive taken before the first
+encrypted release: RUNBOOKS.md §3.2 rewrites the table, records the date from which backups are free of plaintext and
+expires the earlier ones (re-applying erasures after any restore from them).
 
 **Key rotation.** One model for every sealed column: the new key in the main variable, the old one in
 `<NAME>_PREVIOUS`. `SealKeyring` / `HmacKeyring` read with both and write with the new one; lookups by keyed hash match
 either key, so nothing is missed (in particular STOP replies) while rows are rewritten. `pnpm ops:rotate-keys` rewrites
 rows in primary-key batches as the schema owner, each row only if unchanged since read, with a dry run, a checkpoint
-file bound to the new key's identifier, and a non-zero exit while any value still needs the old key. The messaging
+file bound to the new key's identifier, and a non-zero exit while any value still needs the old key. A run limited
+to one tenant (`--tenant`) never reports `Complete` (exit 4, "tenant complete"): only an unscoped run can say the
+previous key may be retired. The messaging
 guards let through only a re-key (same NULL-ness, every other column unchanged), only with `ngao.key_rotation = on`,
 and never for `ngao_app`. What cannot be re-keyed: superseded contact rows for an earlier address (only a hash is
 stored; never matched again) and campaign identifier fingerprints (only masked values are stored; they keep their own
