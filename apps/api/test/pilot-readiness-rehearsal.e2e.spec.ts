@@ -484,6 +484,7 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
 
   it('6. a citizen submits through the portal: captcha checked by the verifier, acknowledgement queued with the case and sent by SMS', async () => {
     const ownerC = client(appA, { bearer: ownerToken });
+    const citizenPhone = `07${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
     const cap = await ownerC.put('/workspace/integrations/captcha', { provider: 'hcaptcha', enabled: true, config: {} }).expect(200);
     expect(cap.body).toMatchObject({ provider: 'hcaptcha', enabled: true, configured: true, available: true });
     // The portal hands out the deployment's public site key (PI4), never the secret.
@@ -498,7 +499,8 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
       geographicUnitId: ward,
       contactPreference: 'SMS',
       name: 'Synthetic Citizen',
-      phone: '0712 345 678',
+      // A fresh synthetic number per run: the per-address daily cap is shared through Redis.
+      phone: citizenPhone,
       consentToContact: true,
       privacyNoticeVersion: CURRENT_PORTAL_PRIVACY_NOTICE_VERSION,
       privacyNoticeAcknowledged: true,
@@ -525,26 +527,30 @@ d('pilot-readiness rehearsal (production mode, fake vendors, two API instances)'
     const c = await owner.citizenCase.findFirstOrThrow({ where: { tenantId, publicReference: receipt.body.publicReference } });
     const ack = await owner.messageOutbox.findFirstOrThrow({ where: { tenantId, idempotencyKey: `case-ack:${c.id}:SMS` } });
     expect(ack).toMatchObject({ status: 'QUEUED', channel: 'SMS', templateKey: 'office.case_acknowledgement' });
-    expect(ack.addressEncrypted).not.toContain('712');
+    expect(ack.addressEncrypted).not.toContain(citizenPhone.slice(1));
     const smsBefore = sms.requests.length;
     await dispatch();
     expect(sms.requests.length).toBe(smsBefore + 1);
     const out = new URLSearchParams(sms.requests.at(-1)!.body);
-    expect(out.get('to')).toBe('+254712345678');
+    expect(out.get('to')).toBe(`+254${citizenPhone.slice(1)}`);
     expect(out.get('message')).toContain(receipt.body.publicReference);
     expect(out.get('message')).not.toContain(receipt.body.trackingCode);
     expect((await owner.messageOutbox.findUniqueOrThrow({ where: { id: ack.id } })).status).toBe('SENT');
   });
 
-  it('7. sign-in limits hold across two API instances sharing Redis: per account and per IP', async () => {
-    // Per account: wrong passwords from a new address each time, alternating instances.
+  it('7. sign-in limits hold across two API instances sharing Redis: per account and IP, and per IP', async () => {
+    // Per account and IP: wrong passwords on one account from one address, alternating instances.
     const email = emailOf(`nobody-${randomUUID().slice(0, 6)}`);
     const attempt = (n: number, from: string, mail = email) => client(n % 2 === 0 ? appA : appB, { ip: from }).post('/auth/login', { tenantSlug: slug, email: mail, password: 'not-the-password' });
-    for (let i = 0; i < AUTH_LIMIT; i += 1) expect((await attempt(i, ip())).status).toBe(401);
-    const limitedA = await attempt(0, ip());
-    const limitedB = await attempt(1, ip());
+    const attacker = ip();
+    for (let i = 0; i < AUTH_LIMIT; i += 1) expect((await attempt(i, attacker)).status).toBe(401);
+    const limitedA = await attempt(0, attacker);
+    const limitedB = await attempt(1, attacker);
     expect([limitedA.status, limitedB.status]).toEqual([429, 429]);
     expect(limitedA.body.code).toBe('RATE_LIMITED');
+    // The attacker's attempts do not use up the real person's allowance from their own address
+    // (the database lockout, which a recognised device bypasses, caps guessing across addresses).
+    expect((await attempt(0, ip())).status).toBe(401);
 
     // Per IP: different accounts from one address, alternating instances.
     const from = ip();

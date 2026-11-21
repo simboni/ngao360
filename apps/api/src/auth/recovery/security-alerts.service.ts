@@ -33,7 +33,7 @@ export class SecurityAlertsService {
   private readonly logger = new Logger(SecurityAlertsService.name);
 
   constructor(
-    private readonly providers: MessageProviderRegistry,
+    @Optional() private readonly providers?: MessageProviderRegistry,
     @Optional() @Inject(MESSAGE_OUTBOX) private readonly outbox?: MessageOutboxPort,
   ) {}
 
@@ -43,7 +43,7 @@ export class SecurityAlertsService {
 
   /** True when a real e-mail provider is configured: secrets then go only through the outbox. */
   emailDeliveryConfigured(): boolean {
-    return this.providers.isDeliveryConfigured('EMAIL');
+    return this.providers?.isDeliveryConfigured('EMAIL') ?? false;
   }
 
   /**
