@@ -55,6 +55,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const body = this.toApiError(exception);
     body.requestId = RequestContext.get()?.requestId;
     if (body.statusCode >= 500) this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+    if (body.statusCode === 503) res.setHeader('Retry-After', '2');
     res.status(body.statusCode).json(body);
   }
 
@@ -123,6 +124,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
       if (exception.code === 'P2025') {
         return { statusCode: 404, error: 'NOT_FOUND', code: ERROR_CODES.NOT_FOUND, message: 'Not found' };
+      }
+      // Connection pool exhausted (P2024) or no transaction could be started in time (P2028 at start):
+      // the API is overloaded, not broken. 503 lets clients and the offline queue retry (load test,
+      // docs/OPERATIONS.md); nothing was written.
+      if (exception.code === 'P2024' || (exception.code === 'P2028' && msg.includes('Unable to start a transaction'))) {
+        return { statusCode: 503, error: 'SERVICE_UNAVAILABLE', code: ERROR_CODES.RATE_LIMITED, message: 'The service is busy. Please try again shortly.' };
       }
       if (exception.code === 'P2003') {
         return { statusCode: 400, error: 'BAD_REQUEST', code: ERROR_CODES.VALIDATION_FAILED, message: 'A referenced record does not exist' };
