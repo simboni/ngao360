@@ -332,7 +332,7 @@ export class TallyWorkflowService {
       )
       SELECT r.*,
              (SELECT v.supervisor_action::text FROM verifications v WHERE v.submission_id = r.id
-               ORDER BY v.round DESC, v.reviewed_at DESC LIMIT 1) AS last_action
+               ORDER BY v.round DESC, v.reviewed_at DESC, v.id DESC LIMIT 1) AS last_action
         FROM roles r
        WHERE r.submitter OR r.editor OR r.verifier OR r.supervisor OR r.resolver`;
     const only = (on: boolean): ReadonlySet<string> => (on ? new Set([u]) : new Set<string>());
@@ -348,6 +348,23 @@ export class TallyWorkflowService {
       },
       thirdCheckRequested: r.last_action === 'THIRD_CHECK_REQUESTED',
     }));
+  }
+
+  /**
+   * Records (in `statuses`) that have an un-actioned verification, but only in a superseded round:
+   * their latest round (by round, then review time, as POST /tally/verifications/:id/supervisor-action
+   * decides it) already carries a supervisor action. The supervisor endpoint refuses those earlier
+   * rounds, so the supervisor queue must not list these records.
+   */
+  async supersededSupervisorReviews(tx: TenantTx, tenantId: string, statuses: ReadonlyArray<SubmissionStatus>): Promise<string[]> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT s.id
+        FROM result_submissions s
+       WHERE s.tenant_id = ${tenantId}::uuid AND s.status::text = ANY(${[...statuses]}::text[])
+         AND EXISTS (SELECT 1 FROM verifications v WHERE v.submission_id = s.id AND v.supervisor_action IS NULL)
+         AND (SELECT v.supervisor_action FROM verifications v WHERE v.submission_id = s.id
+               ORDER BY v.round DESC, v.reviewed_at DESC, v.id DESC LIMIT 1) IS NOT NULL`;
+    return rows.map((r) => r.id);
   }
 
   sod(violation: SodViolation | null): void {

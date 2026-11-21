@@ -382,7 +382,9 @@ export class DiscrepancyService {
           actorId: auth.userId,
           action: 'RESOLVED',
           note: body.resolution,
-          data: { effects, ...(acceptedFigures.length > 0 ? { acceptedFigures } : {}) } as unknown as Prisma.InputJsonValue,
+          // Every arithmetic resolution carries the key (possibly empty): its absence marks a
+          // resolution recorded before fingerprints existed (domain/accepted-figures, legacy).
+          data: { effects, ...(c.varianceType === 'ARITHMETIC' ? { acceptedFigures } : {}) } as unknown as Prisma.InputJsonValue,
         },
       });
       await this.audit.record(
@@ -392,7 +394,7 @@ export class DiscrepancyService {
           entityType: ENTITY.DISCREPANCY,
           entityId: id,
           before: { status: c.status },
-          after: { status: 'RESOLVED', effects, ...(acceptedFigures.length > 0 ? { acceptedFigures } : {}) },
+          after: { status: 'RESOLVED', effects, ...(c.varianceType === 'ARITHMETIC' ? { acceptedFigures } : {}) },
           reason: body.resolution,
         },
         tx,

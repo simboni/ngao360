@@ -254,7 +254,8 @@ export class VerificationService {
       }
       const latest = await tx.verification.findFirst({
         where: { submissionId: v.submissionId },
-        orderBy: [{ round: 'desc' }],
+        // Same order as the work queue and the detail's allowed actions.
+        orderBy: [{ round: 'desc' }, { reviewedAt: 'desc' }, { id: 'desc' }],
         select: { id: true },
       });
       if (latest?.id !== v.id) throw AppException.conflict('Only the latest verification round can be acted on');

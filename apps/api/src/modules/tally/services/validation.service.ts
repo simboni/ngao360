@@ -11,7 +11,7 @@ import { AuditService } from '../../../audit/audit.service';
 import type { AuthContext } from '../../../auth/auth.types';
 import { AppException } from '../../../common/http/app-exception';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { figuresAccepted, figuresFingerprint } from '../domain/accepted-figures';
+import { figuresAccepted, figuresFingerprint, isLegacyResolution, legacyFiguresAccepted } from '../domain/accepted-figures';
 import { arithmeticFailures, type EngineResult, type EngineRun, runValidation } from '../domain/validation-engine';
 import { ENTITY } from '../tally.constants';
 import { toValidationRun } from './mappers';
@@ -192,8 +192,9 @@ export class ValidationService {
 
   /**
    * True when a supervisor resolved an arithmetic case on this record accepting exactly the figures
-   * it carries now (figures as printed). A resolution of other figures, or one recorded without a
-   * fingerprint, accepts nothing.
+   * it carries now (figures as printed). A resolution of other figures accepts nothing. A resolution
+   * recorded before fingerprints existed accepts the record only while none of its values changed
+   * since that resolution (domain/accepted-figures, legacy resolutions).
    */
   async arithmeticAccepted(tx: TenantTx, submissionId: string): Promise<boolean> {
     const resolutions = await tx.discrepancyCaseAction.findMany({
@@ -201,14 +202,13 @@ export class ValidationService {
         action: 'RESOLVED',
         case: { varianceType: 'ARITHMETIC', status: { in: ['RESOLVED', 'CLOSED'] }, links: { some: { submissionId } } },
       },
-      select: { data: true },
+      select: { data: true, createdAt: true },
     });
     if (resolutions.length === 0) return false;
-    return figuresAccepted(
-      resolutions.map((r) => r.data),
-      submissionId,
-      await this.currentFingerprint(tx, submissionId),
-    );
+    if (figuresAccepted(resolutions.map((r) => r.data), submissionId, await this.currentFingerprint(tx, submissionId))) return true;
+    if (!resolutions.some((r) => isLegacyResolution(r.data))) return false;
+    const last = await tx.resultValue.aggregate({ where: { submissionId }, _max: { updatedAt: true } });
+    return legacyFiguresAccepted(resolutions, submissionId, last._max.updatedAt);
   }
 
   /** POST /tally/submissions/:id/validate */

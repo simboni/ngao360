@@ -497,10 +497,13 @@ export class SubmissionsService {
         const blocked = (await this.workflow.participationOf(tx, auth, AWAITING_SUPERVISOR_STATUSES))
           .filter((p) => supervisorViolation(auth.userId, p.participants) !== null)
           .map((p) => p.submissionId);
+        // Only the latest verification round can be acted on: an un-actioned earlier round (e.g. a
+        // RETURN before recapture) does not keep a record in the queue once the latest is actioned.
+        blocked.push(...(await this.workflow.supersededSupervisorReviews(tx, auth.tenantId, AWAITING_SUPERVISOR_STATUSES)));
         and.push(
           { status: { in: [...AWAITING_SUPERVISOR_STATUSES] } },
           { verifications: { some: { supervisorAction: null } } },
-          ...(blocked.length > 0 ? [{ id: { notIn: blocked } }] : []),
+          ...(blocked.length > 0 ? [{ id: { notIn: [...new Set(blocked)] } }] : []),
         );
       }
       const where: Prisma.ResultSubmissionWhereInput = { AND: and };
@@ -533,7 +536,7 @@ export class SubmissionsService {
           include: { candidateReference: { select: { candidateNameAsPublished: true } }, confirmedBy: userRef },
           orderBy: [{ fieldKey: 'asc' }],
         },
-        verifications: { include: verificationInclude, orderBy: [{ round: 'asc' }, { reviewedAt: 'asc' }] },
+        verifications: { include: verificationInclude, orderBy: [{ round: 'asc' }, { reviewedAt: 'asc' }, { id: 'asc' }] },
         valueChanges: { select: { actorId: true } },
         duplicates: { select: { id: true } },
         ocrExtractions: { orderBy: { queuedAt: 'desc' }, take: 1 },
@@ -614,7 +617,8 @@ export class SubmissionsService {
         status: s.status,
         isCanonical: s.isCanonical,
         participants,
-        hasPendingSupervisorReview: s.verifications.some((v) => v.supervisorAction === null),
+        // Only the latest round can be acted on (verification.service supervisorAction).
+        hasPendingSupervisorReview: !!lastVerification && lastVerification.supervisorAction === null,
         thirdCheckRequested: lastVerification?.supervisorAction === 'THIRD_CHECK_REQUESTED',
       }),
     };

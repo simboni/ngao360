@@ -534,6 +534,18 @@ d('NGAO TALLY review-finding regressions (integration)', () => {
     const pass = await http('verifier').post(`/tally/submissions/${id}/verifications`).send({ decision: 'PASS', checklist });
     expect(pass.status).toBe(409);
     ids.reopened = id;
+
+    // A decision recorded before fingerprints existed (no `acceptedFigures` key) covers the record only
+    // when none of its values changed after it: one taken before the recapture accepts nothing ...
+    const legacy = (createdAt: Date) =>
+      owner.discrepancyCaseAction.create({ data: { tenantId, caseId: first.id, actorId: users.supervisor, action: 'RESOLVED', note: 'Legacy decision', data: { effects: [] }, createdAt } });
+    await legacy(new Date(Date.now() - 3_600_000));
+    expect(await accepted(id)).toBe(false);
+    // ... one taken after the figures were last written accepts exactly these figures ...
+    await legacy(new Date());
+    expect(await accepted(id)).toBe(true);
+    // ... and a newer arithmetic resolution always records the key, so it is never read as legacy.
+    expect(stored.data).toHaveProperty('acceptedFigures');
   });
 
   it('work queues list exactly the records the caller may act on, by the same separation-of-duties rules as the actions', async () => {
@@ -552,6 +564,24 @@ d('NGAO TALLY review-finding regressions (integration)', () => {
       .send({ action: 'THIRD_CHECK_REQUESTED', reason: 'Third reviewer to read the source independently' });
     expect(third.status).toBe(200);
     expect((await http('supervisor').get(`/tally/submissions/${c.id}`)).body.status).toBe('SECOND_REVIEW_PENDING');
+    // D: round 1 RETURNED (no supervisor action), recaptured, round 2 PASS, supervisor approves round 2.
+    // The un-actioned round 1 is superseded: the endpoint refuses it, so no queue may list D.
+    const d = await toReview(ids.s6!, 75, 25);
+    const r1 = await http('verifier').post(`/tally/submissions/${d}/verifications`).send({ decision: 'RETURN', checklist, notes: 'Stamp area unclear; please recheck.' });
+    expect(r1.status).toBe(201);
+    await recapture(d, 75, 25, 100);
+    expect((await http('clerk').post(`/tally/submissions/${d}/submit-for-review`).send({})).body.status).toBe('SECOND_REVIEW_PENDING');
+    const r2 = await http('verifier').post(`/tally/submissions/${d}/verifications`).send({ decision: 'PASS', checklist });
+    expect(r2.status).toBe(201);
+    const inQueueBefore = async (who: Persona) =>
+      ((await http(who).get(`/tally/submissions?view=awaiting_supervisor&pageSize=200`)).body.items as Array<{ id: string }>).some((x) => x.id === d);
+    expect(await inQueueBefore('supervisor')).toBe(true);
+    expect((await http('supervisor').post(`/tally/verifications/${r2.body.id}/supervisor-action`).send({ action: 'APPROVED', reason: 'Second review confirmed against the source' })).status).toBe(200);
+    expect(await inQueueBefore('supervisor')).toBe(false);
+    expect(await inQueueBefore('supervisor2')).toBe(false);
+    expect((await http('supervisor2').get(`/tally/submissions/${d}`)).body.allowedActions).not.toContain('SUPERVISOR_ACTION');
+    const stale = await http('supervisor2').post(`/tally/verifications/${r1.body.id}/supervisor-action`).send({ action: 'APPROVED', reason: 'Acting on the earlier round' });
+    expect(stale.status).toBe(409);
 
     const queue = async (who: Persona, view: 'awaiting_me' | 'awaiting_supervisor') => {
       const r = await http(who).get(`/tally/submissions?view=${view}&pageSize=200`);
@@ -579,8 +609,11 @@ d('NGAO TALLY review-finding regressions (integration)', () => {
     for (const who of ['supervisor', 'supervisor2'] as const) {
       const listed = await queue(who, 'awaiting_supervisor');
       for (const s of all.filter((x) => ['SECOND_REVIEW_PENDING', 'VERIFIED', 'RETURNED', 'DISPUTED'].includes(x.status))) {
-        const d = await http(who).get(`/tally/submissions/${s.id}`);
-        expect([s.id, who, listed.has(s.id)]).toEqual([s.id, who, d.body.allowedActions.includes('SUPERVISOR_ACTION')]);
+        const detail = await http(who).get(`/tally/submissions/${s.id}`);
+        expect([s.id, who, listed.has(s.id)]).toEqual([s.id, who, detail.body.allowedActions.includes('SUPERVISOR_ACTION')]);
+        // ... and only when the endpoint's rule holds: the latest round has no supervisor action yet.
+        const rounds = await owner.verification.findMany({ where: { submissionId: s.id }, orderBy: [{ round: 'desc' }, { reviewedAt: 'desc' }, { id: 'desc' }], take: 1 });
+        if (listed.has(s.id)) expect([s.id, rounds[0] ? rounds[0].supervisorAction : 'none']).toEqual([s.id, null]);
       }
     }
   });
