@@ -41,6 +41,9 @@ const SOD_CHECK_CONSTRAINTS = [
   'finance_transactions_payer_check',
   'finance_transactions_rejecter_check',
   'breach_records_closer_check',
+  'account_recovery_requests_requester_not_subject_check',
+  'account_recovery_requests_approver_check',
+  'account_recovery_requests_rejecter_check',
 ] as const;
 
 @Catch()
@@ -107,6 +110,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (conflictReason) {
       const text = { DOCUMENT_IN_USE: 'This document already supports another ledger entry', FILE_INFECTED: 'This file failed the malware scan', ALREADY_ESCALATED: 'This alert was already escalated' }[conflictReason];
       return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.CONFLICT, message: text, details: { reason: conflictReason } };
+    }
+    if (msg.includes('INVALID_TRANSITION:')) {
+      return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.INVALID_TRANSITION, message: 'This change is not allowed from the record’s current state' };
     }
     if (msg.includes('IMMUTABLE_RECORD')) {
       return { statusCode: 409, error: 'CONFLICT', code: ERROR_CODES.IMMUTABLE_RECORD, message: 'This record is immutable and cannot be changed or deleted' };

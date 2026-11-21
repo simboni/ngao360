@@ -429,5 +429,39 @@ export const AUDIT_ACTIONS = {
   BREACH_EVENT_ADDED: 'security.breach.event_added',
   BREACH_STATUS_CHANGED: 'security.breach.status_changed',
   BREACH_TIMELINE_EXPORTED: 'security.breach.timeline_exported',
+
+  // Pilot hardening (API contract §31–36). Reserved here so parallel work does not collide.
+  // Messaging (platform-infra)
+  MESSAGE_CANCELLED: 'messaging.message.cancelled',
+  CONTACT_VERIFICATION_SENT: 'messaging.contact.verification_sent',
+  CONTACT_VERIFIED: 'messaging.contact.verified',
+  CONTACT_SMS_CONSENT_CHANGED: 'messaging.contact.sms_consent_changed',
+  CONTACT_SMS_OPTED_OUT: 'messaging.contact.sms_opted_out',
+  PUSH_SUBSCRIBED: 'messaging.push.subscribed',
+  PUSH_UNSUBSCRIBED: 'messaging.push.unsubscribed',
+  // Files and jobs (platform-infra)
+  FILE_SCAN_RECORDED: 'file.scan.recorded',
+  FILE_QUARANTINED: 'file.scan.quarantined',
+  JOB_RUN_TRIGGERED: 'platform.job.triggered',
+  // Passkeys and recovery (auth-recovery)
+  AUTH_PASSKEY_REGISTERED: 'auth.passkey.registered',
+  AUTH_PASSKEY_RENAMED: 'auth.passkey.renamed',
+  AUTH_PASSKEY_REVOKED: 'auth.passkey.revoked',
+  AUTH_PASSKEY_LOGIN: 'auth.passkey.login',
+  AUTH_PASSKEY_FAILED: 'auth.passkey.failed',
+  AUTH_RECOVERY_CODES_GENERATED: 'auth.recovery_codes.generated',
+  AUTH_RECOVERY_CODE_USED: 'auth.recovery_codes.used',
+  ACCOUNT_RECOVERY_REQUESTED: 'auth.account_recovery.requested',
+  ACCOUNT_RECOVERY_APPROVED: 'auth.account_recovery.approved',
+  ACCOUNT_RECOVERY_REJECTED: 'auth.account_recovery.rejected',
+  ACCOUNT_RECOVERY_CANCELLED: 'auth.account_recovery.cancelled',
+  ACCOUNT_RECOVERY_COMPLETED: 'auth.account_recovery.completed',
+  ACCOUNT_RECOVERY_EXPIRED: 'auth.account_recovery.expired',
+  // Workspace (workspace-admin)
+  WORKSPACE_CREATED: 'workspace.created',
+  WORKSPACE_PROFILE_UPDATED: 'workspace.profile.updated',
+  WORKSPACE_SETUP_ITEM_UPDATED: 'workspace.setup_item.updated',
+  WORKSPACE_INTEGRATION_UPDATED: 'workspace.integration.updated',
+  WORKSPACE_RETENTION_UPDATED: 'workspace.retention.updated',
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

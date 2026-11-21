@@ -277,6 +277,8 @@ enum MalwareScanStatus {
   CLEAN
   INFECTED
   SKIPPED
+  /// The scanner was unreachable or failed; the file is treated like PENDING (fail closed).
+  ERROR
 }
 
 enum StorageDriverKind {
@@ -692,6 +694,21 @@ model Tenant {
   breachRecords                BreachRecord[]
   breachEvents                 BreachEvent[]
 
+  // Pilot hardening: messaging, scanning, jobs, passkeys, recovery, workspace setup
+  messageOutbox             MessageOutbox[]
+  messageOutboxEvents       MessageOutboxEvent[]
+  contactVerifications      ContactVerification[]
+  contactVerificationEvents ContactVerificationEvent[]
+  pushSubscriptions         PushSubscription[]
+  jobRuns                   JobRun[]
+  fileScanEvents            FileScanEvent[]
+  webauthnCredentials       WebauthnCredential[]
+  webauthnChallenges        WebauthnChallenge[]
+  recoveryCodes             RecoveryCode[]
+  accountRecoveryRequests   AccountRecoveryRequest[]
+  workspaceSetupItems       WorkspaceSetupItem[]
+  tenantIntegrationSettings TenantIntegrationSetting[]
+
   @@map("tenants")
 }
 
@@ -864,6 +881,23 @@ model User {
   breachesReported                 BreachRecord[]                @relation("BreachReporter")
   breachesClosed                   BreachRecord[]                @relation("BreachCloser")
   breachEvents                     BreachEvent[]                 @relation("BreachEventActor")
+
+  // Pilot hardening
+  messagesReceived             MessageOutbox[]            @relation("MessageRecipient")
+  messagesCreated              MessageOutbox[]            @relation("MessageCreatedBy")
+  contactVerifications         ContactVerification[]      @relation("ContactVerificationUser")
+  contactVerificationEvents    ContactVerificationEvent[] @relation("ContactVerificationEventActor")
+  pushSubscriptions            PushSubscription[]         @relation("PushSubscriptionUser")
+  webauthnCredentials          WebauthnCredential[]       @relation("WebauthnCredentialUser")
+  webauthnCredentialsRevoked   WebauthnCredential[]       @relation("WebauthnCredentialRevokedBy")
+  webauthnChallenges           WebauthnChallenge[]        @relation("WebauthnChallengeUser")
+  recoveryCodes                RecoveryCode[]             @relation("RecoveryCodeUser")
+  recoveryRequestsFor          AccountRecoveryRequest[]   @relation("RecoveryRequestSubject")
+  recoveryRequestsRaised       AccountRecoveryRequest[]   @relation("RecoveryRequestRequester")
+  recoveryRequestsApproved     AccountRecoveryRequest[]   @relation("RecoveryRequestApprover")
+  recoveryRequestsRejected     AccountRecoveryRequest[]   @relation("RecoveryRequestRejecter")
+  workspaceSetupItemsCompleted WorkspaceSetupItem[]       @relation("SetupItemCompletedBy")
+  integrationSettingsUpdated   TenantIntegrationSetting[] @relation("IntegrationSettingUpdatedBy")
 
   @@unique([tenantId, email])
   @@index([tenantId, status])
@@ -1368,7 +1402,7 @@ model FormTemplate {
 // ============================================================================
 
 /// Immutable original file. Content-addressed by SHA-256; one row per hash per tenant.
-/// Only malware_scan_status / scanned_at may change after insert (enforced by trigger).
+/// Only the scan fields (malware_scan_status, scanned_at, scan_engine, scan_signature, quarantined_at) may change after insert (triggers; INFECTED and quarantine are final).
 model StoredFile {
   id                String            @id @default(uuid()) @db.Uuid
   tenantId          String            @map("tenant_id") @db.Uuid
@@ -1382,6 +1416,12 @@ model StoredFile {
   pageCount         Int?              @map("page_count")
   malwareScanStatus MalwareScanStatus @default(PENDING) @map("malware_scan_status")
   scannedAt         DateTime?         @map("scanned_at") @db.Timestamptz(3)
+  /// Scanner that recorded the current verdict, e.g. "clamd 1.4.1" (null while PENDING).
+  scanEngine        String?           @map("scan_engine")
+  /// Signature name reported for an INFECTED verdict (e.g. "Eicar-Test-Signature").
+  scanSignature     String?           @map("scan_signature")
+  /// Set when the file is quarantined (always for INFECTED); never cleared (trigger).
+  quarantinedAt     DateTime?         @map("quarantined_at") @db.Timestamptz(3)
   uploadedById      String            @map("uploaded_by_id") @db.Uuid
   createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -1409,6 +1449,7 @@ model StoredFile {
 
   displayHolds        StoredFileDisplayHold[] @relation("DisplayHoldOriginal")
   displayHoldRedacted StoredFileDisplayHold[] @relation("DisplayHoldRedacted")
+  scanEvents          FileScanEvent[]
 
   @@unique([tenantId, sha256])
   @@map("stored_files")
@@ -1794,6 +1835,7 @@ model Notification {
   tenant           Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   user             User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
   deliveries       NotificationDelivery[]
+  outboxMessages   MessageOutbox[]
   acknowledgements NotificationAcknowledgement[]
 
   @@index([tenantId, userId, readAt])
@@ -4595,4 +4637,427 @@ model BreachEvent {
 
   @@index([tenantId, breachId, occurredAt])
   @@map("breach_events")
+}
+
+// ============================================================================
+// Pilot hardening (migration 20261128000000_pilot_hardening_foundation)
+//   messaging outbox, contact verification, push subscriptions, durable job runs,
+//   file scan history, passkeys, recovery codes, account recovery, workspace setup
+//   and non-secret integration settings. Secrets (API keys, tokens) stay in env.
+// ============================================================================
+
+enum MessageChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+/// Outbox life cycle (MESSAGE_STATUS_TRANSITIONS in @ngao360/shared; enforced by trigger).
+enum MessageStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+  SKIPPED
+  DEAD
+}
+
+/// Delivery report from the provider after SENT (e.g. an Africa's Talking delivery callback).
+enum MessageDeliveryReportStatus {
+  PENDING
+  DELIVERED
+  UNDELIVERED
+  REJECTED
+  EXPIRED
+  UNKNOWN
+}
+
+enum ContactChannel {
+  EMAIL
+  SMS
+}
+
+enum ContactVerificationEventType {
+  CODE_SENT
+  VERIFIED
+  VERIFICATION_FAILED
+  CONSENT_GIVEN
+  OPTED_OUT
+  OPTED_IN
+  SUPERSEDED
+}
+
+enum JobRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+enum WebauthnChallengePurpose {
+  REGISTER
+  AUTHENTICATE
+  REAUTH
+}
+
+/// Account recovery life cycle (ACCOUNT_RECOVERY_TRANSITIONS in @ngao360/shared; enforced by trigger).
+enum AccountRecoveryStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+enum WorkspaceSetupItemStatus {
+  PENDING
+  DONE
+  SKIPPED
+}
+
+/// One message to one recipient on one external channel. Mutable state machine (no delete);
+/// every attempt is also appended to message_outbox_events. The resolved address is stored
+/// encrypted (AES-256-GCM) with a keyed hash for lookups; one-time secrets (an invitation link)
+/// go in `secretPayloadEncrypted`, which must be NULL once the message is SENT, SKIPPED or DEAD.
+model MessageOutbox {
+  id                     String                       @id @default(uuid()) @db.Uuid
+  tenantId               String                       @map("tenant_id") @db.Uuid
+  channel                MessageChannel
+  /// Template key from MESSAGE_TEMPLATE_KEYS, e.g. "auth.invitation", "contact.verify_code".
+  templateKey            String                       @map("template_key")
+  /// Who the message is for: a user (most messages) or the subject of an invitation (also a user row).
+  recipientUserId        String?                      @map("recipient_user_id") @db.Uuid
+  /// Kind of recipient reference: USER | PUSH_SUBSCRIPTION (CHECK in the migration).
+  recipientRefType       String                       @map("recipient_ref_type")
+  recipientRefId         String                       @map("recipient_ref_id") @db.Uuid
+  /// AES-256-GCM (iv:tag:ciphertext, base64) of the resolved e-mail / phone / push endpoint.
+  addressEncrypted       String?                      @map("address_encrypted")
+  /// HMAC-SHA-256 of the normalised address (delivery-report lookup, duplicate detection).
+  addressHash            String?                      @map("address_hash") @db.Char(64)
+  /// Masked address for screens and logs (e.g. "j***@example.org", "+254 7** *** 123").
+  addressMasked          String?                      @map("address_masked")
+  /// Template variables without secrets.
+  payload                Json                         @default("{}")
+  /// AES-256-GCM of one-time secrets for the template (e.g. invitation token). Wiped at a terminal status.
+  secretPayloadEncrypted String?                      @map("secret_payload_encrypted")
+  status                 MessageStatus                @default(QUEUED)
+  attempts               Int                          @default(0)
+  maxAttempts            Int                          @default(5) @map("max_attempts")
+  nextAttemptAt          DateTime                     @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  /// Lease while SENDING so two workers never send the same message.
+  lockedUntil            DateTime?                    @map("locked_until") @db.Timestamptz(3)
+  lastError              String?                      @map("last_error")
+  provider               String?
+  providerMessageId      String?                      @map("provider_message_id")
+  deliveryStatus         MessageDeliveryReportStatus? @map("delivery_status")
+  deliveryStatusAt       DateTime?                    @map("delivery_status_at") @db.Timestamptz(3)
+  /// Caller-chosen key; (tenant, key) is unique so a retried enqueue never sends twice.
+  idempotencyKey         String                       @map("idempotency_key")
+  notificationId         String?                      @map("notification_id") @db.Uuid
+  createdById            String?                      @map("created_by_id") @db.Uuid
+  sentAt                 DateTime?                    @map("sent_at") @db.Timestamptz(3)
+  createdAt              DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  recipientUser User?                @relation("MessageRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  createdBy     User?                @relation("MessageCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  notification  Notification?        @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  events        MessageOutboxEvent[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status, createdAt])
+  @@index([provider, providerMessageId])
+  @@map("message_outbox")
+}
+
+/// Append-only history of every outbox transition and delivery report.
+model MessageOutboxEvent {
+  id                String                       @id @default(uuid()) @db.Uuid
+  tenantId          String                       @map("tenant_id") @db.Uuid
+  messageId         String                       @map("message_id") @db.Uuid
+  attempt           Int
+  fromStatus        MessageStatus?               @map("from_status")
+  toStatus          MessageStatus                @map("to_status")
+  provider          String?
+  providerMessageId String?                      @map("provider_message_id")
+  deliveryStatus    MessageDeliveryReportStatus? @map("delivery_status")
+  /// Provider error text with addresses and secrets removed.
+  error             String?
+  createdAt         DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  message MessageOutbox @relation(fields: [messageId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, messageId, createdAt])
+  @@map("message_outbox_events")
+}
+
+/// Verification and consent state of one user's e-mail address or phone number (blueprint 10.3:
+/// e-mail only to verified addresses; SMS only with consent and opt-out). One current row per user
+/// and channel; changing the address supersedes the row. History in contact_verification_events.
+model ContactVerification {
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @map("tenant_id") @db.Uuid
+  userId            String         @map("user_id") @db.Uuid
+  channel           ContactChannel
+  /// HMAC-SHA-256 of the normalised address; the address itself stays on the user row.
+  addressHash       String         @map("address_hash") @db.Char(64)
+  addressMasked     String         @map("address_masked")
+  /// SHA-256 of the current one-time code (never the code).
+  codeHash          String?        @map("code_hash") @db.Char(64)
+  codeExpiresAt     DateTime?      @map("code_expires_at") @db.Timestamptz(3)
+  codeAttempts      Int            @default(0) @map("code_attempts")
+  verifiedAt        DateTime?      @map("verified_at") @db.Timestamptz(3)
+  /// SMS only: version of the consent text the user accepted, and when.
+  smsConsentVersion String?        @map("sms_consent_version")
+  smsConsentAt      DateTime?      @map("sms_consent_at") @db.Timestamptz(3)
+  /// SMS only: opt-out (STOP reply or settings). Opted out wins over consent.
+  smsOptedOutAt     DateTime?      @map("sms_opted_out_at") @db.Timestamptz(3)
+  smsOptOutSource   String?        @map("sms_opt_out_source")
+  supersededAt      DateTime?      @map("superseded_at") @db.Timestamptz(3)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User                       @relation("ContactVerificationUser", fields: [userId], references: [id], onDelete: Restrict)
+  events ContactVerificationEvent[]
+
+  @@index([tenantId, userId, channel])
+  @@map("contact_verifications")
+}
+
+/// Append-only history of verification and consent changes.
+model ContactVerificationEvent {
+  id             String                       @id @default(uuid()) @db.Uuid
+  tenantId       String                       @map("tenant_id") @db.Uuid
+  verificationId String                       @map("verification_id") @db.Uuid
+  type           ContactVerificationEventType
+  consentVersion String?                      @map("consent_version")
+  /// settings | sms_reply | admin | system
+  source         String
+  actorId        String?                      @map("actor_id") @db.Uuid
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  verification ContactVerification @relation(fields: [verificationId], references: [id], onDelete: Restrict)
+  actor        User?               @relation("ContactVerificationEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, verificationId, createdAt])
+  @@map("contact_verification_events")
+}
+
+/// Web Push subscription of one user's browser (PWA). Endpoint and keys encrypted; revoked, never deleted.
+model PushSubscription {
+  id                String    @id @default(uuid()) @db.Uuid
+  tenantId          String    @map("tenant_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  endpointHash      String    @map("endpoint_hash") @db.Char(64)
+  endpointEncrypted String    @map("endpoint_encrypted")
+  /// AES-256-GCM of {"p256dh","auth"}.
+  keysEncrypted     String    @map("keys_encrypted")
+  deviceLabel       String?   @map("device_label")
+  userAgent         String?   @map("user_agent")
+  lastSuccessAt     DateTime? @map("last_success_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  /// user | expired (410 from the push service) | admin
+  revokedReason     String?   @map("revoked_reason")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation("PushSubscriptionUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, userId])
+  @@map("push_subscriptions")
+}
+
+/// One run of a durable repeatable job (BullMQ). tenant_id is NULL for platform-wide runs; RLS
+/// shows platform rows only to a connection with no tenant set. Finished runs are frozen (trigger).
+model JobRun {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String?      @map("tenant_id") @db.Uuid
+  /// JOB_KEYS in @ngao360/shared, e.g. "office.retention", "messaging.dispatch".
+  jobKey       String       @map("job_key")
+  queueJobId   String?      @map("queue_job_id")
+  scheduledFor DateTime?    @map("scheduled_for") @db.Timestamptz(3)
+  startedAt    DateTime     @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt   DateTime?    @map("finished_at") @db.Timestamptz(3)
+  status       JobRunStatus @default(RUNNING)
+  /// Job-specific counters, e.g. {"tenants":3,"contactsErased":2}.
+  counts       Json         @default("{}")
+  /// Error message without personal data or secrets.
+  error        String?
+  /// Host / process that ran it.
+  instance     String?
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([jobKey, startedAt])
+  @@index([tenantId, jobKey, startedAt])
+  @@map("job_runs")
+}
+
+/// Append-only history of malware-scan verdicts for a stored file.
+model FileScanEvent {
+  id           String            @id @default(uuid()) @db.Uuid
+  tenantId     String            @map("tenant_id") @db.Uuid
+  storedFileId String            @map("stored_file_id") @db.Uuid
+  status       MalwareScanStatus
+  engine       String?
+  signature    String?
+  error        String?
+  quarantined  Boolean           @default(false)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  storedFile StoredFile @relation(fields: [storedFileId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, storedFileId, createdAt])
+  @@map("file_scan_events")
+}
+
+/// A WebAuthn passkey. Key material and owner are immutable; the counter never goes down; revoked, never deleted.
+model WebauthnCredential {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  /// base64url credential id from the authenticator.
+  credentialId   String    @map("credential_id")
+  /// COSE public key.
+  publicKey      Bytes     @map("public_key")
+  signCount      BigInt    @default(0) @map("sign_count")
+  transports     String[]  @default([])
+  aaguid         String?
+  backupEligible Boolean   @default(false) @map("backup_eligible")
+  backupState    Boolean   @default(false) @map("backup_state")
+  deviceLabel    String    @map("device_label")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt     DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedById    String?   @map("revoked_by_id") @db.Uuid
+  revokedReason  String?   @map("revoked_reason")
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user      User   @relation("WebauthnCredentialUser", fields: [userId], references: [id], onDelete: Restrict)
+  revokedBy User?  @relation("WebauthnCredentialRevokedBy", fields: [revokedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, credentialId])
+  @@index([tenantId, userId])
+  @@map("webauthn_credentials")
+}
+
+/// Single-use WebAuthn challenge (5 minutes). Only the SHA-256 of the challenge is stored.
+model WebauthnChallenge {
+  id            String                   @id @default(uuid()) @db.Uuid
+  tenantId      String                   @map("tenant_id") @db.Uuid
+  /// Null for a username-less sign-in ceremony.
+  userId        String?                  @map("user_id") @db.Uuid
+  purpose       WebauthnChallengePurpose
+  challengeHash String                   @map("challenge_hash") @db.Char(64)
+  expiresAt     DateTime                 @map("expires_at") @db.Timestamptz(3)
+  consumedAt    DateTime?                @map("consumed_at") @db.Timestamptz(3)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User?  @relation("WebauthnChallengeUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, challengeHash])
+  @@map("webauthn_challenges")
+}
+
+/// One-time recovery code (hashed). A new batch revokes the previous one. Used or revoked once.
+model RecoveryCode {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  batchId   String    @map("batch_id") @db.Uuid
+  /// argon2id of the code (never the code).
+  codeHash  String    @map("code_hash")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation("RecoveryCodeUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, userId, batchId])
+  @@map("recovery_codes")
+}
+
+/// Assisted account recovery (lost authenticator and codes). Raised by an administrator for a user;
+/// approved by a second administrator (approver ≠ requester ≠ subject; DB checks); expires.
+model AccountRecoveryRequest {
+  id                String                @id @default(uuid()) @db.Uuid
+  tenantId          String                @map("tenant_id") @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  requestedById     String                @map("requested_by_id") @db.Uuid
+  /// How the person's identity was checked (free text, no ID numbers).
+  identityCheckNote String                @map("identity_check_note")
+  reason            String
+  status            AccountRecoveryStatus @default(PENDING)
+  approvedById      String?               @map("approved_by_id") @db.Uuid
+  approvedAt        DateTime?             @map("approved_at") @db.Timestamptz(3)
+  rejectedById      String?               @map("rejected_by_id") @db.Uuid
+  rejectedAt        DateTime?             @map("rejected_at") @db.Timestamptz(3)
+  rejectionReason   String?               @map("rejection_reason")
+  /// SHA-256 of the single-use recovery link token, set at approval and delivered through the outbox.
+  tokenHash         String?               @unique @map("token_hash") @db.Char(64)
+  expiresAt         DateTime              @map("expires_at") @db.Timestamptz(3)
+  completedAt       DateTime?             @map("completed_at") @db.Timestamptz(3)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user        User   @relation("RecoveryRequestSubject", fields: [userId], references: [id], onDelete: Restrict)
+  requestedBy User   @relation("RecoveryRequestRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy  User?  @relation("RecoveryRequestApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  rejectedBy  User?  @relation("RecoveryRequestRejecter", fields: [rejectedById], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, userId, status])
+  @@index([tenantId, status, createdAt])
+  @@map("account_recovery_requests")
+}
+
+/// S03 onboarding checklist item per tenant (WORKSPACE_SETUP_ITEMS in @ngao360/shared).
+model WorkspaceSetupItem {
+  id            String                   @id @default(uuid()) @db.Uuid
+  tenantId      String                   @map("tenant_id") @db.Uuid
+  itemKey       String                   @map("item_key")
+  status        WorkspaceSetupItemStatus @default(PENDING)
+  note          String?
+  completedById String?                  @map("completed_by_id") @db.Uuid
+  completedAt   DateTime?                @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  completedBy User?  @relation("SetupItemCompletedBy", fields: [completedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, itemKey])
+  @@map("workspace_setup_items")
+}
+
+/// Non-secret integration settings per tenant (provider kind, sender id, captcha provider and site
+/// key, scanner mode). API keys and passwords are never stored here (DB check refuses secret-looking keys).
+model TenantIntegrationSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  /// email | sms | push | captcha | scanner (CHECK in the migration).
+  kind        String
+  /// Provider name, e.g. "log", "smtp", "africastalking", "webpush", "hcaptcha", "turnstile", "clamd".
+  provider    String
+  enabled     Boolean  @default(false)
+  /// Non-secret config (IntegrationConfigSchema per kind).
+  config      Json     @default("{}")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  updatedBy User?  @relation("IntegrationSettingUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, kind])
+  @@map("tenant_integration_settings")
 }

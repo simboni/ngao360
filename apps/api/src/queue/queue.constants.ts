@@ -10,7 +10,13 @@ export const TALLY_EXPORT_QUEUE = 'tally-export';
 /** Notification fan-out (in-app now; email/SMS later). Owner: admin module. */
 export const NOTIFICATION_QUEUE = 'notifications';
 
-export const ALL_QUEUES = [OCR_QUEUE, REGISTRY_IMPORT_QUEUE, TALLY_EXPORT_QUEUE, NOTIFICATION_QUEUE] as const;
+/**
+ * Durable repeatable jobs with job_runs records (JobScheduler, platform/jobs). One BullMQ job
+ * scheduler per JOB_KEYS key. Owner: platform-infra.
+ */
+export const PLATFORM_JOBS_QUEUE = 'platform-jobs';
+
+export const ALL_QUEUES = [OCR_QUEUE, REGISTRY_IMPORT_QUEUE, TALLY_EXPORT_QUEUE, NOTIFICATION_QUEUE, PLATFORM_JOBS_QUEUE] as const;
 
 export interface OcrJobData {
   tenantId: string;

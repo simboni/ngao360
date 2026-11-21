@@ -4,6 +4,16 @@ const bool = z
   .union([z.boolean(), z.string()])
   .transform((v) => (typeof v === 'boolean' ? v : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase())));
 
+function emptyToUndefined(v: string | undefined): string | undefined {
+  return v === undefined || v.trim() === '' ? undefined : v;
+}
+
+const optionalKey32 = z
+  .string()
+  .optional()
+  .transform(emptyToUndefined)
+  .refine((v) => v === undefined || Buffer.from(v, 'base64').length === 32, 'Must be 32 bytes, base64-encoded');
+
 export const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().default(4000),
@@ -68,6 +78,66 @@ export const ConfigSchema = z.object({
 
   /** OCR draft provider: 'none' (manual capture) or 'stub' (synthetic low-confidence drafts, development only). */
   OCR_PROVIDER: z.enum(['none', 'stub']).default('none'),
+
+  // --- Pilot hardening (docs/ARCHITECTURE.md §16). Every provider defaults to the log / no-op one;
+  // --- secrets come only from here and are never logged, stored or returned by the API.
+  /** 32-byte base64 key for outbox addresses, push endpoints and one-time payloads. Required in production. */
+  MESSAGING_ENCRYPTION_KEY: optionalKey32,
+  /** HMAC key for address hashes (contact lookups, delivery reports). Required in production. */
+  MESSAGING_HASH_KEY: z.string().optional().transform(emptyToUndefined).pipe(z.string().min(32).optional()),
+  MESSAGING_DISPATCH_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
+  MESSAGING_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+
+  EMAIL_PROVIDER: z.enum(['log', 'smtp']).default('log'),
+  EMAIL_FROM_ADDRESS: z.string().optional().transform(emptyToUndefined),
+  EMAIL_FROM_NAME: z.string().default('NGAO360'),
+  SMTP_HOST: z.string().optional().transform(emptyToUndefined),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: bool.default(false),
+  SMTP_USER: z.string().optional().transform(emptyToUndefined),
+  SMTP_PASSWORD: z.string().optional().transform(emptyToUndefined),
+
+  SMS_PROVIDER: z.enum(['log', 'africastalking']).default('log'),
+  AFRICASTALKING_USERNAME: z.string().optional().transform(emptyToUndefined),
+  AFRICASTALKING_API_KEY: z.string().optional().transform(emptyToUndefined),
+  /** Approved alphanumeric sender id (takes 2–14 business days); empty = the shared short code. */
+  AFRICASTALKING_SENDER_ID: z.string().optional().transform(emptyToUndefined),
+  /** https://api.africastalking.com (live) or https://api.sandbox.africastalking.com (sandbox). */
+  AFRICASTALKING_BASE_URL: z.string().url().default('https://api.africastalking.com'),
+  /** Random path token for the delivery-report callback URL (the vendor does not sign callbacks). */
+  AFRICASTALKING_DLR_TOKEN: z.string().optional().transform(emptyToUndefined).pipe(z.string().min(24).optional()),
+
+  PUSH_PROVIDER: z.enum(['log', 'webpush']).default('log'),
+  VAPID_PUBLIC_KEY: z.string().optional().transform(emptyToUndefined),
+  VAPID_PRIVATE_KEY: z.string().optional().transform(emptyToUndefined),
+  VAPID_SUBJECT: z.string().optional().transform(emptyToUndefined),
+
+  /** 'none': files stay PENDING and cannot be used where CLEAN is required (fail closed). */
+  MALWARE_SCANNER: z.enum(['none', 'clamd']).default('none'),
+  CLAMD_HOST: z.string().default('127.0.0.1'),
+  CLAMD_PORT: z.coerce.number().int().positive().default(3310),
+  CLAMD_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  SCAN_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+
+  /** Providers this deployment can verify. A tenant picks one in its settings; a configured but failing provider refuses. */
+  CAPTCHA_PROVIDER: z.enum(['none', 'hcaptcha', 'turnstile']).default('none'),
+  CAPTCHA_SITE_KEY: z.string().optional().transform(emptyToUndefined),
+  CAPTCHA_SECRET: z.string().optional().transform(emptyToUndefined),
+  /** Override only in tests (fake HTTP server). */
+  CAPTCHA_VERIFY_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
+  CAPTCHA_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+  /** Where rate-limit counters live: 'memory' (one API instance) or 'redis' (shared; REDIS_URL). */
+  RATE_LIMIT_STORE: z.enum(['memory', 'redis']).default('memory'),
+
+  /** Durable repeatable jobs on BullMQ (needs QUEUES_ENABLED). Off in most tests. */
+  JOBS_ENABLED: bool.default(true),
+
+  /** WebAuthn relying party: the registrable domain of WEB_ORIGIN (e.g. ngao360.example.org). */
+  WEBAUTHN_RP_ID: z.string().default('localhost'),
+  WEBAUTHN_RP_NAME: z.string().default('NGAO360'),
+  /** Comma-separated origins allowed in WebAuthn responses; defaults to WEB_ORIGIN. */
+  WEBAUTHN_ORIGINS: z.string().optional().transform(emptyToUndefined),
 });
 
 export type AppConfigValues = z.infer<typeof ConfigSchema>;
@@ -81,6 +151,39 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfigValue
   if (parsed.data.NODE_ENV === 'production') {
     if (!parsed.data.APP_DATABASE_URL) throw new Error('APP_DATABASE_URL is required in production (RLS role)');
     if (!parsed.data.COOKIE_SECURE) throw new Error('COOKIE_SECURE must be true in production');
+    if (!parsed.data.MESSAGING_ENCRYPTION_KEY || !parsed.data.MESSAGING_HASH_KEY) {
+      throw new Error('MESSAGING_ENCRYPTION_KEY and MESSAGING_HASH_KEY are required in production');
+    }
+  }
+  const missing = missingProviderEnv(parsed.data);
+  if (missing.length > 0) {
+    // Names only, never values.
+    throw new Error(`Invalid environment configuration: a selected provider is missing ${missing.join(', ')}`);
   }
   return parsed.data;
+}
+
+/**
+ * Environment variable NAMES a selected provider needs but that are unset. A provider that is
+ * selected but not configured stops the API at start-up (fail closed) instead of silently
+ * degrading. Also used by the S30 integrations status (names only, never values).
+ */
+export function missingProviderEnv(v: AppConfigValues): string[] {
+  const need: Array<[boolean, string]> = [];
+  if (v.EMAIL_PROVIDER === 'smtp') {
+    need.push([!!v.SMTP_HOST, 'SMTP_HOST'], [!!v.EMAIL_FROM_ADDRESS, 'EMAIL_FROM_ADDRESS']);
+  }
+  if (v.SMS_PROVIDER === 'africastalking') {
+    need.push([!!v.AFRICASTALKING_USERNAME, 'AFRICASTALKING_USERNAME'], [!!v.AFRICASTALKING_API_KEY, 'AFRICASTALKING_API_KEY']);
+  }
+  if (v.PUSH_PROVIDER === 'webpush') {
+    need.push([!!v.VAPID_PUBLIC_KEY, 'VAPID_PUBLIC_KEY'], [!!v.VAPID_PRIVATE_KEY, 'VAPID_PRIVATE_KEY'], [!!v.VAPID_SUBJECT, 'VAPID_SUBJECT']);
+  }
+  if (v.CAPTCHA_PROVIDER !== 'none') {
+    need.push([!!v.CAPTCHA_SITE_KEY, 'CAPTCHA_SITE_KEY'], [!!v.CAPTCHA_SECRET, 'CAPTCHA_SECRET']);
+  }
+  if (v.EMAIL_PROVIDER !== 'log' || v.SMS_PROVIDER !== 'log' || v.PUSH_PROVIDER !== 'log') {
+    need.push([!!v.MESSAGING_ENCRYPTION_KEY, 'MESSAGING_ENCRYPTION_KEY'], [!!v.MESSAGING_HASH_KEY, 'MESSAGING_HASH_KEY']);
+  }
+  return need.filter(([ok]) => !ok).map(([, name]) => name);
 }

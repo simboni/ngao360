@@ -1,6 +1,7 @@
 'use client';
 
-import { LogOut, Menu, Search, UserCircle2 } from 'lucide-react';
+import { KeyRound, LogOut, Menu, Search, UserCircle2 } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { useAuth } from '@/lib/auth-context';
@@ -54,6 +55,14 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         {open ? (
           <div role="menu" className="ngao-card absolute right-0 mt-2 w-56 p-1">
             <div className="px-3 py-2 text-meta text-slate">{me?.user.email}</div>
+            <Link
+              href="/settings/account"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-body hover:bg-cloud"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden /> Your account
+            </Link>
             <button
               type="button"
               role="menuitem"

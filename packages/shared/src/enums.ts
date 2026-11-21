@@ -422,7 +422,8 @@ export type StoredFilePurpose = (typeof STORED_FILE_PURPOSES)[number];
 export const StoredFilePurpose = enumObject(STORED_FILE_PURPOSES);
 export const StoredFilePurposeSchema = z.enum(STORED_FILE_PURPOSES);
 
-export const MALWARE_SCAN_STATUSES = ['PENDING', 'CLEAN', 'INFECTED', 'SKIPPED'] as const;
+/** ERROR: the scanner failed or was unreachable; treated like PENDING (fail closed). Only CLEAN is clean. */
+export const MALWARE_SCAN_STATUSES = ['PENDING', 'CLEAN', 'INFECTED', 'SKIPPED', 'ERROR'] as const;
 export type MalwareScanStatus = (typeof MALWARE_SCAN_STATUSES)[number];
 export const MalwareScanStatus = enumObject(MALWARE_SCAN_STATUSES);
 export const MalwareScanStatusSchema = z.enum(MALWARE_SCAN_STATUSES);

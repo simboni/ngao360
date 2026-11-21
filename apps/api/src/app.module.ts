@@ -3,6 +3,7 @@ import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { AuthRecoveryModule } from './auth/recovery/auth-recovery.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RequestContextMiddleware } from './common/context/request-context.middleware';
 import { AllExceptionsFilter } from './common/http/all-exceptions.filter';
@@ -17,6 +18,8 @@ import { ReferenceModule } from './modules/reference/reference.module';
 import { FieldModule } from './modules/field/field.module';
 import { OfficeModule } from './modules/office/office.module';
 import { TallyModule } from './modules/tally/tally.module';
+import { WorkspaceModule } from './modules/workspace/workspace.module';
+import { PlatformModule } from './platform/platform.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RbacGuard } from './rbac/rbac.guard';
@@ -40,6 +43,8 @@ import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
     AuthModule,
     StorageModule,
     QueueModule.register(),
+    // Pilot hardening: messaging, scanning, captcha, rate-limit store, durable jobs (platform-infra)
+    PlatformModule,
     HealthModule,
     TenantModulesModule,
     // Domain modules (filled by module agents)
@@ -49,6 +54,9 @@ import { TenantModulesModule } from './tenant-modules/tenant-modules.module';
     OfficeModule,
     FieldModule,
     CampaignModule,
+    // Pilot hardening (docs/ARCHITECTURE.md §16)
+    AuthRecoveryModule,
+    WorkspaceModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

@@ -28,6 +28,9 @@ import {
   ScrollText,
   ShieldCheck,
   Users,
+  EyeOff,
+  ListChecks,
+  Settings,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -91,6 +94,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Supervisor queue', href: '/tally/inbox?view=awaiting_supervisor', icon: ClipboardCheck, anyOf: ['tally.approve'] },
       { label: 'Parallel tally', href: '/tally/results', icon: BarChart3, anyOf: ['tally.results.view'] },
       { label: 'Discrepancies', href: '/tally/discrepancies', icon: AlertTriangle, anyOf: ['tally.discrepancy.view'] },
+      // Display holds and redacted copies: owner field-pin
+      { label: 'Display holds', href: '/tally/sources/holds', icon: EyeOff, anyOf: ['tally.source.download', 'tally.approve'] },
     ],
   },
   {
@@ -143,6 +148,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Roles', href: '/admin/roles', icon: ShieldCheck, anyOf: ['roles.view'] },
       { label: 'Audit log', href: '/admin/audit', icon: ScrollText, anyOf: ['audit.view'] },
       { label: 'Breach register', href: '/security/breaches', icon: FileWarning, anyOf: ['security.breach.view'] },
+      // Pilot hardening (S30, S03): owner workspace-admin
+      { label: 'System settings', href: '/settings', icon: Settings, anyOf: ['workspace.view', 'workspace.configure'] },
+      { label: 'Onboarding', href: '/onboarding', icon: ListChecks, anyOf: ['workspace.configure'] },
     ],
   },
 ];

@@ -1,5 +1,6 @@
 import { Module, type OnModuleInit } from '@nestjs/common';
 import { GeoScopeService } from '../../rbac/geo-scope.service';
+import { DisplayHoldsController } from './controllers/display-holds.controller';
 import { SubmissionsController } from './controllers/submissions.controller';
 import {
   DiscrepanciesController,
@@ -38,6 +39,7 @@ import { VerificationService } from './services/verification.service';
     ResultsController,
     SnapshotsController,
     ExportsController,
+    DisplayHoldsController,
   ],
   providers: [
     { provide: OCR_PROVIDER, useFactory: () => createOcrProvider() },

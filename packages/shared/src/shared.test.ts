@@ -5,6 +5,7 @@ import * as enums from './enums';
 import * as office from './office/enums';
 import * as field from './field/enums';
 import * as campaign from './campaign/enums';
+import * as platform from './platform/enums';
 import {
   ALL_PERMISSION_KEYS,
   PERMISSION_DEFINITIONS,
@@ -212,6 +213,16 @@ describe('enum parity with Prisma schema', () => {
     ['BreachStatus', campaign.BREACH_STATUSES],
     ['BreachSeverity', campaign.BREACH_SEVERITIES],
     ['BreachEventType', campaign.BREACH_EVENT_TYPES],
+    // Pilot hardening
+    ['MessageChannel', platform.MESSAGE_CHANNELS],
+    ['MessageStatus', platform.MESSAGE_STATUSES],
+    ['MessageDeliveryReportStatus', platform.MESSAGE_DELIVERY_REPORT_STATUSES],
+    ['ContactChannel', platform.CONTACT_CHANNELS],
+    ['ContactVerificationEventType', platform.CONTACT_VERIFICATION_EVENT_TYPES],
+    ['JobRunStatus', platform.JOB_RUN_STATUSES],
+    ['WebauthnChallengePurpose', platform.WEBAUTHN_CHALLENGE_PURPOSES],
+    ['AccountRecoveryStatus', platform.ACCOUNT_RECOVERY_STATUSES],
+    ['WorkspaceSetupItemStatus', platform.WORKSPACE_SETUP_ITEM_STATUSES],
   ];
   it.each(pairs)('%s matches', (name, values) => {
     expect(prismaEnums.get(name)).toEqual([...values]);

@@ -73,6 +73,12 @@ export const ERROR_CODES = {
   LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
   /** A source image that may show personal data is held until a redacted copy is attached. */
   NOT_FOR_DISPLAY_UNTIL_REDACTED: 'NOT_FOR_DISPLAY_UNTIL_REDACTED',
+  /** The file has no CLEAN malware-scan verdict (PENDING, ERROR, SKIPPED or INFECTED); fail closed. */
+  FILE_NOT_CLEAN: 'FILE_NOT_CLEAN',
+  /** E-mail / SMS needs a verified address (and SMS consent without opt-out) before anything is sent. */
+  CONTACT_NOT_VERIFIED: 'CONTACT_NOT_VERIFIED',
+  /** A passkey ceremony failed (unknown credential, bad signature, counter regression, expired challenge). */
+  PASSKEY_VERIFICATION_FAILED: 'PASSKEY_VERIFICATION_FAILED',
   INTERNAL: 'INTERNAL',
 } as const;
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
