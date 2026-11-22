@@ -49,7 +49,7 @@ for v in MFA_ENCRYPTION_KEY MESSAGING_ENCRYPTION_KEY AGENT_DATA_KEY; do
 done
 
 # Lines added to the template after this file was first created (older env files lack them).
-for kv in NGAO_EDGE_NETWORK= NGAO_EDGE_ALIAS=ngao360; do
+for kv in NGAO_EDGE_NETWORK= NGAO_EDGE_ALIAS=ngao360 NGAO_IMAGE_PREFIX=ghcr.io/simboni/; do
   grep -qE "^${kv%%=*}=" "$target" || { echo "$kv" >> "$target"; echo "  added ${kv%%=*}"; }
 done
 

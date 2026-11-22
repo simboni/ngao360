@@ -121,15 +121,22 @@ Africa's Talking, captcha, VAPID) with their `*_PROVIDER` lines. Without SMTP, i
 once on screen instead of e-mailed. Copy the file into the secrets vault (docs/RUNBOOKS.md, key custody):
 losing `AGENT_DATA_KEY` or `MFA_ENCRYPTION_KEY` makes encrypted data unreadable.
 
-**4. Build and start**
+**4. Pull and start**
+
+The images are built by GitHub Actions and published to GitHub Container Registry
+(`ghcr.io/simboni/ngao360-*`), so the server only downloads them; nothing is compiled on the server.
 
 ```bash
 cd /srv/ngao360
 C="sudo docker compose -f docker-compose.prod.yml --env-file /etc/ngao360/.env.prod"
-$C build                 # first build takes several minutes
-$C up -d                 # runs migrations first; API, worker and web start once they succeed
+$C pull                  # downloads the finished images (NGAO_IMAGE_PREFIX=ghcr.io/simboni/)
+$C up -d --no-build      # runs migrations first; API, worker and web start once they succeed
 $C ps                    # every service healthy, migrate and minio-init exited 0
 ```
+
+If the packages are private, sign in once with a GitHub token that can read packages:
+`echo <token> | sudo docker login ghcr.io -u <github user> --password-stdin`. To build on the server
+instead (slow, needs about 3 GB of free memory), clear `NGAO_IMAGE_PREFIX` and run `$C build`.
 
 **4a. On a shared server whose proxy already owns ports 80/443**
 
@@ -189,13 +196,12 @@ Updates after the first deployment follow docs/RUNBOOKS.md → Deploy.
 
 ## 6. Status of this configuration
 
-- **Object storage image (open, must be settled before the next deployment):** the stacks use the
-  `minio/minio` and `minio/mc` images for the Object Lock store of originals. A local `docker compose`
-  pull of `minio/minio` was refused on 22 Nov 2026 ("pull access denied"); MinIO appears to have stopped
-  publishing free images on Docker Hub. Options: build MinIO from source into our own image, use another
-  S3-compatible store that supports Object Lock (e.g. Ceph RGW), or a hosted S3 service with Object
-  Lock (for example AWS S3, Backblaze B2 or Wasabi; check data-location rules). The application only
-  needs the S3 API with Object Lock, so this is a deployment choice, not a code change.
+- **Object storage image:** MinIO stopped publishing free images on Docker Hub (a pull of
+  `minio/minio` was refused on 22 Nov 2026), so `deploy/minio/Dockerfile` builds the MinIO server and
+  `mc` from their public source at the pinned releases, and GitHub Actions publishes it as
+  `ghcr.io/simboni/ngao360-minio`. Both binaries were built from source and `deploy/minio/init.sh` was
+  run against that server: the bucket is created with Object Lock (COMPLIANCE), re-running is safe, and
+  the application user can write but its delete is refused.
 - The compose file, Caddyfile and env template carry the domain settings above; the passkey-domain
   start-up check has unit tests.
 - `deploy/generate-secrets.sh` was run on a scratch file (secrets filled, existing values kept, mode 600).

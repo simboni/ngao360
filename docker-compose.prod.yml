@@ -184,7 +184,9 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-minio:${NGAO_MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
+    build:
+      context: deploy/minio
     deploy:
       resources:
         limits: { cpus: "${NGAO_MINIO_CPUS:-1}", memory: "${NGAO_MINIO_MEMORY:-1G}" }
@@ -203,7 +205,10 @@ services:
 
   # Creates the Object Lock bucket, its default COMPLIANCE retention and the scoped users.
   minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    # Same image as `minio` (it carries mc and a shell).
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-minio:${NGAO_MINIO_VERSION:-RELEASE.2025-04-22T22-12-26Z}
+    build:
+      context: deploy/minio
     networks: [backend]
     depends_on:
       minio:
@@ -251,7 +256,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
       target: migrate
-    image: ngao360-migrate:${NGAO_VERSION:-latest}
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-migrate:${NGAO_VERSION:-latest}
     networks: [backend]
     environment:
       <<: *api-env
@@ -268,7 +273,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
       target: api
-    image: ngao360-api:${NGAO_VERSION:-latest}
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-api:${NGAO_VERSION:-latest}
     restart: unless-stopped
     networks: [backend, egress, edge]
     environment:
@@ -293,7 +298,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
       target: worker
-    image: ngao360-worker:${NGAO_VERSION:-latest}
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-worker:${NGAO_VERSION:-latest}
     restart: unless-stopped
     networks: [backend, egress]
     environment:
@@ -320,7 +325,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         API_INTERNAL_URL: http://api:4000
-    image: ngao360-web:${NGAO_VERSION:-latest}
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-web:${NGAO_VERSION:-latest}
     deploy:
       resources:
         limits: { cpus: "${NGAO_WEB_CPUS:-1}", memory: "${NGAO_WEB_MEMORY:-768M}" }
@@ -374,7 +379,7 @@ services:
   backup:
     build:
       context: deploy/backup
-    image: ngao360-backup:${NGAO_VERSION:-latest}
+    image: ${NGAO_IMAGE_PREFIX:-}ngao360-backup:${NGAO_VERSION:-latest}
     profiles: ["ops"]
     networks: [backend]
     read_only: true
