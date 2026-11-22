@@ -207,6 +207,10 @@ Updates after the first deployment follow docs/RUNBOOKS.md → Deploy.
 - `deploy/generate-secrets.sh` was run on a scratch file (secrets filled, existing values kept, mode 600).
 - `dist/cli/bootstrap-operator.js` has integration tests against Postgres and was run against the
   development database (refused, as designed, because an active operator exists there).
-- **Not yet tried on a real host:** no Docker image has been built and the stack has not been started
-  (no Docker daemon in the build environment), and the Caddyfile has not been loaded by a Caddy
-  binary. The first staging deployment is the test of this guide.
+- **Images:** CI builds all six images (api, worker, migrate, web, backup, minio) after the checks pass
+  and publishes them to `ghcr.io/simboni/ngao360-*` (first successful run 22 Nov 2026, commit 2b33240).
+  The packages are public, so `docker compose pull` needs no login; they hold no secrets.
+- **Caddyfile:** `caddy validate` (Caddy 2.10) passed on a real server in both direct and behind-proxy
+  form.
+- **Not yet tried:** the full stack has not been started on a server. The first staging deployment is
+  the test of this guide.
