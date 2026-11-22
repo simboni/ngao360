@@ -1,6 +1,10 @@
-# Local infrastructure only (Postgres, Redis, MinIO), for developers who prefer
-# Docker over local binaries. Run the apps with `pnpm dev`.
+# Local infrastructure only (Postgres, Redis), for developers who prefer Docker over local binaries.
+# Run the apps with `pnpm dev`. Local file storage needs no object store (STORAGE_DRIVER=local).
 #   docker compose -f docker-compose.dev.yml up -d
+# The demo database lives in the `pgdata` volume, so `down` keeps it; `down -v` deletes it.
+# MinIO is optional (profile "s3") for trying STORAGE_DRIVER=s3 locally. Its image may no longer be
+# pullable from Docker Hub; see docs/DEPLOYMENT.md §6 (object storage).
+#   docker compose -f docker-compose.dev.yml --profile s3 up -d
 name: ngao360-dev
 
 services:
@@ -14,13 +18,18 @@ services:
     ports: ["5433:5432"]
     volumes:
       - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+      - pgdata:/var/lib/postgresql/data
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
   minio:
+    profiles: ["s3"]
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ngao
       MINIO_ROOT_PASSWORD: ngao_dev_minio
     ports: ["9000:9000", "9001:9001"]
+
+volumes:
+  pgdata:

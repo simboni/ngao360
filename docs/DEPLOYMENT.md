@@ -189,6 +189,13 @@ Updates after the first deployment follow docs/RUNBOOKS.md → Deploy.
 
 ## 6. Status of this configuration
 
+- **Object storage image (open, must be settled before the next deployment):** the stacks use the
+  `minio/minio` and `minio/mc` images for the Object Lock store of originals. A local `docker compose`
+  pull of `minio/minio` was refused on 22 Nov 2026 ("pull access denied"); MinIO appears to have stopped
+  publishing free images on Docker Hub. Options: build MinIO from source into our own image, use another
+  S3-compatible store that supports Object Lock (e.g. Ceph RGW), or a hosted S3 service with Object
+  Lock (for example AWS S3, Backblaze B2 or Wasabi; check data-location rules). The application only
+  needs the S3 API with Object Lock, so this is a deployment choice, not a code change.
 - The compose file, Caddyfile and env template carry the domain settings above; the passkey-domain
   start-up check has unit tests.
 - `deploy/generate-secrets.sh` was run on a scratch file (secrets filled, existing values kept, mode 600).
