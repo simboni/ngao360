@@ -3,7 +3,9 @@
 **/dist
 **/.turbo
 **/coverage
-**/storage
+# Runtime upload data only. Not **/storage: that would also drop the source in apps/api/src/storage.
+/storage
+apps/api/storage
 .env
 .env.*
 *.env
