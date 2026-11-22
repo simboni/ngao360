@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -74,3 +75,71 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  images:
+    # Publish the production images to GitHub Container Registry once the checks pass, so servers
+    # pull finished images instead of building them (docs/DEPLOYMENT.md §5).
+    needs: verify
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api, file: apps/api/Dockerfile, context: ., target: api }
+          - { name: worker, file: apps/api/Dockerfile, context: ., target: worker }
+          - { name: migrate, file: apps/api/Dockerfile, context: ., target: migrate }
+          - { name: web, file: apps/web/Dockerfile, context: ., target: "" }
+          - { name: backup, file: deploy/backup/Dockerfile, context: deploy/backup, target: "" }
+          - { name: minio, file: deploy/minio/Dockerfile, context: deploy/minio, target: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name and tags
+        id: meta
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${owner}/ngao360-${{ matrix.name }}"
+          sha="$(git rev-parse --short=7 HEAD)"
+          tags="${image}:sha-${sha}"
+          if [ "${{ matrix.name }}" = "minio" ]; then
+            release="$(sed -n 's/^ARG MINIO_RELEASE=//p' deploy/minio/Dockerfile)"
+            tags="${tags},${image}:${release}"
+          fi
+          case "${GITHUB_REF}" in
+            refs/tags/v*) tags="${tags},${image}:${GITHUB_REF#refs/tags/}" ;;
+            *) tags="${tags},${image}:latest" ;;
+          esac
+          # Add linux/arm64 here (and keep the QEMU step) for ARM servers such as Oracle Ampere.
+          platforms="linux/amd64"
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "platforms=${platforms}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+        if: contains(steps.meta.outputs.platforms, 'arm64')
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          platforms: ${{ steps.meta.outputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
