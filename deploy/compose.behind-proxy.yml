@@ -1,0 +1,31 @@
+# Run NGAO360 behind a reverse proxy that already owns ports 80/443 on a shared server
+# (docs/DEPLOYMENT.md §5a). Use it together with the main file:
+#
+#   docker compose -f docker-compose.prod.yml -f deploy/compose.behind-proxy.yml --env-file ... up -d
+#
+# NGAO360's own Caddy then publishes no ports and serves plain HTTP on the edge proxy's Docker network
+# (NGAO_EDGE_NETWORK, created by the other stack), reachable there as NGAO_EDGE_ALIAS (default ngao360).
+# The edge proxy terminates TLS and forwards the domain to http://<alias>:80. Nothing else on the server
+# changes, and NGAO360's databases, cache, storage and scanner stay on its own internal network.
+services:
+  caddy:
+    ports: !reset []
+    networks:
+      edge: {}
+      egress: {}
+      shared-edge:
+        aliases: ["${NGAO_EDGE_ALIAS:-ngao360}"]
+    environment:
+      NGAO_SITE_ADDRESS: http://${NGAO_DOMAIN:?set NGAO_DOMAIN}
+      NGAO_TRUSTED_PROXIES: private_ranges
+  api:
+    environment:
+      TRUST_PROXY_HOPS: "2"
+  worker:
+    environment:
+      TRUST_PROXY_HOPS: "2"
+
+networks:
+  shared-edge:
+    external: true
+    name: ${NGAO_EDGE_NETWORK:?set NGAO_EDGE_NETWORK to the edge proxy's Docker network}

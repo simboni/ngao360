@@ -1,4 +1,17 @@
 # NGAO360 production reverse proxy (docker-compose.prod.yml). Set NGAO_DOMAIN for automatic TLS.
+#
+# Two modes:
+# - Direct (default): this Caddy owns ports 80/443 and obtains certificates for NGAO_DOMAIN.
+# - Behind a shared edge proxy (deploy/compose.behind-proxy.yml): no published ports; the server's
+#   existing proxy terminates TLS and forwards plain HTTP here. NGAO_SITE_ADDRESS is then
+#   "http://<NGAO_DOMAIN>" and NGAO_TRUSTED_PROXIES "private_ranges", so the visitor's address from the
+#   edge proxy's X-Forwarded-For is kept.
+
+{
+	servers {
+		trusted_proxies static {$NGAO_TRUSTED_PROXIES:127.0.0.1/32}
+	}
+}
 
 # Extra host names (NGAO_REDIRECT_DOMAINS, comma-separated, e.g. "ngao360.co.ke, www.ngao360.co.ke")
 # redirect permanently to NGAO_DOMAIN with the path kept. When the variable is empty the block binds a
@@ -8,7 +21,7 @@
 }
 
 # API replicas are discovered by DNS (`dynamic a`), so `--scale api=N` needs no change here.
-{$NGAO_DOMAIN} {
+{$NGAO_SITE_ADDRESS} {
 	encode zstd gzip
 
 	header {

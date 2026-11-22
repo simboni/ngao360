@@ -110,6 +110,8 @@ x-api-env: &api-env
   FIELD_WARROOM_CACHE_SECONDS: ${FIELD_WARROOM_CACHE_SECONDS:-15}
   # Raise for election day when many agents share carrier NAT addresses (RUNBOOKS §4).
   RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+  # 1 behind the bundled Caddy; 2 when that Caddy sits behind a shared edge proxy.
+  TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
 
 networks:
   # No route out: databases, cache, object store and scanner.
@@ -123,6 +125,9 @@ networks:
 services:
   postgres:
     image: postgres:16.10-alpine
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_POSTGRES_CPUS:-2}", memory: "${NGAO_POSTGRES_MEMORY:-3G}" }
     restart: unless-stopped
     networks: [backend]
     shm_size: 256m
@@ -137,9 +142,9 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=1GB
+      - shared_buffers=${NGAO_PG_SHARED_BUFFERS:-1GB}
       - -c
-      - effective_cache_size=3GB
+      - effective_cache_size=${NGAO_PG_EFFECTIVE_CACHE_SIZE:-3GB}
       - -c
       - work_mem=16MB
       - -c
@@ -163,6 +168,9 @@ services:
 
   redis:
     image: redis:7.4-alpine
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_REDIS_CPUS:-1}", memory: "${NGAO_REDIS_MEMORY:-512M}" }
     restart: unless-stopped
     networks: [backend]
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory-policy", "noeviction"]
@@ -177,6 +185,9 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_MINIO_CPUS:-1}", memory: "${NGAO_MINIO_MEMORY:-1G}" }
     restart: unless-stopped
     networks: [backend]
     command: ["server", "/data", "--console-address", ":9001"]
@@ -216,6 +227,9 @@ services:
   # uploads stay PENDING and nothing that needs a CLEAN scan can be published or approved.
   clamd:
     image: clamav/clamav:1.4.3
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_CLAMD_CPUS:-1}", memory: "${NGAO_CLAMD_MEMORY:-2560M}" }
     restart: unless-stopped
     # freshclam needs the internet for signature updates; clamd itself listens on backend only.
     networks: [backend, egress]
@@ -268,9 +282,9 @@ services:
       minio-init:
         condition: service_completed_successfully
     deploy:
-      replicas: 2
+      replicas: ${NGAO_API_REPLICAS:-2}
       resources:
-        limits: { cpus: "2", memory: 1536M }
+        limits: { cpus: "${NGAO_API_CPUS:-2}", memory: "${NGAO_API_MEMORY:-1536M}" }
     stop_grace_period: 30s
 
   worker:
@@ -296,7 +310,7 @@ services:
         condition: service_started
     deploy:
       resources:
-        limits: { cpus: "2", memory: 1536M }
+        limits: { cpus: "${NGAO_WORKER_CPUS:-2}", memory: "${NGAO_WORKER_MEMORY:-1536M}" }
     stop_grace_period: 60s
 
   web:
@@ -307,6 +321,9 @@ services:
       args:
         API_INTERNAL_URL: http://api:4000
     image: ngao360-web:${NGAO_VERSION:-latest}
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_WEB_CPUS:-1}", memory: "${NGAO_WEB_MEMORY:-768M}" }
     restart: unless-stopped
     networks: [edge]
     tmpfs:
@@ -319,14 +336,23 @@ services:
 
   caddy:
     image: caddy:2.10-alpine
+    deploy:
+      resources:
+        limits: { cpus: "${NGAO_CADDY_CPUS:-1}", memory: "${NGAO_CADDY_MEMORY:-256M}" }
     restart: unless-stopped
-    networks: [edge, egress]
+    networks:
+      edge: {}
+      egress: {}
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
     environment:
       NGAO_DOMAIN: ${NGAO_DOMAIN}
+      # Address this Caddy serves: the domain (automatic TLS) or http://<domain> behind an edge proxy.
+      NGAO_SITE_ADDRESS: ${NGAO_SITE_ADDRESS:-${NGAO_DOMAIN}}
+      # Proxies whose X-Forwarded-For is trusted ("private_ranges" behind an edge proxy).
+      NGAO_TRUSTED_PROXIES: ${NGAO_TRUSTED_PROXIES:-127.0.0.1/32}
       # Comma-separated extra host names that redirect permanently to NGAO_DOMAIN (apex, www).
       NGAO_REDIRECT_DOMAINS: ${NGAO_REDIRECT_DOMAINS:-http://redirect.invalid}
       # Space-separated CIDRs allowed to call the SMS delivery-report webhook (vendor's addresses).

@@ -131,6 +131,33 @@ $C up -d                 # runs migrations first; API, worker and web start once
 $C ps                    # every service healthy, migrate and minio-init exited 0
 ```
 
+**4a. On a shared server whose proxy already owns ports 80/443**
+
+If another reverse proxy (for example an `edge-caddy` container serving other sites) already listens on
+80/443, NGAO360 must not publish those ports. Use the override file, which removes NGAO360's public ports
+and joins its Caddy to the existing proxy's Docker network instead:
+
+```bash
+docker inspect edge-caddy --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# put that network name in the env file:  NGAO_EDGE_NETWORK=<name>
+C="docker compose -f docker-compose.prod.yml -f deploy/compose.behind-proxy.yml --env-file /etc/ngao360/.env.prod"
+$C up -d --build
+```
+
+Then add one site to the existing proxy's Caddyfile and reload it (other sites are untouched):
+
+```
+staging.ngao360.co.ke {
+	reverse_proxy ngao360:80
+}
+```
+
+The existing proxy obtains the certificate; NGAO360 trusts its `X-Forwarded-For` so rate limits see
+the real visitor (TRUST_PROXY_HOPS=2). Every NGAO360 service has a memory and CPU cap
+(`NGAO_*_MEMORY`, smaller for staging), its databases and scanner stay on its own internal network, and
+its containers, volumes and networks are all named `ngao360-prod_*`, so no other stack is touched.
+Docker builds share the server's CPU while they run; build at a quiet time.
+
 **5. Create the first account** (the platform operator; once per install)
 
 ```bash

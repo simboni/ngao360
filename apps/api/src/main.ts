@@ -12,7 +12,7 @@ export async function createApp(): Promise<NestExpressApplication> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const config = app.get(AppConfig);
   app.setGlobalPrefix('api');
-  app.set('trust proxy', 1);
+  app.set('trust proxy', config.values.TRUST_PROXY_HOPS);
   app.disable('x-powered-by');
   app.use(
     helmet({

@@ -52,6 +52,13 @@ if [[ "$mode" == "staging" ]]; then
   replace_value NGAO_DOMAIN staging.ngao360.co.ke
   replace_value NGAO_REDIRECT_DOMAINS ""
   replace_value NGAO_WEBAUTHN_RP_ID staging.ngao360.co.ke
+  # Smaller caps for staging on a shared server (about 6 GB in total at most).
+  for kv in NGAO_API_REPLICAS=1 NGAO_API_MEMORY=768M NGAO_WORKER_MEMORY=768M NGAO_POSTGRES_MEMORY=1G \
+            NGAO_PG_SHARED_BUFFERS=256MB NGAO_PG_EFFECTIVE_CACHE_SIZE=768MB NGAO_CLAMD_MEMORY=2G \
+            NGAO_MINIO_MEMORY=512M NGAO_REDIS_MEMORY=256M NGAO_WEB_MEMORY=512M NGAO_CADDY_MEMORY=128M; do
+    name="${kv%%=*}"
+    if grep -qE "^${name}=" "$target"; then replace_value "$name" "${kv#*=}"; else echo "$kv" >> "$target"; echo "  set $name"; fi
+  done
 fi
 
 echo "Done. Still to fill by hand (provider accounts): SMTP_*, AFRICASTALKING_*, CAPTCHA_*, VAPID_*,"

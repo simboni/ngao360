@@ -17,6 +17,9 @@ const optionalKey32 = z
 export const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().default(4000),
+  /** Reverse proxies in front of the API whose X-Forwarded-For entries are trusted: 1 behind the bundled
+   *  Caddy, 2 when that Caddy itself sits behind a shared edge proxy (deploy/compose.behind-proxy.yml). */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   API_PUBLIC_URL: z.string().url().default('http://localhost:4000'),
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
 
