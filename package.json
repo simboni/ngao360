@@ -16,7 +16,7 @@
     "db:generate": "pnpm --filter @ngao360/db run generate",
     "db:migrate": "pnpm --filter @ngao360/db run migrate:deploy",
     "db:migrate:dev": "pnpm --filter @ngao360/db run migrate:dev",
-    "db:seed": "pnpm --filter @ngao360/db run seed",
+    "db:seed": "turbo run build --filter=@ngao360/db... --output-logs=errors-only && pnpm --filter @ngao360/db run seed",
     "db:reset": "pnpm --filter @ngao360/db run reset",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,cjs,json,md,css,yml,yaml}\"",
     "test:rehearsal": "pnpm --filter @ngao360/api run test:rehearsal",
