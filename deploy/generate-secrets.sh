@@ -48,6 +48,11 @@ for v in MFA_ENCRYPTION_KEY MESSAGING_ENCRYPTION_KEY AGENT_DATA_KEY; do
   set_if_empty "$v" "$(openssl rand -base64 32 | tr -d '\n')"
 done
 
+# Lines added to the template after this file was first created (older env files lack them).
+for kv in NGAO_EDGE_NETWORK= NGAO_EDGE_ALIAS=ngao360; do
+  grep -qE "^${kv%%=*}=" "$target" || { echo "$kv" >> "$target"; echo "  added ${kv%%=*}"; }
+done
+
 if [[ "$mode" == "staging" ]]; then
   replace_value NGAO_DOMAIN staging.ngao360.co.ke
   replace_value NGAO_REDIRECT_DOMAINS ""
