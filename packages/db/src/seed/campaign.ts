@@ -805,6 +805,12 @@ export async function seedCampaign(prisma: PrismaClient, o: CampaignSeedOptions)
     await prisma.financeTransactionEvent.create({ data: { tenantId, transactionId: row.id, type: 'CREATED', toStatus: 'DRAFT', actorId: requester, createdAt: at(e.day) } });
     if (e.status !== 'DRAFT' && (e.status !== 'REQUESTED' || fin % 3 !== 0)) {
       const doc = await storeSyntheticFile(prisma, tenantId, requester, syntheticPdf(`Supporting document ${row.reference} (synthetic)`), 'application/pdf', `${row.reference}.pdf`, 'FINANCE_DOCUMENT');
+      // Ledger approval needs a supporting document with a CLEAN scan (DB trigger). These synthetic PDFs
+      // are generated here, so the seed records them as clean, naming the seed as the scanning engine.
+      await prisma.storedFile.updateMany({
+        where: { id: doc, malwareScanStatus: { notIn: ['CLEAN', 'INFECTED'] } },
+        data: { malwareScanStatus: 'CLEAN', scanEngine: 'synthetic-seed', scannedAt: at(e.day, 1) },
+      });
       await prisma.financeTransactionDocument.create({
         data: { tenantId, transactionId: row.id, fileId: doc, kind: e.type === 'CONTRIBUTION' ? 'RECEIPT' : e.type === 'TRANSFER' ? 'BANK_SLIP' : 'INVOICE', addedById: requester },
       });

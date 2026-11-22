@@ -144,9 +144,8 @@ Postgres on its own host (RUNBOOKS, "Election-day operations").
 - **Authentication costs a transaction per request** (session, security policy, user, grants). Not cached
   on purpose (revocation and policy changes apply on the next request); it is the largest share of API CPU
   under mixed load.
-- **Synthetic seed on a fresh database stops** at the campaign ledger seed (an entry is approved before a
-  CLEAN supporting document exists; trigger from `20261129000200_platform_infra_clean_ledger_documents`).
-  A second run completes; `setup-load-db.sh` retries once. Owner: the seed.
+- **Synthetic seed on a fresh database** (fixed 22 Nov 2026): the seed now records its generated finance
+  documents as scanned clean, so ledger approval succeeds on the first run.
 - Statistics: right after approving a new registry version or a bulk import, run `ANALYZE` (RUNBOOKS);
   the aggregate and War Room force hash joins, other paths rely on fresh statistics.
 - Registry import of 55k rows through the HTTP import (queued) was not timed here (the load registry was
